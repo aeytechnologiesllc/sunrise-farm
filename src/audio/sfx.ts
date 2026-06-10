@@ -1,0 +1,135 @@
+/** All audio is synthesized via WebAudio — no sample files. The context is
+ * created on first user gesture; every play call no-ops until then. */
+export class Sfx {
+  private ctx: AudioContext | null = null
+  private master: GainNode | null = null
+
+  unlock(): void {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') void this.ctx.resume()
+      return
+    }
+    const ctx = new AudioContext()
+    this.ctx = ctx
+    this.master = ctx.createGain()
+    this.master.gain.value = 0.45
+    this.master.connect(ctx.destination)
+  }
+
+  private tone(
+    freq: number,
+    opts: {
+      type?: OscillatorType
+      at?: number
+      dur?: number
+      gain?: number
+      glideTo?: number
+    } = {},
+  ): void {
+    if (!this.ctx || !this.master) return
+    const { type = 'sine', at = 0, dur = 0.25, gain = 0.5, glideTo } = opts
+    const t0 = this.ctx.currentTime + at
+    const osc = this.ctx.createOscillator()
+    const g = this.ctx.createGain()
+    osc.type = type
+    osc.frequency.setValueAtTime(freq, t0)
+    if (glideTo !== undefined) osc.frequency.exponentialRampToValueAtTime(glideTo, t0 + dur)
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.008)
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur)
+    osc.connect(g).connect(this.master)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.02)
+  }
+
+  private noise(opts: { at?: number; dur?: number; gain?: number; freq?: number; q?: number }): void {
+    if (!this.ctx || !this.master) return
+    const { at = 0, dur = 0.12, gain = 0.3, freq = 1200, q = 1.2 } = opts
+    const t0 = this.ctx.currentTime + at
+    const len = Math.ceil(this.ctx.sampleRate * dur)
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
+    const src = this.ctx.createBufferSource()
+    src.buffer = buf
+    const bp = this.ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = freq
+    bp.Q.value = q
+    const g = this.ctx.createGain()
+    g.gain.setValueAtTime(gain, t0)
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur)
+    src.connect(bp).connect(g).connect(this.master)
+    src.start(t0)
+  }
+
+  /** crop ready — two soft bell notes */
+  chime(): void {
+    this.tone(659, { dur: 0.5, gain: 0.22 })
+    this.tone(988, { at: 0.09, dur: 0.6, gain: 0.16 })
+  }
+
+  /** harvest squash-pop */
+  pop(): void {
+    this.tone(420, { type: 'triangle', dur: 0.12, gain: 0.4, glideTo: 130 })
+    this.noise({ dur: 0.07, gain: 0.18, freq: 2400, q: 0.8 })
+  }
+
+  /** planting thup */
+  plant(): void {
+    this.tone(220, { type: 'sine', dur: 0.1, gain: 0.3, glideTo: 110 })
+    this.noise({ dur: 0.05, gain: 0.1, freq: 700, q: 1 })
+  }
+
+  /** one per coin sprite landing; slight detune keeps a shower lively */
+  tink(): void {
+    const f = 1860 + Math.random() * 240
+    this.tone(f, { type: 'triangle', dur: 0.09, gain: 0.16 })
+    this.tone(f * 1.5, { type: 'sine', dur: 0.07, gain: 0.07 })
+  }
+
+  cluck(): void {
+    this.noise({ dur: 0.06, gain: 0.3, freq: 1050, q: 4 })
+    this.tone(740, { type: 'square', dur: 0.05, gain: 0.06, glideTo: 480 })
+    this.noise({ at: 0.09, dur: 0.05, gain: 0.2, freq: 880, q: 4 })
+    this.tone(620, { at: 0.09, type: 'square', dur: 0.05, gain: 0.05, glideTo: 420 })
+  }
+
+  /** golden event — unique rising arpeggio */
+  golden(): void {
+    const notes = [523, 659, 784, 1047, 1319]
+    notes.forEach((f, i) =>
+      this.tone(f, { at: i * 0.07, type: 'triangle', dur: 0.4, gain: 0.2 }),
+    )
+    this.noise({ at: 0.05, dur: 0.5, gain: 0.05, freq: 6000, q: 0.6 })
+  }
+
+  /** level-up fanfare */
+  fanfare(): void {
+    const seq: Array<[number, number]> = [
+      [523, 0],
+      [659, 0.11],
+      [784, 0.22],
+      [1047, 0.36],
+    ]
+    for (const [f, at] of seq) {
+      this.tone(f, { at, type: 'sawtooth', dur: 0.3, gain: 0.12 })
+      this.tone(f * 0.5, { at, type: 'triangle', dur: 0.32, gain: 0.1 })
+    }
+    this.tone(784, { at: 0.5, type: 'sawtooth', dur: 0.55, gain: 0.1 })
+    this.tone(1047, { at: 0.5, type: 'sawtooth', dur: 0.55, gain: 0.12 })
+  }
+
+  /** pet — warm short swell */
+  heart(): void {
+    this.tone(392, { type: 'sine', dur: 0.3, gain: 0.2 })
+    this.tone(494, { at: 0.06, type: 'sine', dur: 0.34, gain: 0.16 })
+    this.tone(587, { at: 0.12, type: 'sine', dur: 0.4, gain: 0.13 })
+  }
+
+  /** crate creak + thump for the arrival ceremony */
+  crate(): void {
+    this.tone(160, { type: 'sawtooth', dur: 0.3, gain: 0.08, glideTo: 320 })
+    this.noise({ at: 0.25, dur: 0.1, gain: 0.2, freq: 400, q: 1 })
+  }
+}
