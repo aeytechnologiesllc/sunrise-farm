@@ -10,8 +10,10 @@ const SURVIVAL = '/models/kenney/survival-kit'
 const CHARS = '/models/kenney/mini-characters'
 const QUAT = '/models/quaternius'
 
+// NOTE: the hen is procedurally sculpted in Chicken.ts — both chicken GLBs in
+// public/models read as blobs at gameplay distance (Hen.glb = gray box stack,
+// Chicken.glb = a literal "Chicken_Blob" head mesh with no body silhouette).
 export const MODEL_URLS = {
-  hen: `${QUAT}/animated-chickens/Hen.glb`,
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
   farmer: `${QUAT}/characters/Farmer.glb`,
   villagerA: `${CHARS}/character-female-a.glb`,
