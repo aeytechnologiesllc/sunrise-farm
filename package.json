@@ -1,0 +1,24 @@
+{
+  "name": "game3-farm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "0.184.0",
+    "postprocessing": "^6.39.1",
+    "gsap": "^3.15.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.16",
+    "typescript": "^6.0.3",
+    "@types/three": "0.184.0",
+    "vitest": "^4.0.18"
+  }
+}
