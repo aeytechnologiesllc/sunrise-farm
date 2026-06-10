@@ -26,7 +26,28 @@ export const GOLDEN_EGG_BASE = 0.08
 export const HEART_GOLDEN_BONUS = 0.1
 export const GOLDEN_EGG_CAP = 0.5
 
-export const XP_GAIN = { plant: 2, harvest: 5, feed: 3, collectEgg: 6, pet: 4 } as const
+export const XP_GAIN = { plant: 2, harvest: 5, feed: 3, collectEgg: 6, pet: 4, serve: 6 } as const
+
+// ---- customers (roadside stand) ------------------------------------------
+/** what a customer can ask for; eggs only exist once the hen is laying */
+export type GoodKind = CropKind | 'egg'
+
+export const GOOD_SELL: Record<GoodKind, number> = { wheat: 2, corn: 5, egg: 8 }
+/** customers pay a premium over auto-sell — additive bonus, never required */
+export const CUSTOMER_PREMIUM = 1.6
+export const CUSTOMER_TIP_RATE = 0.3
+export const CUSTOMER_QUEUE_MAX = 2
+/** spawn cadence: first visit comes quick, then a relaxed 60-120s rhythm */
+export const CUSTOMER_FIRST_DELAY: [number, number] = [18, 30]
+export const CUSTOMER_DELAY: [number, number] = [60, 120]
+
+export function offerFor(kind: GoodKind, count: number): number {
+  return Math.ceil(GOOD_SELL[kind] * count * CUSTOMER_PREMIUM)
+}
+
+export function tipFor(offer: number): number {
+  return Math.max(1, Math.round(offer * CUSTOMER_TIP_RATE))
+}
 
 /** XP needed to clear the given level (level 1 -> 20, 2 -> 30, ...) */
 export function xpNeeded(level: number): number {

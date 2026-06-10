@@ -35,8 +35,11 @@ export type ChipId = 'plant' | 'harvest' | 'feed' | 'collect' | 'pet'
 export interface GameState {
   v: 1
   coins: number
-  /** harvested wheat kept as feed (auto-sell still pays coins) */
+  /** harvested wheat kept as feed + stand stock (auto-sell still pays coins) */
   wheat: number
+  /** stand stock for customers — banked on harvest/collect, additive bonus */
+  corn: number
+  eggs: number
   xp: number
   level: number
   harvests: number
@@ -55,6 +58,8 @@ export function initialState(seed: number): GameState {
     v: 1,
     coins: 0,
     wheat: 0,
+    corn: 0,
+    eggs: 0,
     xp: 0,
     level: 1,
     harvests: 0,
@@ -114,6 +119,9 @@ export function deserialize(json: string | null): GameState | null {
   try {
     const s = JSON.parse(json) as GameState
     if (s.v !== 1 || !Array.isArray(s.plots)) return null
+    // backfill fields added after first ship (saves stay v1-compatible)
+    s.corn ??= 0
+    s.eggs ??= 0
     return s
   } catch {
     return null

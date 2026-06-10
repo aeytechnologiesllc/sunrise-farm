@@ -34,7 +34,7 @@ export class DogView {
   constructor(assets: Assets, scene: Scene, home: Vector3) {
     this.home = home.clone()
     this.dog = assets.spawnSkinned('dog')
-    this.dog.scale.setScalar(0.55)
+    this.dog.scale.setScalar(0.42)
     tint(this.dog, 0.01, 0.02)
     this.group.add(this.dog)
     this.group.position.copy(home)
@@ -48,7 +48,7 @@ export class DogView {
     this.current = this.idle
     // tiny seeded variety so the dog is also an individual
     const rng = mulberry32(777)
-    this.dog.scale.setScalar(0.55 * (0.95 + rng.next() * 0.1))
+    this.dog.scale.setScalar(0.42 * (0.95 + rng.next() * 0.1))
   }
 
   /** point near `target`, or null to head home */

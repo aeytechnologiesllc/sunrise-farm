@@ -7,11 +7,18 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 const NATURE = '/models/kenney/nature-kit'
 const FOOD = '/models/kenney/food-kit'
 const SURVIVAL = '/models/kenney/survival-kit'
+const CHARS = '/models/kenney/mini-characters'
 const QUAT = '/models/quaternius'
 
 export const MODEL_URLS = {
   hen: `${QUAT}/animated-chickens/Hen.glb`,
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
+  farmer: `${CHARS}/character-male-a.glb`,
+  villagerA: `${CHARS}/character-female-a.glb`,
+  villagerB: `${CHARS}/character-male-c.glb`,
+  villagerC: `${CHARS}/character-female-d.glb`,
+  villagerD: `${CHARS}/character-male-e.glb`,
+  signpost: `${SURVIVAL}/signpost.glb`,
   chest: `${SURVIVAL}/chest.glb`,
   egg: `${FOOD}/egg.glb`,
   cornItem: `${FOOD}/corn.glb`,
@@ -36,7 +43,14 @@ export const MODEL_URLS = {
   flowerY: `${NATURE}/flower_yellowB.glb`,
   flowerP: `${NATURE}/flower_purpleA.glb`,
   rock: `${NATURE}/rock_smallB.glb`,
+  rockTall: `${NATURE}/rock_smallE.glb`,
   stump: `${NATURE}/stump_round.glb`,
+  grassTuft: `${NATURE}/grass_leafs.glb`,
+  grassLarge: `${NATURE}/grass_large.glb`,
+  mushroom: `${NATURE}/mushroom_redGroup.glb`,
+  bushLarge: `${NATURE}/plant_bushLarge.glb`,
+  flowerR2: `${NATURE}/flower_redC.glb`,
+  flowerY2: `${NATURE}/flower_yellowC.glb`,
   barrel: `${SURVIVAL}/barrel.glb`,
   box: `${SURVIVAL}/box.glb`,
   boxLarge: `${SURVIVAL}/box-large.glb`,

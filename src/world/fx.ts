@@ -64,7 +64,7 @@ function burst(
 export function sparkleBurst(scene: Scene, at: Vector3, golden: boolean, count = 10): void {
   sparkleTex.gold ??= discTexture('rgba(255,216,84,1)')
   sparkleTex.soft ??= discTexture('rgba(255,250,220,0.9)')
-  burst(scene, at, golden ? sparkleTex.gold : sparkleTex.soft, count, golden ? 0.55 : 0.4, golden ? 2.2 : 1.4, 1.6)
+  burst(scene, at, golden ? sparkleTex.gold : sparkleTex.soft, count, golden ? 0.45 : 0.28, golden ? 2.2 : 1.4, 1.6)
 }
 
 export function heartBurst(scene: Scene, at: Vector3): void {

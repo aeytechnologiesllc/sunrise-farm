@@ -1,9 +1,9 @@
 /** DOM HUD: coins odometer + fountain, wheat pouch, XP bar, contextual chip,
- * seed picker, naming card, level banner, countdown ring, nest pip, name tag.
+ * proximity action buttons, customer want bubbles, naming card, level banner,
+ * countdown ring, nest pip, name tag, floating toasts.
  * Purely presentational — game state is the single source of truth and the
  * displayed coin count self-heals toward it (never gated on tweens). */
 import gsap from 'gsap'
-import type { CropKind } from '../game/economy'
 
 const CSS = `
 #hud{position:fixed;inset:0;pointer-events:none;color:#3a2d1e;
@@ -40,16 +40,29 @@ const CSS = `
   box-shadow:0 1px 3px rgba(80,50,0,.4)}
 .coin-fly.golden{background:radial-gradient(circle at 35% 30%,#fffbe0,#ffd700 55%,#e09e00);
   box-shadow:0 0 8px rgba(255,215,0,.9)}
-#picker{position:absolute;pointer-events:auto}
-#picker .seed{position:absolute;width:74px;height:74px;margin:-37px 0 0 -37px;border-radius:50%;
-  background:rgba(255,252,240,.97);border:none;box-shadow:0 4px 14px rgba(60,40,10,.3);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;
-  font-family:inherit;font-weight:800;font-size:13px;color:#3a2d1e;cursor:pointer}
-#picker .seed .em{font-size:24px;line-height:1.1}
-#picker .seed .tm{font-size:10px;font-weight:700;color:#8a7a5a}
-#picker .seed.locked{filter:grayscale(.9);opacity:.72}
-#picker .seed.locked .tm{color:#b3541e}
-#pickerveil{position:absolute;inset:0;pointer-events:auto}
+#actions{position:absolute;right:calc(14px + env(safe-area-inset-right));
+  bottom:calc(96px + env(safe-area-inset-bottom));display:flex;flex-direction:column;
+  gap:10px;align-items:flex-end}
+.act{pointer-events:auto;display:flex;align-items:center;gap:10px;border:none;
+  background:rgba(255,252,240,.96);border-radius:999px;padding:11px 20px 11px 14px;
+  font-family:inherit;font-weight:800;font-size:17px;color:#3a2d1e;min-height:56px;
+  box-shadow:0 5px 16px rgba(60,40,10,.3),0 3px 0 #d8cdb2;cursor:pointer;
+  touch-action:manipulation}
+.act:active{transform:translateY(2px);box-shadow:0 3px 10px rgba(60,40,10,.3),0 1px 0 #d8cdb2}
+.act .em{font-size:26px;line-height:1}
+.act .lbl{text-align:left;line-height:1.1}
+.act .lbl small{display:block;font-size:11px;font-weight:700;color:#8a7a5a}
+.act.locked{filter:grayscale(.85);opacity:.7}
+.act.locked .lbl small{color:#b3541e}
+.bubble{position:absolute;transform:translate(-50%,-100%);background:rgba(255,252,240,.96);
+  border-radius:16px;padding:7px 13px;font-size:16px;font-weight:800;opacity:0;
+  box-shadow:0 3px 12px rgba(60,40,10,.28);white-space:nowrap}
+.bubble:after{content:'';position:absolute;left:50%;bottom:-7px;margin-left:-7px;
+  border:7px solid transparent;border-top-color:rgba(255,252,240,.96);border-bottom:0}
+.bubble .coin-mini{display:inline-block;width:14px;height:14px;border-radius:50%;
+  vertical-align:-1px;background:radial-gradient(circle at 35% 30%,#ffe999,#f5b916 60%,#c98a08)}
+.toast{position:absolute;transform:translate(-50%,-50%);font-weight:800;font-size:17px;
+  color:#fff;text-shadow:0 2px 6px rgba(60,30,0,.55);white-space:nowrap;pointer-events:none}
 #namecard-veil{position:absolute;inset:0;background:rgba(30,20,5,.35);pointer-events:auto;
   display:flex;align-items:center;justify-content:center;opacity:0}
 #namecard{background:#fffcf0;border-radius:22px;padding:22px 26px;width:min(320px,84vw);
@@ -76,13 +89,13 @@ const CSS = `
 @keyframes tickpop{50%{transform:scale(1.18)}}
 `
 
-export interface SeedOption {
-  kind: CropKind
-  label: string
+/** big one-tap context button shown above the right thumb */
+export interface ActionDef {
+  id: string
   emoji: string
-  time: string
-  locked: boolean
-  lockText: string
+  label: string
+  sub?: string
+  locked?: boolean
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -139,7 +152,10 @@ export class Hud {
   private chipText = ''
   private banner: HTMLDivElement
   private flash: HTMLDivElement
-  private picker: HTMLDivElement | null = null
+  private actionsBox: HTMLDivElement
+  private actionsKey = ''
+  private onAction: ((id: string) => void) | null = null
+  private bubbles: HTMLDivElement[] = []
   private nameVeil: HTMLDivElement | null = null
   private ring: HTMLDivElement
   private ringArc: SVGCircleElement
@@ -176,6 +192,11 @@ export class Hud {
     this.chip = el('div', 'chip', this.root)
     this.banner = el('div', 'banner', this.root)
     this.flash = el('div', 'flash', this.root)
+    this.actionsBox = el('div', 'actions', this.root)
+    for (let i = 0; i < 2; i++) {
+      const b = el('div', '', this.root, 'bubble')
+      this.bubbles.push(b)
+    }
 
     this.ring = el('div', 'ring', this.root)
     const r1 = ringSvg(54, '#ffd54f', 'rgba(40,30,10,.45)', 5)
@@ -313,55 +334,62 @@ export class Hud {
     gsap.timeline().to(this.flash, { opacity: 1, duration: 0.18 }).to(this.flash, { opacity: 0, duration: 0.9 })
   }
 
-  // ---- seed picker ------------------------------------------------------
+  // ---- proximity action buttons (above the right thumb) ------------------
 
-  showSeedPicker(at: { x: number; y: number }, options: SeedOption[], pick: (kind: CropKind) => void): void {
-    this.hideSeedPicker()
-    const veil = document.createElement('div')
-    veil.id = 'pickerveil'
-    veil.addEventListener('pointerdown', (e) => {
-      e.stopPropagation()
-      this.hideSeedPicker()
-    })
-    const wrap = document.createElement('div')
-    wrap.id = 'picker'
-    veil.appendChild(wrap)
-    this.root.appendChild(veil)
-    this.picker = veil
-    const cx = Math.min(Math.max(at.x, 96), innerWidth - 96)
-    const cy = Math.min(Math.max(at.y, 140), innerHeight - 100)
-    const radius = 78
-    const start = -Math.PI / 2 - ((options.length - 1) * 0.45) / 2
-    options.forEach((opt, i) => {
+  /** declarative: call every tick with what's actionable HERE; the DOM only
+   * rebuilds when the set changes. Empty array hides the stack. */
+  setActions(actions: ActionDef[], onAction: (id: string) => void): void {
+    this.onAction = onAction
+    const key = actions.map((a) => `${a.id}:${a.label}:${a.locked ? 1 : 0}:${a.sub ?? ''}`).join('|')
+    if (key === this.actionsKey) return
+    this.actionsKey = key
+    this.actionsBox.innerHTML = ''
+    actions.forEach((a, i) => {
       const b = document.createElement('button')
-      b.className = opt.locked ? 'seed locked' : 'seed'
-      const a = start + i * 0.9
-      b.style.left = `${cx + Math.cos(a) * radius}px`
-      b.style.top = `${cy + Math.sin(a) * radius}px`
-      b.innerHTML = `<span class="em">${opt.emoji}</span>${opt.label}<span class="tm">${
-        opt.locked ? opt.lockText : opt.time
+      b.className = a.locked ? 'act locked' : 'act'
+      b.innerHTML = `<span class="em">${a.emoji}</span><span class="lbl">${a.label}${
+        a.sub ? `<small>${a.sub}</small>` : ''
       }</span>`
       b.addEventListener('pointerdown', (e) => {
         e.stopPropagation()
-        if (opt.locked) {
-          gsap.fromTo(b, { x: -4 }, { x: 0, duration: 0.3, ease: 'elastic.out(1.2,0.3)' })
+        if (a.locked) {
+          gsap.fromTo(b, { x: -5 }, { x: 0, duration: 0.32, ease: 'elastic.out(1.2,0.3)' })
           return
         }
-        this.hideSeedPicker()
-        pick(opt.kind)
+        this.onAction?.(a.id)
       })
-      wrap.appendChild(b)
-      gsap.from(b, { scale: 0.3, opacity: 0, duration: 0.3, delay: i * 0.05, ease: 'back.out(2.5)' })
+      this.actionsBox.appendChild(b)
+      gsap.from(b, { scale: 0.5, opacity: 0, duration: 0.28, delay: i * 0.05, ease: 'back.out(2.4)' })
     })
   }
 
-  hideSeedPicker(): void {
-    this.picker?.remove()
-    this.picker = null
+  // ---- customer want bubbles (projected) ----------------------------------
+
+  setBubble(slot: number, visible: boolean, x = 0, y = 0, html = ''): void {
+    const b = this.bubbles[slot]
+    if (!b) return
+    b.style.opacity = visible ? '1' : '0'
+    if (!visible) return
+    b.style.left = `${x}px`
+    b.style.top = `${y}px`
+    if (b.dataset.html !== html) {
+      b.dataset.html = html
+      b.innerHTML = html
+      gsap.from(b, { scale: 0.5, duration: 0.35, ease: 'back.out(2.2)' })
+    }
   }
 
-  get pickerOpen(): boolean {
-    return this.picker !== null
+  /** tiny rising toast ("+3 tip ♥", "+1 🌾") at a screen point */
+  floatText(at: { x: number; y: number }, text: string): void {
+    const t = document.createElement('div')
+    t.className = 'toast'
+    t.textContent = text
+    t.style.left = `${at.x}px`
+    t.style.top = `${at.y}px`
+    this.root.appendChild(t)
+    gsap.to(t, { y: -56, duration: 1.1, ease: 'power1.out' })
+    gsap.to(t, { opacity: 0, duration: 0.4, delay: 0.7, onComplete: () => t.remove() })
+    gsap.from(t, { scale: 0.5, duration: 0.25, ease: 'back.out(2.5)' })
   }
 
   // ---- naming card ------------------------------------------------------

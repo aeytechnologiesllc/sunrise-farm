@@ -4,6 +4,7 @@ import {
   CROPS,
   type CropKind,
   GOLDEN_CROP_CHANCE,
+  type GoodKind,
   XP_GAIN,
   eggTimerFor,
   eggValue,
@@ -124,7 +125,10 @@ export class Game {
     this.syncRng()
     const coins = sellValue(kind, golden)
     this.grantCoins(coins)
+    // bank the good as stand stock too (wheat doubles as feed) — customers
+    // buying it later is a pure bonus on top of the auto-sell
     if (kind === 'wheat') this.state.wheat += 1
+    else this.state.corn += 1
     this.state.harvests += 1
     this.grantXp(XP_GAIN.harvest)
     this.retireChip('harvest')
@@ -164,9 +168,30 @@ export class Game {
     this.syncRng()
     const coins = eggValue(golden)
     this.grantCoins(coins)
+    this.state.eggs += 1
     this.grantXp(XP_GAIN.collectEgg)
     this.retireChip('collect')
     return { golden, coins }
+  }
+
+  /** current stand stock, used to scale customer wants */
+  stock(): Record<GoodKind, number> {
+    return { wheat: this.state.wheat, corn: this.state.corn, egg: this.state.eggs }
+  }
+
+  /** hand goods to a customer: decrements stock, pays the offered coins.
+   * Fails (returns false) only when stock ran out since the want was rolled —
+   * the customer simply keeps waiting (no-punishment rule). */
+  fulfill(kind: GoodKind, count: number, coins: number): boolean {
+    const s = this.state
+    const have = kind === 'wheat' ? s.wheat : kind === 'corn' ? s.corn : s.eggs
+    if (have < count) return false
+    if (kind === 'wheat') s.wheat -= count
+    else if (kind === 'corn') s.corn -= count
+    else s.eggs -= count
+    this.grantCoins(coins)
+    this.grantXp(XP_GAIN.serve)
+    return true
   }
 
   canPet(): boolean {

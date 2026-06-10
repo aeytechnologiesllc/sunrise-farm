@@ -132,4 +132,20 @@ export class Sfx {
     this.tone(160, { type: 'sawtooth', dur: 0.3, gain: 0.08, glideTo: 320 })
     this.noise({ at: 0.25, dur: 0.1, gain: 0.2, freq: 400, q: 1 })
   }
+
+  /** storefront ding-ding — a customer reached the stand */
+  bell(): void {
+    this.tone(1318, { type: 'triangle', dur: 0.4, gain: 0.18 })
+    this.tone(1975, { dur: 0.5, gain: 0.08 })
+    this.tone(1318, { at: 0.16, type: 'triangle', dur: 0.5, gain: 0.14 })
+    this.tone(1975, { at: 0.16, dur: 0.6, gain: 0.06 })
+  }
+
+  /** sale! — bright little till jingle (offer hand-over) */
+  kaching(): void {
+    this.noise({ dur: 0.06, gain: 0.18, freq: 3200, q: 1.4 })
+    this.tone(1047, { at: 0.02, type: 'triangle', dur: 0.16, gain: 0.2 })
+    this.tone(1568, { at: 0.1, type: 'triangle', dur: 0.3, gain: 0.18 })
+    this.tone(2093, { at: 0.18, type: 'sine', dur: 0.35, gain: 0.12 })
+  }
 }

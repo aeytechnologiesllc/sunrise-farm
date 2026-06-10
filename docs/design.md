@@ -1,5 +1,6 @@
 # SUNRISE FARM (working title) — game3 design
-**Status:** v1, research-backed. Built from 14 adversarially-verified findings (research run `wf_c3ba8b38-595`; 6 folklore claims rejected — fabricated quotes/misattributed sources — and excluded from this doc).
+**Status:** v2 (third-person). v1 was tap-to-act; the owner directed a shift to **joystick third-person diner grammar**: you WALK a farmer to things and they happen by proximity (ripe plot -> auto-harvest, stand near an empty plot -> seed chips + auto-plant wheat after 0.6s, walk to the hen -> big one-tap Feed/Pet buttons above the right thumb, walk to the dropped crate -> arrival ceremony, walk to the stand -> serve customers). Customers arrive from a road every 60-120s, ask only for what's in stock (premium price + tip), and NEVER leave angry — unserved visitors browse forever. All v1 dopamine directives below remain binding and are wired through the new control model.
+Research-backed: built from 14 adversarially-verified findings (research run `wf_c3ba8b38-595`; 6 folklore claims rejected — fabricated quotes/misattributed sources — and excluded from this doc).
 **One sentence:** a warm, toy-like 3D farm that starts as one field and one chicken and visibly grows into a homestead — engineered so every minute contains something ripening, something to collect, and something new to place in the world. game1 is frozen; this is a fresh codebase.
 
 ## PILLARS
@@ -27,7 +28,7 @@ plant → watch → harvest → (feed animals | sell) → coins+XP → unlock vi
 ## ART & TECH
 - Stack: Vite + TS + three 0.184 + gsap + postprocessing (engine scaffold committed; fixed-step `Engine.advance()` for deterministic tests).
 - Models: CC0 GLBs — Quaternius animated animals (cow/chicken with real idle/walk/eat clips), Kenney farm/nature/character packs in `public/models/` (keep each pack's `Textures/colormap.png`; pattern proven in game2). Toy-like, rounded, saturated; warm sun + soft shadows; ACES; subtle bloom for golden moments only.
-- Camera: gentle 35° orbit-pan (one-finger drag pan, pinch zoom, clamped); tap = act.
+- Camera: third-person follow (behind-and-above, smooth damped, slight look-ahead; pinch/wheel zoom clamped). Movement: left virtual joystick (pointer-captured, wedge-proof) + WASD. Proximity = act; context buttons sit above the right thumb. Ceremonies only blend a focus override — input never locks.
 - Saves: localStorage with sim-time catch-up on boot (offline growth uses real elapsed time, capped); signup/cloud deferred by owner.
 - Dev driver: `window.__farm` = state/give/step/wipe (+ `__step(s)` fixed-step sim — hidden preview tabs throttle rAF; never gate logic on gsap completion; gsap re-rooted on engine clock).
 - Anti-dark-pattern hard rules: no decay/loss mechanics, no purchase-gated randomness, no guilt notifications. Joyful compulsion only.

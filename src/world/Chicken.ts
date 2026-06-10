@@ -21,7 +21,7 @@ function findAction(mixer: AnimationMixer, root: Group, clips: import('three').A
   return clip ? mixer.clipAction(clip, root) : null
 }
 
-type Phase = 'hidden' | 'crateDrop' | 'opening' | 'popOut' | 'walking' | 'home'
+type Phase = 'hidden' | 'crateDrop' | 'crateWait' | 'opening' | 'popOut' | 'walking' | 'home'
 
 export class ChickenView {
   readonly group = new Group()
@@ -85,7 +85,9 @@ export class ChickenView {
   private henScale = 1.45
 
   get visible(): boolean {
-    return this.phase !== 'hidden' && this.phase !== 'crateDrop' && this.phase !== 'opening'
+    return (
+      this.phase !== 'hidden' && this.phase !== 'crateDrop' && this.phase !== 'crateWait' && this.phase !== 'opening'
+    )
   }
 
   get settled(): boolean {
@@ -93,14 +95,23 @@ export class ChickenView {
   }
 
   get ceremonyActive(): boolean {
-    return this.phase !== 'hidden' && this.phase !== 'home'
+    return this.phase !== 'hidden' && this.phase !== 'home' && this.phase !== 'crateWait'
   }
 
-  /** kick off the arrival; cues fire from sim-time update, not timeouts */
-  beginArrival(onOpen: () => void, onReady: () => void): void {
+  /** a crate has landed and is waiting for the player to walk up to it */
+  get cratePending(): boolean {
+    return this.phase === 'crateWait'
+  }
+
+  /** where the dropped crate sits (proximity checks) */
+  get crateWorldPos(): Vector3 {
+    return this.cratePos
+  }
+
+  /** step 1 (after first harvest): the crate thuds down… and waits.
+   * Walking up to it is what opens it — go-to-it grammar. */
+  dropCrate(): void {
     if (this.phase !== 'hidden') return
-    this.onOpen = onOpen
-    this.onReady = onReady
     this.phase = 'crateDrop'
     this.phaseT = 0
     this.crate = this.assets.spawn('chest')
@@ -109,6 +120,25 @@ export class ChickenView {
     this.scene.add(this.crate)
     this.crateMixer = new AnimationMixer(this.crate)
     gsap.to(this.crate.position, { y: 0, duration: 0.7, ease: 'bounce.out' })
+  }
+
+  /** step 2 (player reached the crate): lid opens, hen pops out, ceremony
+   * continues on the sim-time state machine. */
+  beginOpen(onOpen: () => void, onReady: () => void): void {
+    if (this.phase !== 'crateWait') return
+    this.onOpen = onOpen
+    this.onReady = onReady
+    this.phase = 'opening'
+    this.phaseT = 0
+    const clips = this.assets.clips('chest')
+    const open = clips.find((c) => c.name.toLowerCase() === 'open')
+    if (open && this.crate && this.crateMixer) {
+      const a = this.crateMixer.clipAction(open, this.crate)
+      a.setLoop(LoopOnce, 1)
+      a.clampWhenFinished = true
+      a.play()
+    }
+    this.onOpen?.()
   }
 
   /** instantly settle (loading a save where she already lives here) */
@@ -125,17 +155,8 @@ export class ChickenView {
     if (this.phase === 'hidden' || this.phase === 'home') return
     this.phaseT += dt
     if (this.phase === 'crateDrop' && this.phaseT >= 1.0) {
-      this.phase = 'opening'
+      this.phase = 'crateWait'
       this.phaseT = 0
-      const clips = this.assets.clips('chest')
-      const open = clips.find((c) => c.name.toLowerCase() === 'open')
-      if (open && this.crate && this.crateMixer) {
-        const a = this.crateMixer.clipAction(open, this.crate)
-        a.setLoop(LoopOnce, 1)
-        a.clampWhenFinished = true
-        a.play()
-      }
-      this.onOpen?.()
     } else if (this.phase === 'opening' && this.phaseT >= 0.9) {
       this.phase = 'popOut'
       this.phaseT = 0
@@ -176,10 +197,14 @@ export class ChickenView {
     }
   }
 
-  /** render-rate: mixers + transient peck recovery */
+  /** render-rate: mixers + transient peck recovery + crate invite pulse */
   frame(dt: number, t: number): void {
     this.henMixer.update(dt)
     this.crateMixer?.update(dt)
+    if (this.phase === 'crateWait' && this.crate) {
+      const s = 2 + Math.sin(t * 3.4) * 0.05
+      this.crate.scale.set(s, 2 - Math.sin(t * 3.4) * 0.04, s)
+    }
     if (this.peckUntil > 0 && t >= this.peckUntil) {
       this.peckUntil = -1
       this.swapAction(this.idle)
