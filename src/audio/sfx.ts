@@ -4,6 +4,11 @@ export class Sfx {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
 
+  /** shared context so music rides the same unlock gesture */
+  get context(): AudioContext | null {
+    return this.ctx
+  }
+
   unlock(): void {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') void this.ctx.resume()
@@ -131,6 +136,13 @@ export class Sfx {
   crate(): void {
     this.tone(160, { type: 'sawtooth', dur: 0.3, gain: 0.08, glideTo: 320 })
     this.noise({ at: 0.25, dur: 0.1, gain: 0.2, freq: 400, q: 1 })
+  }
+
+  /** soft friendly "ruff" — the dog checking in, never alarming */
+  bark(): void {
+    this.tone(310, { type: 'square', dur: 0.07, gain: 0.1, glideTo: 170 })
+    this.noise({ dur: 0.09, gain: 0.22, freq: 520, q: 1.6 })
+    this.tone(240, { at: 0.02, type: 'triangle', dur: 0.1, gain: 0.18, glideTo: 120 })
   }
 
   /** storefront ding-ding — a customer reached the stand */

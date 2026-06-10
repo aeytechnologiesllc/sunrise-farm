@@ -8,6 +8,7 @@
 import gsap from 'gsap'
 import { ACESFilmicToneMapping, PCFSoftShadowMap, Scene, Vector3, WebGLRenderer } from 'three'
 import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } from 'postprocessing'
+import { Music } from './audio/music'
 import { Sfx } from './audio/sfx'
 import { Engine } from './engine/Engine'
 import { CROPS, fountainCount, splitCoins, xpNeeded, type CropKind, type GoodKind } from './game/economy'
@@ -20,7 +21,7 @@ import { Assets } from './world/assets'
 import { ChickenView } from './world/Chicken'
 import { CustomerView } from './world/Customer'
 import { DogView } from './world/Dog'
-import { FollowCamera, CAM_YAW } from './world/FollowCamera'
+import { FollowCamera } from './world/FollowCamera'
 import { heartBurst, sparkleBurst } from './world/fx'
 import { AmbientLife } from './world/fxAmbient'
 import { PlayerView } from './world/Player'
@@ -136,8 +137,12 @@ async function boot(): Promise<void> {
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
   const game = new Game(state)
   const sfx = new Sfx()
+  const music = new Music()
   const hud = new Hud()
-  const joy = new Joystick()
+  hud.mountMusicToggle(music.isMuted, (m) => music.setMuted(m))
+  // dual sticks: LEFT walks the farmer (+WASD), RIGHT orbits the camera
+  const joy = new Joystick({ side: 'left', keyboard: true })
+  const joyCam = new Joystick({ side: 'right', glyph: '\u{1F441}' })
 
   const plots = PLOT_POSITIONS.map((p) => {
     const v = new PlotView(assets, p, scene)
@@ -147,6 +152,7 @@ async function boot(): Promise<void> {
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
   const chicken = new ChickenView(assets, scene, NEST_POS, CRATE_POS, state.chicken.seed)
   const dog = new DogView(assets, scene, DOG_HOME)
+  dog.onBark = () => sfx.bark()
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
@@ -164,6 +170,7 @@ async function boot(): Promise<void> {
   game.on('levelup', (e) => {
     const sub = e.unlocked.length ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!` : 'The farm grows.'
     hud.showBanner(`Level ${e.level}!`, sub)
+    music.duck()
     sfx.fanfare()
   })
   game.on('cropReady', (e) => {
@@ -336,7 +343,16 @@ async function boot(): Promise<void> {
     'pointerdown',
     () => {
       sfx.unlock()
+      if (sfx.context) music.unlock(sfx.context)
       touch()
+    },
+    { capture: true },
+  )
+  addEventListener(
+    'keydown',
+    () => {
+      sfx.unlock()
+      if (sfx.context) music.unlock(sfx.context)
     },
     { capture: true },
   )
@@ -395,15 +411,15 @@ async function boot(): Promise<void> {
     game.update(dt)
     customers.active = state.harvests >= 1
     customers.update(dt, game.stock())
-    player.update(dt, joy.value, CAM_YAW)
+    player.update(dt, joy.value, cam.yaw)
     fenceBlock()
     chicken.update(dt)
-    dog.update(dt)
+    dog.update(dt, player.pos)
     for (const v of customerViews.values()) v.update(dt)
     serveCooldown = Math.max(0, serveCooldown - dt)
-    if (joy.active) {
+    if (joy.active || joyCam.active) {
       touch()
-      movedEver = true
+      if (joy.active) movedEver = true
     }
 
     // glow tiers from growth progress
@@ -547,7 +563,11 @@ async function boot(): Promise<void> {
   // ---- per-frame presentation ---------------------------------------------------
   engine.onFrame((dt) => {
     const t = engine.uTime.value
+    cam.orbit(joyCam.value.x, joyCam.value.y, dt)
+    cam.setRunning(player.running)
+    if (cam.moved) touch()
     cam.follow(player.pos, player.vel, dt)
+    music.tick()
     player.frame(dt, t)
     chicken.frame(dt, t)
     dog.frame(dt)

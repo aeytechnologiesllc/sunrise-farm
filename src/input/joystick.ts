@@ -1,28 +1,50 @@
-/** Left-thumb virtual joystick (DOM) + WASD/arrows, merged into one vector.
- * Wedge-proof: the stick releases on pointerup, pointercancel,
+/** Virtual joysticks (DOM) — one class, two sides.
+ * LEFT drives the farmer (merged with WASD/arrows); RIGHT orbits the camera.
+ * Wedge-proof: a stick releases on pointerup, pointercancel,
  * lostpointercapture, window blur AND tab-hidden — a dropped pointer can
- * never leave the farmer running into a fence forever. */
+ * never leave the farmer running into a fence (or the camera spinning)
+ * forever. Landscape-first: both sticks hug the bottom corners inside the
+ * safe area, sized for thumbs at 812x375. */
 
 const CSS = `
-#joy{position:fixed;left:calc(18px + env(safe-area-inset-left));
-  bottom:calc(20px + env(safe-area-inset-bottom));width:124px;height:124px;
+.joy{position:fixed;width:124px;height:124px;
+  bottom:calc(20px + env(safe-area-inset-bottom));
   border-radius:50%;background:rgba(40,30,10,.16);
   box-shadow:inset 0 0 0 2px rgba(255,252,240,.5);z-index:20;touch-action:none}
-#joyknob{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;
+.joy.left{left:calc(18px + env(safe-area-inset-left))}
+.joy.right{right:calc(18px + env(safe-area-inset-right))}
+.joyknob{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;
   border-radius:50%;background:rgba(255,252,240,.92);
   box-shadow:0 3px 10px rgba(40,25,0,.35), inset 0 -4px 0 rgba(160,130,70,.35);
   transition:transform .08s ease-out}
-@media (hover:hover) and (pointer:fine){ #joy{opacity:.55} }
+.joy.right .joyknob{background:rgba(255,246,214,.88);
+  box-shadow:0 3px 10px rgba(40,25,0,.3), inset 0 -4px 0 rgba(150,120,60,.3)}
+.joy .joyglyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:15px;color:rgba(60,45,15,.5);pointer-events:none}
+@media (hover:hover) and (pointer:fine){ .joy{opacity:.55} }
 `
+let cssInstalled = false
 
 const RADIUS = 44
 
+export interface JoystickOpts {
+  side: 'left' | 'right'
+  /** merge WASD/arrow keys into the vector (left stick only) */
+  keyboard?: boolean
+  /** small glyph hinting what the stick does (e.g. camera icon) */
+  glyph?: string
+}
+
 export class Joystick {
-  /** unit-ish vector: x = screen-right, y = screen-up (forward). |v| <= 1 */
+  /** unit-ish vector: x = screen-right, y = screen-up. |v| <= 1 */
   readonly value = { x: 0, y: 0 }
-  /** true the moment any movement input is active (idle-timer reset) */
+  /** true the moment any input is active (idle-timer reset) */
   get active(): boolean {
     return this.value.x !== 0 || this.value.y !== 0
+  }
+  /** raw stick deflection 0..1 (keyboard included) — run threshold checks */
+  get magnitude(): number {
+    return Math.min(1, Math.hypot(this.value.x, this.value.y))
   }
 
   private base: HTMLDivElement
@@ -31,15 +53,24 @@ export class Joystick {
   private stick = { x: 0, y: 0 }
   private keys = new Set<string>()
 
-  constructor() {
-    const style = document.createElement('style')
-    style.textContent = CSS
-    document.head.appendChild(style)
+  constructor(opts: JoystickOpts) {
+    if (!cssInstalled) {
+      cssInstalled = true
+      const style = document.createElement('style')
+      style.textContent = CSS
+      document.head.appendChild(style)
+    }
     this.base = document.createElement('div')
-    this.base.id = 'joy'
+    this.base.className = `joy ${opts.side}`
     this.knob = document.createElement('div')
-    this.knob.id = 'joyknob'
+    this.knob.className = 'joyknob'
     this.base.appendChild(this.knob)
+    if (opts.glyph) {
+      const g = document.createElement('div')
+      g.className = 'joyglyph'
+      g.textContent = opts.glyph
+      this.knob.appendChild(g)
+    }
     document.body.appendChild(this.base)
 
     this.base.addEventListener('pointerdown', this.down)
@@ -51,18 +82,20 @@ export class Joystick {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.releaseAll()
     })
-    addEventListener('keydown', (e) => {
-      if (KEYMAP[e.code]) {
-        this.keys.add(KEYMAP[e.code])
-        this.recompute()
-      }
-    })
-    addEventListener('keyup', (e) => {
-      if (KEYMAP[e.code]) {
-        this.keys.delete(KEYMAP[e.code])
-        this.recompute()
-      }
-    })
+    if (opts.keyboard) {
+      addEventListener('keydown', (e) => {
+        if (KEYMAP[e.code]) {
+          this.keys.add(KEYMAP[e.code])
+          this.recompute()
+        }
+      })
+      addEventListener('keyup', (e) => {
+        if (KEYMAP[e.code]) {
+          this.keys.delete(KEYMAP[e.code])
+          this.recompute()
+        }
+      })
+    }
   }
 
   private down = (e: PointerEvent): void => {

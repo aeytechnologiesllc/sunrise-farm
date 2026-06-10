@@ -12,6 +12,21 @@ URI references confirmed to exist on disk (642 GLBs, 0 failures).
 
 ---
 
+## quaternius/characters/
+- Source: model authored by Quaternius ("Ultimate Animated Character Pack" family),
+  mirrored via Poly Pizza CDN. Model page: https://poly.pizza/m/7pn3R6hPvE (Farmer)
+- License: CC0 / Public Domain (stated on the model page). Downloaded 2026-06-10.
+- Skinned + animated (62 joints, full finger rig). Self-contained GLB (vertex-color
+  materials, no external textures). Straw hat + red bandana + denim modeled in.
+
+| File | Animation clips (prefix `CharacterArmature\|`) |
+|---|---|
+| `Farmer.glb` | Death, Gun_Shoot, HitRecieve, HitRecieve_2, Idle, Idle_Gun, Idle_Gun_Pointing, Idle_Gun_Shoot, Idle_Neutral, Idle_Sword, Interact, Kick_Left, Kick_Right, Punch_Left, Punch_Right, Roll, Run, Run_Back, Run_Left, Run_Right, Run_Shoot, Sword_Slash, Walk, Wave |
+
+Used as the playable farmer (idle/walk/run locomotion + `Interact` as the
+harvest/serve flourish). Walk clip 1.33s, Run clip 0.79s — playback rate is
+speed-matched in `src/world/Player.ts` so feet don't slide.
+
 ## quaternius/ultimate-animated-animals/
 - Source: Quaternius — "Ultimate Animated Animals" pack, https://quaternius.com/packs/ultimateanimatedanimals.html (official Google Drive distribution, glTF folder; embedded-base64 .gltf repacked losslessly to binary .glb locally)
 - License: CC0 (see `License.txt` in folder, from the pack itself)

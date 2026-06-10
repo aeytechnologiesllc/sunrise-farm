@@ -41,7 +41,7 @@ const CSS = `
 .coin-fly.golden{background:radial-gradient(circle at 35% 30%,#fffbe0,#ffd700 55%,#e09e00);
   box-shadow:0 0 8px rgba(255,215,0,.9)}
 #actions{position:absolute;right:calc(14px + env(safe-area-inset-right));
-  bottom:calc(96px + env(safe-area-inset-bottom));display:flex;flex-direction:column;
+  bottom:calc(158px + env(safe-area-inset-bottom));display:flex;flex-direction:column;
   gap:10px;align-items:flex-end}
 .act{pointer-events:auto;display:flex;align-items:center;gap:10px;border:none;
   background:rgba(255,252,240,.96);border-radius:999px;padding:11px 20px 11px 14px;
@@ -87,6 +87,24 @@ const CSS = `
 #nametag .hearts{color:#e0526e;letter-spacing:-1px}
 .tickpop{animation:tickpop .18s ease-out}
 @keyframes tickpop{50%{transform:scale(1.18)}}
+#musicbtn{position:absolute;top:max(10px,env(safe-area-inset-top));
+  right:calc(12px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;
+  border:none;background:rgba(255,252,240,.92);box-shadow:0 2px 8px rgba(60,40,10,.18);
+  font-size:19px;line-height:1;pointer-events:auto;cursor:pointer;
+  font-family:inherit;touch-action:manipulation}
+#musicbtn:active{transform:translateY(1px)}
+#rotatehint{position:absolute;inset:0;display:none;align-items:flex-start;
+  justify-content:center;pointer-events:none;z-index:30}
+#rotatehint.show{display:flex}
+#rotatecard{margin-top:20vh;background:rgba(40,30,10,.8);color:#fffcf0;border-radius:18px;
+  padding:16px 30px 14px;text-align:center;pointer-events:auto;position:relative;
+  box-shadow:0 8px 30px rgba(20,10,0,.4);display:flex;flex-direction:column;gap:2px}
+#rotatecard .ph{font-size:34px;animation:rotnudge 2.4s ease-in-out infinite}
+@keyframes rotnudge{0%,25%{transform:rotate(0)}60%,85%{transform:rotate(90deg)}100%{transform:rotate(90deg)}}
+#rotatecard b{font-size:17px}
+#rotatecard span{font-size:13px;opacity:.85}
+#rotatex{position:absolute;top:4px;right:6px;border:none;background:none;color:#fffcf0;
+  font-size:15px;opacity:.7;cursor:pointer;padding:4px 6px;font-family:inherit}
 `
 
 /** big one-tap context button shown above the right thumb */
@@ -210,6 +228,46 @@ export class Hud {
     this.pipArc = r2.arc
 
     this.nametag = el('div', 'nametag', this.root)
+
+    // landscape-first: soft rotate hint on portrait touch screens.
+    // Dismissible, pointer-events only on the card — play is never blocked.
+    const hint = el('div', 'rotatehint', this.root)
+    hint.innerHTML =
+      '<div id="rotatecard"><div class="ph">\u{1F4F1}</div><b>Rotate your device</b>' +
+      '<span>the farm is loveliest in landscape</span>' +
+      '<button id="rotatex" aria-label="Dismiss">✕</button></div>'
+    const portrait = matchMedia('(orientation: portrait)')
+    const coarse = matchMedia('(pointer: coarse)')
+    const refreshHint = (): void => {
+      const show =
+        portrait.matches && coarse.matches && sessionStorage.getItem('sunrise-farm.rotateDismissed') !== '1'
+      hint.classList.toggle('show', show)
+    }
+    portrait.addEventListener('change', refreshHint)
+    hint.querySelector('#rotatex')!.addEventListener('click', () => {
+      sessionStorage.setItem('sunrise-farm.rotateDismissed', '1')
+      refreshHint()
+    })
+    refreshHint()
+  }
+
+  /** music on/off button in the top-right HUD corner */
+  mountMusicToggle(muted: boolean, onToggle: (muted: boolean) => void): void {
+    const b = document.createElement('button')
+    b.id = 'musicbtn'
+    let m = muted
+    const paint = (): void => {
+      b.textContent = m ? '\u{1F507}' : '\u{1F3B5}'
+      b.title = m ? 'Music: off' : 'Music: on'
+      b.setAttribute('aria-label', b.title)
+    }
+    paint()
+    b.addEventListener('click', () => {
+      m = !m
+      paint()
+      onToggle(m)
+    })
+    this.root.appendChild(b)
   }
 
   // ---- coins ------------------------------------------------------------

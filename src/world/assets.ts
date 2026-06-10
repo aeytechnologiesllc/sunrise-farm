@@ -1,6 +1,6 @@
 /** GLB loading + cloning. Kenney survival/food kits resolve an external
  * Textures/colormap.png relative to the GLB URL — keep pack folders intact. */
-import { Group, Mesh, MeshStandardMaterial, type AnimationClip, type Object3D } from 'three'
+import { Group, Mesh, MeshStandardMaterial, SkinnedMesh, type AnimationClip, type Object3D } from 'three'
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
@@ -13,7 +13,7 @@ const QUAT = '/models/quaternius'
 export const MODEL_URLS = {
   hen: `${QUAT}/animated-chickens/Hen.glb`,
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
-  farmer: `${CHARS}/character-male-a.glb`,
+  farmer: `${QUAT}/characters/Farmer.glb`,
   villagerA: `${CHARS}/character-female-a.glb`,
   villagerB: `${CHARS}/character-male-c.glb`,
   villagerC: `${CHARS}/character-female-d.glb`,
@@ -107,6 +107,10 @@ function prepare(obj: Object3D, uniqueMaterials: boolean): void {
     if (o instanceof Mesh) {
       o.castShadow = true
       o.receiveShadow = true
+      // skinned rigs whose vertices live in tiny bind space (e.g. Quaternius
+      // characters: ~0.02u verts + 100x armature) get culled by their raw
+      // geometry bounds — never cull animated meshes
+      if (o instanceof SkinnedMesh) o.frustumCulled = false
       if (uniqueMaterials) {
         o.material = Array.isArray(o.material)
           ? o.material.map((m) => m.clone())

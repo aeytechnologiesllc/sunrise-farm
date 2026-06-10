@@ -1,6 +1,10 @@
-/** The farmer you walk around. Uses a Kenney mini-character (idle/walk/sprint
- * clips) when its clips load; otherwise builds a charming articulated
- * procedural farmer (~1.6u: round head, straw hat, overalls, swinging limbs).
+/** The farmer you walk around — a Quaternius animated character (CC0,
+ * straw hat + denim overalls, adult proportions) with idle/walk/run clips
+ * blended via crossfades. Stick deflection past ~70% breaks into a run
+ * (slight speed-up; the camera adds a FOV nudge). Playback rate is tied to
+ * ground speed so feet don't slide, the body banks into turns, and a
+ * breathing micro-motion keeps the idle alive. Falls back to a procedural
+ * articulated farmer if the GLB can't load.
  * Movement is fixed-step + camera-relative; rendering is frame-rate. */
 import {
   AnimationAction,
@@ -13,15 +17,26 @@ import {
   Mesh,
   MeshStandardMaterial,
   Scene,
+  SkinnedMesh,
   SphereGeometry,
   Vector3,
   type AnimationClip,
 } from 'three'
 import type { Assets } from './assets'
 
-const WALK_SPEED = 3.6
+const WALK_SPEED = 3.4
+const RUN_SPEED = 4.9
+/** stick deflection above which the farmer breaks into a run */
+const RUN_DEFLECT = 0.7
 const TURN_RATE = 11
 const TARGET_HEIGHT = 1.6
+/** ground speed (u/s) covered by one clip loop at timeScale 1 — foot-lock */
+const WALK_REF_SPEED = 2.2
+const RUN_REF_SPEED = 4.6
+const FADE = 0.24
+/** bank into turns: radians of lean per (rad/s of heading change) */
+const LEAN_GAIN = 0.05
+const LEAN_MAX = 0.14
 
 function suffixAction(mixer: AnimationMixer, root: Group, clips: AnimationClip[], name: string): AnimationAction | null {
   const clip = clips.find((c) => c.name.toLowerCase() === name || c.name.toLowerCase().endsWith(`|${name}`))
@@ -41,16 +56,21 @@ export class PlayerView {
   readonly vel = new Vector3()
   /** current planar speed, units/s */
   speed = 0
+  /** stick pushed past the run threshold (camera FOV nudge reads this) */
+  running = false
 
   private model: Group
   private mixer: AnimationMixer | null = null
   private idle: AnimationAction | null = null
   private walk: AnimationAction | null = null
-  private sprint: AnimationAction | null = null
+  private run: AnimationAction | null = null
   private gestureA: AnimationAction | null = null
   private current: AnimationAction | null = null
   private gestureUntil = -1
   private heading = 0
+  private headingRate = 0
+  private lean = 0
+  private baseScale = 1
   private rig: ProceduralRig | null = null
   private swingT = 0
   private bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
@@ -69,11 +89,12 @@ export class PlayerView {
         this.mixer = mixer
         this.idle = idle
         this.walk = walk
-        this.sprint = suffixAction(mixer, model, clips, 'sprint')
-        this.gestureA = suffixAction(mixer, model, clips, 'pick-up')
+        this.run = suffixAction(mixer, model, clips, 'run')
+        this.gestureA =
+          suffixAction(mixer, model, clips, 'interact') ?? suffixAction(mixer, model, clips, 'pick-up')
         // normalize to ~1.6 units tall regardless of source scale
-        const h = new Box3().setFromObject(model).getSize(new Vector3()).y || 1
-        model.scale.multiplyScalar(TARGET_HEIGHT / h)
+        this.baseScale = TARGET_HEIGHT / measuredHeight(model)
+        model.scale.setScalar(this.baseScale)
         idle.play()
         this.current = idle
       }
@@ -95,18 +116,25 @@ export class PlayerView {
     return this.group.position
   }
 
-  /** fixed-step: camera-relative input -> velocity -> clamped position */
+  /** fixed-step: camera-relative input -> velocity -> clamped position.
+   * Deflection <= 70% walks (speed scales with deflection); beyond that the
+   * farmer breaks into a run. */
   update(dt: number, input: { x: number; y: number }, camYaw: number): void {
     const mag = Math.min(1, Math.hypot(input.x, input.y))
+    this.running = mag > RUN_DEFLECT
+    const speed = this.running
+      ? WALK_SPEED + ((mag - RUN_DEFLECT) / (1 - RUN_DEFLECT)) * (RUN_SPEED - WALK_SPEED)
+      : (mag / RUN_DEFLECT) * WALK_SPEED
     const fx = -Math.sin(camYaw)
     const fz = -Math.cos(camYaw)
     const rx = Math.cos(camYaw)
     const rz = -Math.sin(camYaw)
+    // dir has length == mag; normalize so speed is exactly `speed`
     const dirX = rx * input.x + fx * input.y
     const dirZ = rz * input.x + fz * input.y
-    this.vel.set(dirX * WALK_SPEED, 0, dirZ * WALK_SPEED)
-    this.speed = mag * WALK_SPEED
     if (mag > 0.02) {
+      this.vel.set((dirX / mag) * speed, 0, (dirZ / mag) * speed)
+      this.speed = speed
       const p = this.group.position
       p.x = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, p.x + this.vel.x * dt))
       p.z = Math.min(this.bounds.maxZ, Math.max(this.bounds.minZ, p.z + this.vel.z * dt))
@@ -114,27 +142,40 @@ export class PlayerView {
       let d = want - this.heading
       while (d > Math.PI) d -= Math.PI * 2
       while (d < -Math.PI) d += Math.PI * 2
-      this.heading += d * Math.min(1, TURN_RATE * dt)
+      const step = d * Math.min(1, TURN_RATE * dt)
+      this.headingRate = step / Math.max(dt, 1e-6)
+      this.heading += step
       this.group.rotation.y = this.heading
     } else {
+      this.vel.set(0, 0, 0)
       this.speed = 0
+      this.running = false
+      this.headingRate = 0
     }
   }
 
-  /** frame-rate: animation blending / procedural limb swing */
+  /** frame-rate: animation crossfades, foot-locked playback rate, turn lean,
+   * breathing idle / procedural limb swing */
   frame(dt: number, t: number): void {
     const moving = this.speed > 0.25
     if (this.mixer) {
       if (t < this.gestureUntil) {
         // one-shot gesture owns the body briefly
       } else if (moving) {
-        const fast = this.speed > WALK_SPEED * 0.85 && this.sprint
-        const next = fast ? this.sprint : this.walk
-        this.swap(next, Math.max(0.6, this.speed / WALK_SPEED) * 1.25)
+        const fast = this.speed > WALK_SPEED + 0.35 && this.run
+        if (fast) this.swap(this.run, clamp(this.speed / RUN_REF_SPEED, 0.75, 1.45))
+        else this.swap(this.walk, clamp(this.speed / WALK_REF_SPEED, 0.65, 1.8))
       } else {
         this.swap(this.idle, 1)
       }
       this.mixer.update(dt)
+      // bank into turns (presentation-only, on the inner model)
+      const wantLean = moving ? clamp(-this.headingRate * LEAN_GAIN * (this.speed / RUN_SPEED), -LEAN_MAX, LEAN_MAX) : 0
+      this.lean += (wantLean - this.lean) * Math.min(1, 10 * dt)
+      this.model.rotation.z = this.lean
+      // breathing micro-motion on top of the idle clip
+      const breathe = moving ? 1 : 1 + Math.sin(t * 2.1) * 0.004
+      this.model.scale.set(this.baseScale, this.baseScale * breathe, this.baseScale)
     } else if (this.rig) {
       // procedural swing-walk: arms/legs counter-phase, gentle body bob
       this.swingT += dt * (moving ? 9.5 * (this.speed / WALK_SPEED) : 2)
@@ -166,7 +207,7 @@ export class PlayerView {
     if (next === this.current) return
     next.reset()
     next.play()
-    if (this.current) this.current.crossFadeTo(next, 0.18, false)
+    if (this.current) this.current.crossFadeTo(next, FADE, false)
     this.current = next
   }
 
@@ -179,6 +220,34 @@ export class PlayerView {
   get root(): Group {
     return this.model
   }
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v))
+}
+
+/** model height that respects skinning — Quaternius rigs keep vertices in
+ * tiny bind space with the scale living on armature bones, so a plain
+ * Box3.setFromObject reads near-zero. computeBoundingBox() on a SkinnedMesh
+ * runs the vertices through the current bone transforms. */
+function measuredHeight(model: Group): number {
+  model.updateMatrixWorld(true)
+  const box = new Box3()
+  const tmp = new Box3()
+  let found = false
+  model.traverse((o) => {
+    if (o instanceof SkinnedMesh) {
+      o.computeBoundingBox()
+      if (o.boundingBox) {
+        tmp.copy(o.boundingBox).applyMatrix4(o.matrixWorld)
+        box.union(tmp)
+        found = true
+      }
+    }
+  })
+  if (!found) box.setFromObject(model)
+  const h = box.getSize(new Vector3()).y
+  return h > 0.01 ? h : 1
 }
 
 // ---- procedural fallback farmer -------------------------------------------
