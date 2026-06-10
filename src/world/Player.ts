@@ -62,6 +62,11 @@ export class PlayerView {
   /** stick pushed past the run threshold (camera FOV nudge reads this) */
   running = false
 
+  /** world yaw the farmer is facing (stick throws aim along this) */
+  get facing(): number {
+    return this.heading
+  }
+
   private model: Group
   private mixer: AnimationMixer | null = null
   private idle: AnimationAction | null = null

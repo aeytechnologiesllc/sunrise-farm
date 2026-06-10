@@ -43,6 +43,53 @@ const DEFAULT_DURATION = 7
 const PUFF_EVERY = 1.2
 const FADE = 0.18
 
+/** standalone letterbox for lightweight cinematics (stick fetch, ceremonies)
+ * — same look as the construction bars, but caller-driven */
+export class Letterbox {
+  private box: HTMLDivElement
+  private barTop: HTMLDivElement
+  private barBottom: HTMLDivElement
+  private hintEl: HTMLDivElement
+
+  constructor() {
+    this.box = document.createElement('div')
+    this.box.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:39;overflow:hidden'
+    const bar = (): HTMLDivElement => {
+      const b = document.createElement('div')
+      b.style.cssText = 'position:absolute;left:0;right:0;height:11vh;background:#000;pointer-events:none;will-change:transform'
+      this.box.appendChild(b)
+      return b
+    }
+    this.barTop = bar()
+    this.barTop.style.top = '0'
+    this.barBottom = bar()
+    this.barBottom.style.bottom = '0'
+    this.hintEl = document.createElement('div')
+    this.hintEl.style.cssText =
+      "position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;color:rgba(255,252,240,.55);font:600 12px 'Trebuchet MS','Segoe UI',system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;pointer-events:none"
+    this.barBottom.appendChild(this.hintEl)
+    document.body.appendChild(this.box)
+    gsap.set(this.barTop, { yPercent: -103 })
+    gsap.set(this.barBottom, { yPercent: 103 })
+    gsap.set(this.hintEl, { opacity: 0 })
+  }
+
+  show(hint = 'tap to skip'): void {
+    this.hintEl.textContent = hint
+    gsap.killTweensOf([this.barTop, this.barBottom, this.hintEl])
+    gsap.to(this.barTop, { yPercent: 0, duration: 0.45, ease: 'power3.out' })
+    gsap.to(this.barBottom, { yPercent: 0, duration: 0.45, ease: 'power3.out' })
+    gsap.to(this.hintEl, { opacity: 1, duration: 0.4, delay: 0.35 })
+  }
+
+  hide(): void {
+    gsap.killTweensOf([this.barTop, this.barBottom, this.hintEl])
+    gsap.to(this.barTop, { yPercent: -103, duration: 0.5, ease: 'power3.in' })
+    gsap.to(this.barBottom, { yPercent: 103, duration: 0.5, ease: 'power3.in' })
+    gsap.to(this.hintEl, { opacity: 0, duration: 0.2 })
+  }
+}
+
 export interface ConstructionDeps {
   scene: Scene
   assets: Assets

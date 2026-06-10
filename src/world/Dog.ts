@@ -74,7 +74,9 @@ export class DogView {
   private dest: Vector3 | null = null
   private pointTarget: Vector3 | null = null
   private herdPoint: Vector3 | null = null
-  private fetchState: 'none' | 'out' | 'back' = 'none'
+  private fetchState: 'none' | 'out' | 'grab' | 'back' = 'none'
+  /** sniff-and-grab beat at the stick before turning home */
+  private grabT = 0
   /** fired when she reaches the stick / drops it at the player's feet */
   onFetchPickup: (() => void) | null = null
   onFetchDone: (() => void) | null = null
@@ -196,6 +198,16 @@ export class DogView {
     this.playerPos.copy(playerPos)
     this.barkCooldown = Math.max(0, this.barkCooldown - dt)
 
+    // the grab: sniff the stick, snatch it up, a happy wag — then trot home
+    if (this.fetchState === 'grab') {
+      this.grabT -= dt
+      if (this.sniff) this.swap(this.sniff, 1)
+      if (this.grabT <= 0.55 && this.grabT + dt > 0.55) {
+        this.onFetchPickup?.()
+        this.wagEnv = 1
+      }
+      if (this.grabT <= 0) this.fetchState = 'back'
+    }
     // bringing the stick back: chase the player's current spot
     if (this.fetchState === 'back') {
       this.dest = playerPos.clone().setY(0)
@@ -233,7 +245,10 @@ export class DogView {
       } else {
         this.wantSit = 0
         this.wantLie = 0
-        const targetSpeed = d > TROT_DIST ? TROT_SPEED : WALK_SPEED
+        // carrying the stick home is a proud TROT, not a sprint — the scene
+        // gets to breathe; the sprint OUT stays a full gallop
+        const cap = this.fetchState === 'back' ? WALK_SPEED + 0.6 : TROT_SPEED
+        const targetSpeed = Math.min(cap, d > TROT_DIST ? TROT_SPEED : WALK_SPEED)
         this.speed += (targetSpeed - this.speed) * Math.min(1, 6 * dt)
         const step = Math.min(d, this.speed * dt)
         this.turnToward(Math.atan2(to.x, to.z), dt)
@@ -260,7 +275,8 @@ export class DogView {
       } else if (this.pointTarget) {
         // settled at the guide spot: face the thing, sit, wag, one soft bark
         this.turnToward(yawTo(this.group.position, this.pointTarget), dt)
-      } else {
+      } else if (this.fetchState === 'none') {
+        // (the grab beat manages its own sniff pose)
         this.idleCycle(dt)
       }
     }
@@ -275,9 +291,9 @@ export class DogView {
 
   private arrive(): void {
     if (this.fetchState === 'out') {
-      this.fetchState = 'back'
-      this.wagEnv = 1
-      this.onFetchPickup?.()
+      // don't snatch instantly — sniff it first, the way real dogs do
+      this.fetchState = 'grab'
+      this.grabT = 1.1
       return
     }
     if (this.pointTarget && !this.guideSettled) {

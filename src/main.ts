@@ -57,6 +57,7 @@ import {
   buildStand,
   CRATE_POS,
   DOG_HOME,
+  groundClear,
   NEST_POS,
   PLAYER_SPAWN,
   STAND_POS,
@@ -76,7 +77,7 @@ import { TractorView } from './world/Tractor'
 import { Flock } from './world/Sheep'
 import { Grazers } from './world/animals'
 import { buildGreenhouse, buildShop, buildStable } from './world/buildings'
-import { Construction } from './world/cutscene'
+import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
 
@@ -189,6 +190,7 @@ async function boot(): Promise<void> {
   const music = new Music()
   const hud = new Hud()
   hud.mountMusicToggle(music.isMuted, (m) => music.setMuted(m))
+  hud.mountFullscreenToggle()
   // dual sticks: LEFT walks the farmer (+WASD), RIGHT orbits the camera
   const joy = new Joystick({ side: 'left', keyboard: true })
   const joyCam = new Joystick({ side: 'right', glyph: '\u{1F441}' })
@@ -404,9 +406,19 @@ async function boot(): Promise<void> {
     saveNow()
   }
 
-  // ---- stick fetch (the waiting game's best friend) -----------------------------
+  // ---- stick fetch: a little CINEMA (the waiting game's best friend) -------------
   let stick: Mesh | null = null
   let fetchCool = 0
+  const letterbox = new Letterbox()
+  let fetchCine = false
+  let cineStarted = 0
+  let cineTick = 0
+  const endFetchCine = (): void => {
+    if (!fetchCine) return
+    fetchCine = false
+    letterbox.hide()
+    cam.release(0.9)
+  }
   const dropStick = (): void => {
     if (stick) {
       stick.removeFromParent()
@@ -414,6 +426,9 @@ async function boot(): Promise<void> {
     }
   }
   dog.onFetchPickup = () => {
+    // the snatch — a beat of slow-mo sells it
+    rareSlowMo()
+    sfx.bark()
     if (!stick) return
     stick.removeFromParent()
     dog.group.add(stick)
@@ -421,6 +436,7 @@ async function boot(): Promise<void> {
     stick.rotation.set(0, 0, Math.PI / 2)
   }
   dog.onFetchDone = () => {
+    endFetchCine()
     if (stick) {
       dog.group.remove(stick)
       scene.add(stick)
@@ -441,14 +457,31 @@ async function boot(): Promise<void> {
   }
   const throwStick = (): void => {
     dropStick()
-    const ang = Math.random() * Math.PI * 2
-    const r = 5.5 + Math.random() * 3
-    const target = player.pos.clone().add(new Vector3(Math.sin(ang) * r, 0, Math.cos(ang) * r))
-    target.x = Math.max(WORLD_BOUNDS.minX + 1.5, Math.min(WORLD_BOUNDS.maxX - 1.5, target.x))
-    target.z = Math.max(WORLD_BOUNDS.minZ + 1.5, Math.min(WORLD_BOUNDS.maxZ - 1.5, target.z))
+    // the stick flies WHERE THE FARMER FACES — wind-up, arc, chase. If that
+    // line lands on the stand/fields/pen, shorten the throw to open lawn so
+    // the chase (and the camera) never disappears behind a roof.
+    const ang = player.facing
+    const dir = new Vector3(Math.sin(ang), 0, Math.cos(ang))
+    let target = player.pos.clone().add(dir.clone().multiplyScalar(4))
+    for (let r = 7.5 + Math.random() * 3.5; r >= 3.5; r -= 1.1) {
+      const t = player.pos.clone().add(dir.clone().multiplyScalar(r))
+      t.x = Math.max(WORLD_BOUNDS.minX + 1.5, Math.min(WORLD_BOUNDS.maxX - 1.5, t.x))
+      t.z = Math.max(WORLD_BOUNDS.minZ + 1.5, Math.min(WORLD_BOUNDS.maxZ - 1.5, t.z))
+      if (!groundClear(t.x, t.z)) {
+        target = t
+        break
+      }
+    }
     if (!dog.fetch(target)) return
     sfx.whistle()
     player.gesture(engine.uTime.value)
+    // roll camera: letterbox in, eye on the flight line, then ride alongside
+    // Rex out and back until the handoff
+    fetchCine = true
+    cineStarted = engine.uTime.value
+    cineTick = 0
+    letterbox.show('rex is on it — tap to skip')
+    cam.focusOn(player.pos.clone().lerp(target, 0.6).setY(0.9), 1.1)
     const s = new Mesh(
       new CylinderGeometry(0.035, 0.05, 0.6, 6),
       new MeshStandardMaterial({ color: '#7a5a36', roughness: 1 }),
@@ -648,6 +681,8 @@ async function boot(): Promise<void> {
       sfx.unlock()
       if (sfx.context) music.unlock(sfx.context)
       touch()
+      // tap skips the fetch cinema (Rex keeps working off-camera)
+      if (fetchCine && engine.uTime.value - cineStarted > 0.9) endFetchCine()
     },
     { capture: true },
   )
@@ -771,6 +806,15 @@ async function boot(): Promise<void> {
     flock.update(dt, player.pos, dog.group.position, state.expansion)
     construction.update(dt)
     grazers.update(dt, player.pos)
+    // fetch cinema: the camera rides Rex; the scene ends at the handoff
+    if (fetchCine) {
+      cineTick -= dt
+      if (cineTick <= 0) {
+        cineTick = 0.45
+        cam.moveFocus(dog.group.position.clone().setY(0.55), 0.5)
+      }
+      if (!dog.fetching) endFetchCine()
+    }
     if (farmhand) {
       const info = plots.map((v, i) => {
         const c = game.plotAt(i)?.crop

@@ -159,10 +159,14 @@ export class FollowCamera {
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
-    const horiz = Math.cos(this.pitch) * this.smoothDist
+    // landscape phones: the short viewport makes the farmer read tiny at the
+    // portrait distance — pull the whole orbit ~25% closer when wide
+    const k = this.camera.aspect > 1.2 ? 0.74 : 1
+    const dist = this.smoothDist * k
+    const horiz = Math.cos(this.pitch) * dist
     this.camera.position.set(
       t.x + Math.sin(this.yaw) * horiz,
-      t.y + Math.sin(this.pitch) * this.smoothDist,
+      t.y + Math.sin(this.pitch) * dist,
       t.z + Math.cos(this.yaw) * horiz,
     )
     this.camera.lookAt(t)

@@ -22,6 +22,10 @@ const CSS = `
 .joy .joyglyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-size:15px;color:rgba(60,45,15,.5);pointer-events:none}
 @media (hover:hover) and (pointer:fine){ .joy{opacity:.55} }
+@media (max-height: 500px){
+  .joy{width:98px;height:98px;bottom:calc(12px + env(safe-area-inset-bottom))}
+  .joyknob{width:44px;height:44px;margin:-22px 0 0 -22px}
+}
 `
 let cssInstalled = false
 

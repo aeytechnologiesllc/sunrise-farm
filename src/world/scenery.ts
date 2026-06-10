@@ -33,7 +33,7 @@ import { allFieldRects, fenceFor, gatesFor, inRect, PEN } from '../game/expansio
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
-import { toTexture, woodCanvas } from './textures'
+import { groundDetailCanvas, toTexture, woodCanvas } from './textures'
 
 export const STAND_POS = new Vector3(0.5, 0, 7)
 export const NEST_POS = new Vector3(-4.5, 0, 1.5)
@@ -338,11 +338,22 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 export function buildGround(scene: Scene): void {
   const tex = new CanvasTexture(paintGround(mulberry32(20260610)))
   tex.colorSpace = SRGBColorSpace
-  tex.anisotropy = 4
-  const ground = new Mesh(
-    new PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
-    new MeshStandardMaterial({ map: tex, roughness: 1 }),
-  )
+  tex.anisotropy = 8
+  // crisp tiling grain layered over the painted macro: the lawn stays
+  // detailed at boot-heel distance (phone landscape brought this to light)
+  const detail = toTexture(groundDetailCanvas(mulberry32(606)), true)
+  const mat = new MeshStandardMaterial({ map: tex, roughness: 1 })
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uDetail = { value: detail }
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;')
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        diffuseColor.rgb *= 0.72 + 0.56 * texture2D(uDetail, vMapUv * 42.0).rgb;`,
+      )
+  }
+  const ground = new Mesh(new PlaneGeometry(GROUND_SIZE, GROUND_SIZE), mat)
   ground.rotation.x = -Math.PI / 2
   ground.receiveShadow = true
   scene.add(ground)

@@ -38,8 +38,10 @@ function clamp01(v: number): number {
  * 'source-atop' so it only darkens painted pixels — cutout edges stay clean
  * with zero alpha haloing (everything drawn on transparent, no shadows). */
 export function grassBladeCanvas(rng: Rng): HTMLCanvasElement {
-  const W = 256
-  const H = 192
+  // 2x resolution: phone-landscape close-ups sample this card hard, and the
+  // extra texels keep blade edges crisp instead of mip-mushy
+  const W = 512
+  const H = 384
   const { c, g } = makeCanvas(W, H)
   // [shade edge, lit edge] pairs — the lateral gradient runs between them
   const greens: Array<[string, string]> = [
@@ -53,15 +55,15 @@ export function grassBladeCanvas(rng: Rng): HTMLCanvasElement {
     ['#76682f', '#c0ae62'],
     ['#6e5f28', '#b3a356'],
   ]
-  const BLADES = 20
+  const BLADES = 26
   for (let i = 0; i < BLADES; i++) {
-    const bx = 10 + (i / (BLADES - 1)) * (W - 20) + (rng.next() - 0.5) * 12
+    const bx = 20 + (i / (BLADES - 1)) * (W - 40) + (rng.next() - 0.5) * 24
     const h = H * (0.52 + rng.next() * 0.44)
-    const lean = (rng.next() - 0.5) * 64
-    const w = 3.2 + rng.next() * 2.6
+    const lean = (rng.next() - 0.5) * 128
+    const w = 5.6 + rng.next() * 4.8
     const tipX = bx + lean
     const tipY = H - h
-    const midX = bx + lean * 0.32 + (rng.next() - 0.5) * 7
+    const midX = bx + lean * 0.32 + (rng.next() - 0.5) * 14
     const midY = H - h * 0.55
     const dry = rng.next() < 0.12
     const pool = dry ? dries : greens
@@ -83,15 +85,15 @@ export function grassBladeCanvas(rng: Rng): HTMLCanvasElement {
     g.fill()
   }
   // 2-3 seed-head stalks: a thin curved stem with a small oval grain tip
-  const stalks = 2 + Math.floor(rng.next() * 2)
+  const stalks = 3 + Math.floor(rng.next() * 2)
   for (let i = 0; i < stalks; i++) {
-    const bx = 24 + rng.next() * (W - 48)
+    const bx = 48 + rng.next() * (W - 96)
     const h = H * (0.66 + rng.next() * 0.3)
-    const lean = (rng.next() - 0.5) * 36
+    const lean = (rng.next() - 0.5) * 72
     const tipX = bx + lean
     const tipY = H - h
     g.strokeStyle = '#8a9a4e'
-    g.lineWidth = 1.4
+    g.lineWidth = 2.6
     g.beginPath()
     g.moveTo(bx, H)
     g.quadraticCurveTo(bx + lean * 0.3, H - h * 0.55, tipX, tipY)
@@ -99,7 +101,7 @@ export function grassBladeCanvas(rng: Rng): HTMLCanvasElement {
     const tilt = Math.atan2(lean * 0.55, h * 0.5)
     g.fillStyle = '#c2b178'
     g.beginPath()
-    g.ellipse(tipX, tipY - 3, 2.4, 5.2, tilt, 0, Math.PI * 2)
+    g.ellipse(tipX, tipY - 5, 4.4, 9.6, tilt, 0, Math.PI * 2)
     g.fill()
   }
   // root zone fades darker — 'source-atop' keeps it off transparent pixels,
@@ -111,6 +113,52 @@ export function grassBladeCanvas(rng: Rng): HTMLCanvasElement {
   g.fillStyle = fade
   g.fillRect(0, H * 0.55, W, H * 0.45)
   g.globalCompositeOperation = 'source-over'
+  return c
+}
+
+// ---- ground detail grain (tiling, multiplied over the macro ground) ----------
+
+/** Neutral-luminance grass grain: short blade strokes + speckle around a
+ * mid gray, tiled ~40x across the ground and blended in the shader as
+ * `rgb *= 0.72 + 0.56 * detail`. Up close the lawn reads as thousands of
+ * crisp blades instead of a blurry painted wash; at distance it averages
+ * out to no tint at all. Drawn with x/y wrap offsets so it tiles seamlessly. */
+export function groundDetailCanvas(rng: Rng): HTMLCanvasElement {
+  const S = 256
+  const { c, g } = makeCanvas(S, S)
+  g.fillStyle = '#7f7f7f'
+  g.fillRect(0, 0, S, S)
+  const wrap: Array<[number, number]> = [[0, 0], [-S, 0], [S, 0], [0, -S], [0, S]]
+  for (let i = 0; i < 900; i++) {
+    const x = rng.next() * S
+    const y = rng.next() * S
+    const len = 3 + rng.next() * 7
+    const lean = (rng.next() - 0.5) * 4
+    const tone = rng.next()
+    g.strokeStyle = tone > 0.62 ? '#9a9a9a' : tone > 0.3 ? '#646464' : '#8c8c8c'
+    g.globalAlpha = 0.5 + rng.next() * 0.4
+    g.lineWidth = 1 + rng.next() * 0.8
+    for (const [ox, oy] of wrap) {
+      g.beginPath()
+      g.moveTo(x + ox, y + oy)
+      g.lineTo(x + ox + lean, y + oy - len)
+      g.stroke()
+    }
+  }
+  // soft mottling so the grain has patches, not uniform noise
+  for (let i = 0; i < 26; i++) {
+    const x = rng.next() * S
+    const y = rng.next() * S
+    const r = 14 + rng.next() * 30
+    g.fillStyle = rng.next() > 0.5 ? '#8a8a8a' : '#737373'
+    g.globalAlpha = 0.18
+    for (const [ox, oy] of wrap) {
+      g.beginPath()
+      g.arc(x + ox, y + oy, r, 0, Math.PI * 2)
+      g.fill()
+    }
+  }
+  g.globalAlpha = 1
   return c
 }
 

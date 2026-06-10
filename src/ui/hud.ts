@@ -93,6 +93,12 @@ const CSS = `
   font-size:19px;line-height:1;pointer-events:auto;cursor:pointer;
   font-family:inherit;touch-action:manipulation}
 #musicbtn:active{transform:translateY(1px)}
+#fsbtn{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 50px);
+  right:calc(12px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;
+  border:none;background:rgba(255,252,240,.92);box-shadow:0 2px 8px rgba(60,40,10,.18);
+  font-size:17px;line-height:1;pointer-events:auto;cursor:pointer;
+  font-family:inherit;touch-action:manipulation}
+#fsbtn:active{transform:translateY(1px)}
 #rotatehint{position:absolute;inset:0;display:none;align-items:flex-start;
   justify-content:center;pointer-events:none;z-index:30}
 #rotatehint.show{display:flex}
@@ -105,6 +111,28 @@ const CSS = `
 #rotatecard span{font-size:13px;opacity:.85}
 #rotatex{position:absolute;top:4px;right:6px;border:none;background:none;color:#fffcf0;
   font-size:15px;opacity:.7;cursor:pointer;padding:4px 6px;font-family:inherit}
+/* landscape phones: everything compact so the FARM owns the screen */
+@media (max-height: 500px){
+  .act{padding:7px 13px 7px 10px;font-size:14px;min-height:38px;gap:7px;
+    box-shadow:0 3px 10px rgba(60,40,10,.3),0 2px 0 #d8cdb2}
+  .act .em{font-size:18px}
+  .act .lbl small{font-size:10px}
+  #actions{bottom:calc(96px + env(safe-area-inset-bottom));
+    right:calc(10px + env(safe-area-inset-right));gap:6px}
+  .pill{font-size:13px;padding:4px 10px 4px 7px;gap:5px}
+  .coin-ico{width:16px;height:16px}
+  .wheat-ico{font-size:14px;line-height:16px}
+  #xpwrap{padding:3px 9px 3px 4px}
+  #lvl{min-width:19px;height:19px;font-size:11px}
+  #xpbar{width:76px;height:7px}
+  #chip{font-size:12px;padding:5px 12px;top:max(6px,env(safe-area-inset-top))}
+  #topleft{gap:5px;top:max(6px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left))}
+  #banner{font-size:19px;padding:10px 24px}
+  #banner small{font-size:12px}
+  #musicbtn{width:34px;height:34px;font-size:15px}
+  #fsbtn{width:34px;height:34px;font-size:14px;top:calc(max(6px,env(safe-area-inset-top)) + 42px)}
+  .bubble{font-size:13px;padding:5px 10px}
+}
 `
 
 /** big one-tap context button shown above the right thumb */
@@ -266,6 +294,27 @@ export class Hud {
       m = !m
       paint()
       onToggle(m)
+    })
+    this.root.appendChild(b)
+  }
+
+  /** fullscreen toggle — only where the API exists (iPhone Safari has none;
+   * there, Add-to-Home-Screen is the fullscreen path via the manifest) */
+  mountFullscreenToggle(): void {
+    const el = document.documentElement
+    if (typeof el.requestFullscreen !== 'function') return
+    const b = document.createElement('button')
+    b.id = 'fsbtn'
+    const paint = (): void => {
+      b.textContent = document.fullscreenElement ? '✖' : '⛶'
+      b.title = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'
+      b.setAttribute('aria-label', b.title)
+    }
+    paint()
+    document.addEventListener('fullscreenchange', paint)
+    b.addEventListener('click', () => {
+      if (document.fullscreenElement) void document.exitFullscreen()
+      else void el.requestFullscreen()
     })
     this.root.appendChild(b)
   }
