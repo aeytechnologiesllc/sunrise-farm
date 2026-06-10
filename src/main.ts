@@ -104,6 +104,8 @@ declare global {
       sheep: () => Array<[number, number, string]>
       escape: () => number
       grazers: () => Array<[number, number]>
+      music: () => Music['debug']
+      musicUnlock: () => void
       draws: () => number
       warp: (x: number, z: number) => void
     }
@@ -679,7 +681,7 @@ async function boot(): Promise<void> {
     'pointerdown',
     () => {
       sfx.unlock()
-      if (sfx.context) music.unlock(sfx.context)
+      music.unlock() // media elements prime inside the gesture call stack
       touch()
       // tap skips the fetch cinema (Rex keeps working off-camera)
       if (fetchCine && engine.uTime.value - cineStarted > 0.9) endFetchCine()
@@ -690,7 +692,7 @@ async function boot(): Promise<void> {
     'keydown',
     () => {
       sfx.unlock()
-      if (sfx.context) music.unlock(sfx.context)
+      music.unlock()
     },
     { capture: true },
   )
@@ -1205,6 +1207,8 @@ async function boot(): Promise<void> {
     sheep: () => flock.sheep.map((s) => [s.group.position.x, s.group.position.z, s.mode] as [number, number, string]),
     escape: () => flock.startEscape(2, state.expansion),
     grazers: () => grazers.positions().map((p) => [p.x, p.z] as [number, number]),
+    music: () => music.debug,
+    musicUnlock: () => music.unlock(),
     draws: () => renderer.info.render.calls,
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)

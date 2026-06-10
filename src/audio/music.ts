@@ -1,117 +1,168 @@
 /** Background music: real CC0/public-domain folk tracks (see
- * public/audio/CREDITS.md), looped as an alternating playlist with gentle
- * gapless crossfades scheduled on the WebAudio clock. Sits quietly under the
- * SFX (~0.25 vs 0.45 master), starts only after the first user gesture,
- * ducks during fanfares, and a HUD corner button mutes it (persisted).
- * Purely presentational — never touches game logic or the fixed-step sim. */
+ * public/audio/CREDITS.md), looped as an alternating playlist.
+ *
+ * Plays through HTMLAudioElements — NOT WebAudio — on purpose:
+ * - iOS routes media elements through the "playback" audio session, so music
+ *   plays even with the ringer SILENT switch on (WebAudio gets hard-muted).
+ * - Autoplay policies: on the first user gesture every element is primed
+ *   (play() inside the gesture call stack, losers paused immediately), which
+ *   blesses them for all later programmatic play() calls at track changes.
+ * - Mute uses el.muted (settable everywhere, including old iOS); fades use
+ *   el.volume where the platform allows it and degrade to clean hard cuts
+ *   where it doesn't.
+ * Sits quietly under the SFX (~0.25), ducks during fanfares, and the HUD
+ * corner button mutes it (persisted). Purely presentational. */
 
 const TRACKS = ['/audio/music/still-pickin.mp3', '/audio/music/happy-whistling-ukulele.mp3']
 const VOLUME = 0.25
 /** crossfade length between tracks, seconds */
 const XFADE = 2.5
+/** volume approach rate per second (fade-ins/outs) */
+const FADE_RATE = 0.9
 const MUTE_KEY = 'sunrise-farm.musicMuted'
 
 export class Music {
-  private ctx: AudioContext | null = null
-  private out: GainNode | null = null
-  private duckG: GainNode | null = null
-  private buffers: (AudioBuffer | null)[] = TRACKS.map(() => null)
-  private loading = false
-  private nextIdx = 0
-  private nextStart = 0
+  private els: HTMLAudioElement[]
+  private want: number[]
+  private have: number[]
+  private primed = false
+  private current = -1
   private muted: boolean
+  private lastTick = 0
+  private duckK = 1
+  private duckRecoverAt = 0
 
   constructor() {
     this.muted = localStorage.getItem(MUTE_KEY) === '1'
+    this.els = TRACKS.map((url) => {
+      const a = new Audio(url)
+      a.preload = 'auto'
+      a.loop = false
+      a.muted = this.muted
+      ;(a as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+      try {
+        a.volume = 0
+      } catch {
+        /* platforms with fixed volume: fades become hard cuts */
+      }
+      return a
+    })
+    this.want = TRACKS.map(() => 0)
+    this.have = TRACKS.map(() => 0)
   }
 
   get isMuted(): boolean {
     return this.muted
   }
 
-  /** call on first user gesture with the (already unlocked) shared context */
-  unlock(ctx: AudioContext): void {
-    if (this.ctx) return
-    this.ctx = ctx
-    this.out = ctx.createGain()
-    this.out.gain.value = this.muted ? 0 : VOLUME
-    this.duckG = ctx.createGain()
-    this.duckG.connect(this.out)
-    this.out.connect(ctx.destination)
-    void this.load()
+  /** call inside the FIRST user gesture: primes every element for later
+   * programmatic playback, then lets track 0 keep playing. If the browser
+   * still refuses (gesture didn't carry activation), we un-prime so the very
+   * next tap retries — music can never get permanently stuck off. */
+  unlock(_ctx?: AudioContext): void {
+    if (this.primed) return
+    this.primed = true
+    this.current = 0
+    this.want = this.els.map((_, i) => (i === 0 ? 1 : 0))
+    this.els.forEach((a, i) => {
+      const p = a.play()
+      if (p)
+        p.then(() => {
+          if (i !== this.current) {
+            a.pause()
+            a.currentTime = 0
+          }
+        }).catch(() => {
+          if (i === this.current) {
+            this.primed = false
+            this.current = -1
+          }
+        })
+    })
   }
 
-  private async load(): Promise<void> {
-    if (this.loading || !this.ctx) return
-    this.loading = true
-    await Promise.all(
-      TRACKS.map(async (url, i) => {
-        try {
-          const res = await fetch(url)
-          if (!res.ok) return
-          const raw = await res.arrayBuffer()
-          this.buffers[i] = await this.ctx!.decodeAudioData(raw)
-        } catch {
-          /* missing/undecodable track: playlist just skips it */
-        }
-      }),
-    )
-  }
-
-  /** per-frame: keep the playlist scheduled ahead on the audio clock */
+  /** per-frame: drive crossfades + the playlist hand-off on wall time */
   tick(): void {
-    if (!this.ctx || !this.duckG) return
-    const ready = this.buffers.filter((b): b is AudioBuffer => b !== null)
-    if (ready.length === 0) return
-    if (this.ctx.currentTime + 6 < this.nextStart) return
-    const buf = nextBuffer(this.buffers, this.nextIdx)
-    if (!buf) return
-    this.nextIdx = (this.buffers.indexOf(buf.buffer) + 1) % this.buffers.length
-    const t0 = Math.max(this.nextStart, this.ctx.currentTime + 0.05)
-    const first = this.nextStart === 0
-    const src = this.ctx.createBufferSource()
-    src.buffer = buf.buffer
-    const g = this.ctx.createGain()
-    const fadeIn = first ? 1.2 : XFADE
-    g.gain.setValueAtTime(0, t0)
-    g.gain.linearRampToValueAtTime(1, t0 + fadeIn)
-    const dur = buf.buffer.duration
-    g.gain.setValueAtTime(1, t0 + dur - XFADE)
-    g.gain.linearRampToValueAtTime(0, t0 + dur)
-    src.connect(g).connect(this.duckG)
-    src.start(t0)
-    src.stop(t0 + dur + 0.1)
-    // the next track begins exactly where this one's fade-out starts
-    this.nextStart = t0 + dur - XFADE
+    if (!this.primed || this.current < 0) return
+    const now = performance.now() / 1000
+    const dt = this.lastTick === 0 ? 0.016 : Math.min(0.1, now - this.lastTick)
+    this.lastTick = now
+
+    // duck recovery
+    if (this.duckK < 1 && now >= this.duckRecoverAt) {
+      this.duckK = Math.min(1, this.duckK + dt / 1.8)
+    }
+
+    // hand off to the next track as this one approaches its tail
+    const cur = this.els[this.current]
+    const dur = cur.duration
+    if (Number.isFinite(dur) && dur > 0 && (cur.ended || dur - cur.currentTime <= XFADE)) {
+      const next = (this.current + 1) % this.els.length
+      if (next !== this.current) {
+        const n = this.els[next]
+        n.currentTime = 0
+        void n.play().catch(() => {})
+        this.want[this.current] = 0
+        this.want[next] = 1
+        this.current = next
+      } else if (cur.ended) {
+        // single-track fallback: just loop it
+        cur.currentTime = 0
+        void cur.play().catch(() => {})
+      }
+    }
+
+    // ease element volumes toward their targets (fade in/out + duck)
+    for (let i = 0; i < this.els.length; i++) {
+      const target = this.want[i]
+      const h = this.have[i]
+      const step = FADE_RATE * dt
+      const v = h + Math.max(-step, Math.min(step, target - h))
+      this.have[i] = v
+      try {
+        this.els[i].volume = Math.max(0, Math.min(1, v * VOLUME * this.duckK))
+      } catch {
+        /* fixed-volume platform: rely on muted + hard cuts */
+      }
+      // fully faded out: stop pulling the stream
+      if (target === 0 && v <= 0.001 && !this.els[i].paused && i !== this.current) this.els[i].pause()
+    }
   }
 
   /** dip slightly under big fanfares, then swell back */
   duck(): void {
-    if (!this.ctx || !this.duckG) return
-    const t = this.ctx.currentTime
-    const gain = this.duckG.gain
-    gain.cancelScheduledValues(t)
-    gain.setValueAtTime(gain.value, t)
-    gain.linearRampToValueAtTime(0.35, t + 0.18)
-    gain.setValueAtTime(0.35, t + 1.4)
-    gain.linearRampToValueAtTime(1, t + 3.2)
+    this.duckK = 0.35
+    this.duckRecoverAt = performance.now() / 1000 + 1.4
   }
 
   setMuted(muted: boolean): void {
     this.muted = muted
     localStorage.setItem(MUTE_KEY, muted ? '1' : '0')
-    if (!this.ctx || !this.out) return
-    const t = this.ctx.currentTime
-    this.out.gain.cancelScheduledValues(t)
-    this.out.gain.setValueAtTime(this.out.gain.value, t)
-    this.out.gain.linearRampToValueAtTime(muted ? 0 : VOLUME, t + 0.3)
+    for (const a of this.els) a.muted = muted
   }
-}
 
-function nextBuffer(buffers: (AudioBuffer | null)[], startIdx: number): { buffer: AudioBuffer } | null {
-  for (let k = 0; k < buffers.length; k++) {
-    const b = buffers[(startIdx + k) % buffers.length]
-    if (b) return { buffer: b }
+  /** dev/diagnostic peek (also handy in remote debugging) */
+  get debug(): {
+    primed: boolean
+    current: number
+    times: number[]
+    paused: boolean[]
+    ready: number[]
+    network: number[]
+    errors: Array<number | null>
+    volumes: number[]
+    muted: boolean[]
+  } {
+    return {
+      primed: this.primed,
+      current: this.current,
+      times: this.els.map((a) => a.currentTime),
+      paused: this.els.map((a) => a.paused),
+      ready: this.els.map((a) => a.readyState),
+      network: this.els.map((a) => a.networkState),
+      errors: this.els.map((a) => a.error?.code ?? null),
+      volumes: this.els.map((a) => a.volume),
+      muted: this.els.map((a) => a.muted),
+    }
   }
-  return null
 }
