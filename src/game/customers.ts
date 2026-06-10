@@ -6,6 +6,7 @@
 import {
   CUSTOMER_DELAY,
   CUSTOMER_FIRST_DELAY,
+  CUSTOMER_PREMIUM,
   CUSTOMER_QUEUE_MAX,
   type GoodKind,
   offerFor,
@@ -38,6 +39,10 @@ export class Customers {
   readonly queue: Customer[] = []
   /** set false during FTUE; main flips it on after the first harvest */
   active = false
+  /** pay multiplier — the Farm Shop project raises it above the base */
+  premium = CUSTOMER_PREMIUM
+  /** queue cap — the Farm Shop fits more browsers */
+  queueMax = CUSTOMER_QUEUE_MAX
   onSpawn: ((c: Customer) => void) | null = null
 
   private rng: Rng
@@ -56,7 +61,7 @@ export class Customers {
   /** fixed-step tick. Spawns at most one customer per call. */
   update(dt: number, stock: Stock): void {
     if (!this.active) return
-    if (this.queue.length >= CUSTOMER_QUEUE_MAX) return
+    if (this.queue.length >= this.queueMax) return
     this.nextIn -= dt
     if (this.nextIn > 0) return
     // hold (don't reset) the timer until something is in stock, so the
@@ -81,7 +86,7 @@ export class Customers {
     if (kinds.length === 0) return null
     const kind = kinds[Math.floor(this.rng.next() * kinds.length)]
     const count = Math.max(1, Math.min(2, Math.floor(this.rng.next() * stock[kind]) + 1))
-    const offer = offerFor(kind, count)
+    const offer = offerFor(kind, count, this.premium)
     return { kind, count, offer, tip: tipFor(offer) }
   }
 

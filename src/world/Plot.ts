@@ -1,9 +1,15 @@
-/** One field plot: 2x2 dirt tiles + 4 crop plants stepping through 4 visible
- * stages. Stage-ups bounce (back.out); >=90% shimmers; ready pulses gold. */
+/** One field plot: real PLANTED ROWS — 9 staggered plants (6 in compact
+ * greenhouse planters) stepping through 4 visible stages atop the furrowed
+ * soil. All plants of a stage are baked into 1-2 merged meshes per plot so
+ * draw calls stay flat while the fields finally read as crops, not pegs.
+ * Stage-ups bounce (back.out); >=90% shimmers; ready pulses gold. */
 import gsap from 'gsap'
-import { Group, Scene, Vector3 } from 'three'
+import { BufferGeometry, Group, Material, Matrix4, Mesh, Quaternion, Scene, Vector3 } from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { CropKind } from '../game/economy'
-import { setEmissive, type Assets, type ModelKey } from './assets'
+import { mulberry32 } from '../game/rng'
+import { setEmissive, tint, type Assets, type ModelKey } from './assets'
+import { SOIL_TOP } from './field'
 
 const STAGE_MODELS: Record<CropKind, Array<{ key: ModelKey; scale: number }>> = {
   wheat: [
@@ -20,32 +26,39 @@ const STAGE_MODELS: Record<CropKind, Array<{ key: ModelKey; scale: number }>> = 
   ],
 }
 
-const PLANT_OFFSETS = [
-  [-0.55, -0.55],
-  [0.55, -0.55],
-  [-0.55, 0.55],
-  [0.55, 0.55],
-] as const
+/** 3 rows x 3 plants fills the 2.3u frame like a real planting */
+const FIELD_GRID: Array<[number, number]> = [
+  [-0.72, -0.72], [0, -0.72], [0.72, -0.72],
+  [-0.72, 0], [0, 0], [0.72, 0],
+  [-0.72, 0.72], [0, 0.72], [0.72, 0.72],
+]
+/** greenhouse planters are tighter: 2 rows x 3 */
+const COMPACT_GRID: Array<[number, number]> = [
+  [-0.55, -0.42], [0, -0.42], [0.55, -0.42],
+  [-0.55, 0.42], [0, 0.42], [0.55, 0.42],
+]
 
 export class PlotView {
   readonly group = new Group()
   readonly center: Vector3
-  private plants: Group[] = []
+  private plants: Mesh[] = []
   private cropRoot = new Group()
   private kind: CropKind | null = null
   private stage = -1
   private glow: 'none' | 'shimmer' | 'ready' = 'none'
+  private seed: number
 
-  constructor(private assets: Assets, pos: Vector3, private scene: Scene) {
+  constructor(
+    private assets: Assets,
+    pos: Vector3,
+    private scene: Scene,
+    private compact = false,
+  ) {
     this.center = pos.clone()
     this.group.position.copy(pos)
-    for (const [ox, oz] of PLANT_OFFSETS) {
-      const dirt = assets.spawn('dirt')
-      dirt.position.set(ox * 1.05, 0, oz * 1.05)
-      dirt.scale.setScalar(1.15)
-      this.group.add(dirt)
-    }
+    this.cropRoot.position.y = compact ? 0.06 : SOIL_TOP
     this.group.add(this.cropRoot)
+    this.seed = ((Math.abs(pos.x * 73856) | 0) ^ (Math.abs(pos.z * 19349) | 0)) >>> 0 || 1
   }
 
   setCrop(kind: CropKind | null, stage: number, animate: boolean): void {
@@ -57,24 +70,52 @@ export class PlotView {
     this.glow = 'none'
     if (!kind) return
     const def = STAGE_MODELS[kind][stage]
-    for (const [ox, oz] of PLANT_OFFSETS) {
-      const p = this.assets.spawn(def.key, true)
-      p.position.set(ox, 0.05, oz)
-      const target = def.scale * 1.5
-      p.scale.setScalar(target)
-      this.cropRoot.add(p)
-      this.plants.push(p)
-      if (animate) {
-        p.scale.setScalar(target * 0.25)
-        gsap.to(p.scale, {
-          x: target,
-          y: target,
-          z: target,
-          duration: 0.55,
-          delay: Math.random() * 0.12,
-          ease: 'back.out(2.4)',
-        })
-      }
+    const rng = mulberry32(this.seed + stage * 101)
+
+    // one template; its (tinted) materials become the merged-mesh materials
+    const template = this.assets.spawn(def.key, true)
+    if (kind === 'corn' && stage < 3) tint(template, -0.13, -0.02)
+    template.updateMatrixWorld(true)
+
+    // bake every plant transform into per-material geometry buckets
+    const grid = this.compact ? COMPACT_GRID : FIELD_GRID
+    const baseScale = def.scale * (this.compact ? 0.95 : 1.05)
+    const buckets = new Map<Material, BufferGeometry[]>()
+    const m = new Matrix4()
+    const q = new Quaternion()
+    const up = new Vector3(0, 1, 0)
+    const p = new Vector3()
+    const s = new Vector3()
+    for (const [ox, oz] of grid) {
+      const jx = (rng.next() - 0.5) * 0.16
+      const jz = (rng.next() - 0.5) * 0.16
+      const sc = baseScale * (0.86 + rng.next() * 0.28)
+      q.setFromAxisAngle(up, rng.next() * Math.PI * 2)
+      m.compose(p.set(ox + jx, 0, oz + jz), q, s.set(sc, sc * (0.92 + rng.next() * 0.16), sc))
+      template.traverse((o) => {
+        if (o instanceof Mesh && o.geometry instanceof BufferGeometry) {
+          const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as Material
+          const geo = o.geometry.clone()
+          geo.applyMatrix4(o.matrixWorld)
+          geo.applyMatrix4(m)
+          const arr = buckets.get(mat) ?? []
+          arr.push(geo)
+          buckets.set(mat, arr)
+        }
+      })
+    }
+    for (const [mat, geos] of buckets) {
+      const merged = mergeGeometries(geos.map((g) => (g.index ? g.toNonIndexed() : g)))
+      if (!merged) continue
+      const mesh = new Mesh(merged, mat)
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      this.cropRoot.add(mesh)
+      this.plants.push(mesh)
+    }
+    if (animate) {
+      this.cropRoot.scale.setScalar(0.3)
+      gsap.to(this.cropRoot.scale, { x: 1, y: 1, z: 1, duration: 0.55, ease: 'back.out(2.2)' })
     }
   }
 

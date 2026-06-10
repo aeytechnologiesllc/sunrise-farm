@@ -1,5 +1,6 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
+import { clampTier, plotCount } from './expansion'
 
 export interface CropState {
   kind: CropKind
@@ -43,7 +44,15 @@ export interface GameState {
   xp: number
   level: number
   harvests: number
+  /** land tier owned (see game/expansion.ts); plots length tracks it */
+  expansion: number
+  /** completed herding missions (reward scaling + story beats) */
+  herdsDone: number
+  /** construction projects owned (see game/projects.ts) */
+  projects: Partial<Record<string, boolean>>
   plots: PlotState[]
+  /** greenhouse planters — separate array so land expansions never reindex */
+  ghPlots: PlotState[]
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -63,7 +72,11 @@ export function initialState(seed: number): GameState {
     xp: 0,
     level: 1,
     harvests: 0,
+    expansion: 0,
+    herdsDone: 0,
+    projects: {},
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
+    ghPlots: [],
     chicken: {
       arrived: false,
       name: null,
@@ -90,8 +103,10 @@ export interface CatchUpResult {
 export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
   const el = Math.max(0, elapsedSec)
   const readyPlots: number[] = []
-  for (let i = 0; i < s.plots.length; i++) {
-    const crop = s.plots[i].crop
+  // combined index space: field plots first, then greenhouse planters
+  const all = [...s.plots, ...(s.ghPlots ?? [])]
+  for (let i = 0; i < all.length; i++) {
+    const crop = all[i].crop
     if (!crop || crop.remaining <= 0) continue
     crop.remaining = Math.max(0, crop.remaining - el)
     if (crop.remaining <= 0) readyPlots.push(i)
@@ -122,6 +137,11 @@ export function deserialize(json: string | null): GameState | null {
     // backfill fields added after first ship (saves stay v1-compatible)
     s.corn ??= 0
     s.eggs ??= 0
+    s.expansion = clampTier(s.expansion ?? 0)
+    s.herdsDone ??= 0
+    s.projects ??= {}
+    s.ghPlots ??= []
+    while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
     return s
   } catch {
     return null

@@ -13,19 +13,28 @@ URI references confirmed to exist on disk (642 GLBs, 0 failures).
 ---
 
 ## quaternius/characters/
-- Source: model authored by Quaternius ("Ultimate Animated Character Pack" family),
-  mirrored via Poly Pizza CDN. Model page: https://poly.pizza/m/7pn3R6hPvE (Farmer)
-- License: CC0 / Public Domain (stated on the model page). Downloaded 2026-06-10.
-- Skinned + animated (62 joints, full finger rig). Self-contained GLB (vertex-color
-  materials, no external textures). Straw hat + red bandana + denim modeled in.
+- Source: models authored by Quaternius ("Ultimate Animated Character Pack" family),
+  mirrored via Poly Pizza CDN. Model pages: https://poly.pizza/m/7pn3R6hPvE (Farmer),
+  https://poly.pizza/m/Yg2bQZO6Hj (Worker), https://poly.pizza/m/5EGWBMpuXq (Adventurer),
+  https://poly.pizza/m/kZ3DmIoGip (Casual Character)
+- License: CC0 / Public Domain (stated on each model page; creator `/u/Quaternius`
+  verified on each). Farmer downloaded 2026-06-10; Worker/Adventurer/Casual added
+  2026-06-10 (Phase 1: customers join the same adult family as the farmer).
+- Skinned + animated (62 joints, full finger rig). Self-contained GLBs (vertex-color
+  materials, no external textures). All four share the IDENTICAL `CharacterArmature`
+  rig and 24-clip set, machine-verified from the GLB JSON chunks.
 
 | File | Animation clips (prefix `CharacterArmature\|`) |
 |---|---|
 | `Farmer.glb` | Death, Gun_Shoot, HitRecieve, HitRecieve_2, Idle, Idle_Gun, Idle_Gun_Pointing, Idle_Gun_Shoot, Idle_Neutral, Idle_Sword, Interact, Kick_Left, Kick_Right, Punch_Left, Punch_Right, Roll, Run, Run_Back, Run_Left, Run_Right, Run_Shoot, Sword_Slash, Walk, Wave |
+| `Worker.glb` | same clip set (materials: Worker_Yellow hard-hat, Worker_Vest, Skin, Moustache…) |
+| `Adventurer.glb` | same clip set (materials: Green/LightGreen outfit, Hair, Skin, Backpack mesh) |
+| `Casual.glb` | same clip set (meshes named `Casual2_*`; materials: White/Red_Dark outfit, Hair, Skin, Skin_Darker) |
 
-Used as the playable farmer (idle/walk/run locomotion + `Interact` as the
-harvest/serve flourish). Walk clip 1.33s, Run clip 0.79s — playback rate is
-speed-matched in `src/world/Player.ts` so feet don't slide.
+Farmer = the playable character (idle/walk/run + `Interact` flourish; walk clip
+1.33s, run 0.79s — playback speed-matched in `src/world/Player.ts`). Worker/
+Adventurer/Casual = customers (`src/world/Customer.ts`) with seeded per-visitor
+skin tone, hair color and outfit tint; heights from `src/world/scale.ts`.
 
 ## quaternius/ultimate-animated-animals/
 - Source: Quaternius — "Ultimate Animated Animals" pack, https://quaternius.com/packs/ultimateanimatedanimals.html (official Google Drive distribution, glTF folder; embedded-base64 .gltf repacked losslessly to binary .glb locally)
@@ -59,6 +68,24 @@ same Drive folder if needed later.
 Note: clip names carry armature prefixes (e.g. `CharacterArmature|Walk`,
 `AnimalArmature|AnimalArmature|AnimalArmature|Idle_Peck`) — match by suffix in code.
 `Hen.glb`/`Chick.glb` have no Walk clip; use `Run` at reduced timeScale. `Idle_Peck` = eating.
+
+## quaternius/animals-extra/
+- Source: model authored by Quaternius ("Farm Animal Pack" family), mirrored via Poly Pizza
+  CDN (static.poly.pizza). Model page: https://poly.pizza/m/rgJXF570ZK (Sheep, uploaded
+  2023-11-15). Downloaded 2026-06-10.
+- License: CC0 / Public Domain ("Creative Commons Zero 1.0" stated on the model page;
+  creator `/u/Quaternius`).
+- Skinned + animated (1 skin, textured). Self-contained GLB (embedded buffer + embedded
+  PNG texture, no external URIs). Machine-verified: `glTF` header, declared length matches
+  (223,324 bytes), JSON chunk parsed.
+
+| File | Animation clips |
+|---|---|
+| `Sheep.glb` | AnimalArmature…\|Death, Headbutt, Idle, Idle_Eating, Jump_Loop, Jump_Start, Run, Walk |
+
+Note: clip names carry the triple `AnimalArmature|AnimalArmature|AnimalArmature|` prefix
+(same FBX2glTF pattern as `Hen.glb`/`Chick.glb`) — match by suffix in code. No `Gallop`
+clip; use `Run`. `Idle_Eating` = eating.
 
 ## kenney/nature-kit/
 - Source: Kenney — "Nature Kit", https://kenney.nl/assets/nature-kit (kenney_nature-kit.zip, Models/GLTF format)

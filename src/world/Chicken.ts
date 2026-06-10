@@ -14,6 +14,7 @@
 import gsap from 'gsap'
 import {
   AnimationMixer,
+  Box3,
   ConeGeometry,
   CylinderGeometry,
   Group,
@@ -27,19 +28,25 @@ import {
 } from 'three'
 import { mulberry32, type Rng } from '../game/rng'
 import type { Assets } from './assets'
+import { assertSpawnScale, henScaleFor, SCALE } from './scale'
 
 type Phase = 'hidden' | 'crateDrop' | 'crateWait' | 'opening' | 'popOut' | 'walking' | 'home'
 type Pose = 'idle' | 'walk' | 'peck'
 
-/** hen ambling speed around the nest (u/s) */
-const WANDER_SPEED = 0.55
+/** hen ambling speed around the nest (u/s) — shin-high bird, little steps */
+const WANDER_SPEED = 0.3
 /** excited scurry from the crate to the nest */
-const CEREMONY_SPEED = 2.0
+const CEREMONY_SPEED = 1.2
 const TURN_RATE = 7
 const ARRIVE_R = 0.08
 /** wander ring around the nest: clears the nest torus, stays in pet range */
-const WANDER_MIN_R = 0.95
-const WANDER_MAX_R = 1.75
+const WANDER_MIN_R = 0.5
+const WANDER_MAX_R = 1.05
+/** ground covered by one full leg cycle (two steps) per unit of hen scale —
+ * 2 steps x swing arc of the 0.23u sculpt leg; keeps her stride-matched */
+const STRIDE_PER_SCALE = 0.52
+/** cap the leg cycle so the ceremony scurry reads excited, not blurred */
+const MAX_STRIDE_RATE = 30
 
 interface HenRig {
   /** squash/stretch + bob + waddle (everything but world position/yaw) */
@@ -99,24 +106,30 @@ export class ChickenView {
     const { group: hen, rig, mats } = buildHen()
     this.hen = hen
     this.rig = rig
-    this.hen.scale.setScalar(0.001)
-    this.group.add(this.hen)
-    this.group.position.copy(cratePos)
-    scene.add(this.group)
+    // measure the sculpt at scale 1 BEFORE hiding it — the SCALE table speaks
+    // in world height, the sculpt is ~0.95u tall, henScale closes the gap
+    const built = new Box3().setFromObject(hen).getSize(new Vector3()).y
 
     // seeded per-animal variation: tint + size, stable across sessions
     this.rng = mulberry32(seed)
     const hue = (this.rng.next() - 0.5) * 0.08
     const light = (this.rng.next() - 0.5) * 0.12
     for (const m of mats) m.color.offsetHSL(hue, 0, light)
-    this.henScale = 0.92 + this.rng.next() * 0.16
+    this.henScale = henScaleFor(this.rng, built)
+    assertSpawnScale('hen', built * this.henScale, SCALE.hen.min, SCALE.hen.max)
 
+    this.hen.scale.setScalar(0.001)
+    this.group.add(this.hen)
+    this.group.position.copy(cratePos)
+    scene.add(this.group)
+
+    // hen-sized nest ring beside her
     this.nest = new Mesh(
-      new TorusGeometry(0.55, 0.22, 8, 14),
+      new TorusGeometry(0.2, 0.085, 8, 14),
       new MeshStandardMaterial({ color: '#b78a4e', roughness: 1 }),
     )
     this.nest.rotation.x = Math.PI / 2
-    this.nest.position.copy(nestPos).setY(0.16)
+    this.nest.position.copy(nestPos).setY(0.065)
     this.nest.castShadow = true
     this.nest.scale.setScalar(0.001)
     scene.add(this.nest)
@@ -184,7 +197,7 @@ export class ChickenView {
   /** instantly settle (loading a save where she already lives here) */
   settle(): void {
     this.phase = 'home'
-    this.group.position.copy(this.nestPos).add(new Vector3(0.9, 0, 0.3))
+    this.group.position.copy(this.nestPos).add(new Vector3(0.45, 0, 0.15))
     this.hen.scale.setScalar(this.henScale)
     this.nest.scale.setScalar(1)
     this.group.rotation.y = this.heading = -0.8
@@ -207,12 +220,12 @@ export class ChickenView {
         duration: 0.5,
         ease: 'back.out(2.2)',
       })
-      gsap.to(this.group.position, { y: 1.2, duration: 0.3, ease: 'power2.out', yoyo: true, repeat: 1 })
+      gsap.to(this.group.position, { y: 0.45, duration: 0.3, ease: 'power2.out', yoyo: true, repeat: 1 })
       gsap.to(this.nest.scale, { x: 1, y: 1, z: 1, duration: 0.5, ease: 'back.out(2)', delay: 0.3 })
     } else if (this.phase === 'popOut' && this.phaseT >= 0.9) {
       this.phase = 'walking'
       this.phaseT = 0
-      this.dest = this.nestPos.clone().add(new Vector3(0.9, 0, 0.3))
+      this.dest = this.nestPos.clone().add(new Vector3(0.45, 0, 0.15))
       this.moveSpeed = CEREMONY_SPEED
       this.flutterEnv = 1 // wings out — she's excited to see her nest
     } else if (this.phase === 'walking') {
@@ -326,8 +339,10 @@ export class ChickenView {
     r.wingR.rotation.z = 0.06 + flap * 1.1
 
     if (this.pose === 'walk') {
-      // stride-matched gait: step rate scales with ground speed (no sliding)
-      this.walkPhase += dt * (6 + this.moveSpeed * 9)
+      // stride-matched gait: leg cycle covers exactly the ground passing
+      // under her at the CURRENT size (no sliding at any scale)
+      const stride = STRIDE_PER_SCALE * this.henScale
+      this.walkPhase += dt * Math.min(MAX_STRIDE_RATE, (this.moveSpeed / stride) * Math.PI * 2)
       const s = Math.sin(this.walkPhase)
       r.legL.rotation.x = s * 0.6
       r.legR.rotation.x = -s * 0.6
@@ -389,16 +404,17 @@ export class ChickenView {
     this.ackYaw = Math.max(-1.1, Math.min(1.1, d))
     this.ackLeft = 1.4
     this.flutterEnv = 1
-    gsap.fromTo(this.group.position, { y: 0 }, { y: 0.35, duration: 0.16, yoyo: true, repeat: 1, ease: 'power1.out' })
+    gsap.fromTo(this.group.position, { y: 0 }, { y: 0.18, duration: 0.16, yoyo: true, repeat: 1, ease: 'power1.out' })
   }
 
   showEgg(golden: boolean): void {
     if (this.egg) return
     this.egg = this.assets.spawn('egg', true)
     this.egg.scale.setScalar(0.01)
-    this.egg.position.copy(this.nestPos).setY(0.28)
+    this.egg.position.copy(this.nestPos).setY(0.1)
     this.scene.add(this.egg)
-    gsap.to(this.egg.scale, { x: 3, y: 3, z: 3, duration: 0.5, ease: 'back.out(2.6)' })
+    // hen-proportioned egg (the GLB is 0.165u tall at scale 1)
+    gsap.to(this.egg.scale, { x: 0.9, y: 0.9, z: 0.9, duration: 0.5, ease: 'back.out(2.6)' })
     void golden
   }
 
@@ -406,7 +422,7 @@ export class ChickenView {
     if (!this.egg) return
     const egg = this.egg
     this.egg = null
-    gsap.to(egg.position, { y: 2.4, duration: 0.45, ease: 'power2.out' })
+    gsap.to(egg.position, { y: 1.1, duration: 0.45, ease: 'power2.out' })
     gsap.to(egg.scale, {
       x: 0.01,
       y: 0.01,
@@ -429,17 +445,19 @@ export class ChickenView {
     return roots
   }
 
-  /** anchor for the floating name tag */
+  /** anchor for the floating name tag — just above her comb */
   tagWorldPos(): Vector3 {
-    return this.headAnchor.copy(this.group.position).add(new Vector3(0, 1.55, 0))
+    return this.headAnchor.copy(this.group.position).add(new Vector3(0, 0.55, 0))
   }
 }
 
 // ---- procedural hen ---------------------------------------------------------
 
 /** Sculpt the hen from primitives, ~0.95u tall at scale 1, facing +z.
- * Returns the unique materials so seeded tint is applied exactly once each. */
-function buildHen(): { group: Group; rig: HenRig; mats: MeshStandardMaterial[] } {
+ * World size is normalized against the SCALE table in the constructor.
+ * Returns the unique materials so seeded tint is applied exactly once each.
+ * (exported for tests/scale.test.ts) */
+export function buildHen(): { group: Group; rig: HenRig; mats: MeshStandardMaterial[] } {
   const feather = new MeshStandardMaterial({ color: '#f3ead8', roughness: 0.95 })
   const featherDark = new MeshStandardMaterial({ color: '#d9c5a0', roughness: 0.95 })
   const red = new MeshStandardMaterial({ color: '#d6453c', roughness: 0.85 })

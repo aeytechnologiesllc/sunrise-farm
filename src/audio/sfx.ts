@@ -160,4 +160,26 @@ export class Sfx {
     this.tone(1568, { at: 0.1, type: 'triangle', dur: 0.3, gain: 0.18 })
     this.tone(2093, { at: 0.18, type: 'sine', dur: 0.35, gain: 0.12 })
   }
+
+  /** old tractor putt-putt-putt */
+  tractor(): void {
+    for (let i = 0; i < 7; i++) {
+      this.tone(82 + (i % 2) * 14, { at: i * 0.13, type: 'square', dur: 0.09, gain: 0.12, glideTo: 60 })
+      this.noise({ at: i * 0.13, dur: 0.07, gain: 0.1, freq: 320, q: 1 })
+    }
+  }
+
+  /** gentle sheep baa */
+  baa(): void {
+    const f = 280 + Math.random() * 60
+    this.tone(f, { type: 'sawtooth', dur: 0.32, gain: 0.07, glideTo: f * 0.82 })
+    this.tone(f * 1.01, { at: 0.03, type: 'sawtooth', dur: 0.3, gain: 0.05, glideTo: f * 0.8 })
+    this.noise({ dur: 0.25, gain: 0.04, freq: 900, q: 0.8 })
+  }
+
+  /** whistle — calling the dog for a fetch round */
+  whistle(): void {
+    this.tone(1180, { type: 'sine', dur: 0.18, gain: 0.16, glideTo: 1560 })
+    this.tone(1560, { at: 0.2, type: 'sine', dur: 0.24, gain: 0.16, glideTo: 1100 })
+  }
 }

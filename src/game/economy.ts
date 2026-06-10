@@ -26,7 +26,30 @@ export const GOLDEN_EGG_BASE = 0.08
 export const HEART_GOLDEN_BONUS = 0.1
 export const GOLDEN_EGG_CAP = 0.5
 
-export const XP_GAIN = { plant: 2, harvest: 5, feed: 3, collectEgg: 6, pet: 4, serve: 6 } as const
+export const XP_GAIN = {
+  plant: 2,
+  harvest: 5,
+  feed: 3,
+  collectEgg: 6,
+  pet: 4,
+  serve: 6,
+  expand: 25,
+  herd: 18,
+  fetch: 2,
+} as const
+
+// ---- land + missions -------------------------------------------------------
+/** tractor "sow everything" cooldown (seconds) */
+export const TRACTOR_COOLDOWN = 75
+/** coins per sheep brought home */
+export const HERD_COIN_PER_SHEEP = 12
+/** herding mission cadence (seconds between escapes) */
+export const HERD_COOLDOWN: [number, number] = [150, 240]
+/** first escape happens soon after the hen settles in */
+export const HERD_FIRST_DELAY: [number, number] = [35, 55]
+/** stick-fetch: chance Rex digs up a little treasure on the return */
+export const FETCH_TREASURE_CHANCE = 0.22
+export const FETCH_TREASURE: [number, number] = [2, 6]
 
 // ---- customers (roadside stand) ------------------------------------------
 /** what a customer can ask for; eggs only exist once the hen is laying */
@@ -41,8 +64,8 @@ export const CUSTOMER_QUEUE_MAX = 2
 export const CUSTOMER_FIRST_DELAY: [number, number] = [18, 30]
 export const CUSTOMER_DELAY: [number, number] = [60, 120]
 
-export function offerFor(kind: GoodKind, count: number): number {
-  return Math.ceil(GOOD_SELL[kind] * count * CUSTOMER_PREMIUM)
+export function offerFor(kind: GoodKind, count: number, premium = CUSTOMER_PREMIUM): number {
+  return Math.ceil(GOOD_SELL[kind] * count * premium)
 }
 
 export function tipFor(offer: number): number {

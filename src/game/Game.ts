@@ -3,8 +3,11 @@
 import {
   CROPS,
   type CropKind,
+  FETCH_TREASURE,
+  FETCH_TREASURE_CHANCE,
   GOLDEN_CROP_CHANCE,
   type GoodKind,
+  HERD_COIN_PER_SHEEP,
   XP_GAIN,
   eggTimerFor,
   eggValue,
@@ -13,8 +16,17 @@ import {
   sellValue,
   xpNeeded,
 } from './economy'
+import { nextTier, plotCount, type TierDef } from './expansion'
+import {
+  GREENHOUSE_GROW_MULT,
+  GREENHOUSE_PLOTS,
+  PROJECTS,
+  projectStatus,
+  type ProjectDef,
+  type ProjectId,
+} from './projects'
 import { mulberry32, type Rng } from './rng'
-import type { ChipId, GameState } from './state'
+import type { ChipId, GameState, PlotState } from './state'
 
 export interface HarvestResult {
   kind: CropKind
@@ -43,6 +55,8 @@ export interface GameEvents {
   chickenArrive: undefined
   eggReady: undefined
   chipDone: { chip: ChipId }
+  expanded: { tier: number; def: TierDef }
+  built: { def: ProjectDef }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -75,10 +89,26 @@ export class Game {
     return Math.min(3, Math.floor(p * 4))
   }
 
+  /** combined plot index space: field plots first, then greenhouse planters
+   * (a separate array so land expansions never reindex saved greenhouse crops) */
+  plotAt(i: number): PlotState | undefined {
+    const s = this.state
+    return i < s.plots.length ? s.plots[i] : s.ghPlots[i - s.plots.length]
+  }
+
+  get plotTotal(): number {
+    return this.state.plots.length + this.state.ghPlots.length
+  }
+
+  /** true when the combined index is a greenhouse planter */
+  isGreenhouse(i: number): boolean {
+    return i >= this.state.plots.length
+  }
+
   update(dt: number): void {
     const s = this.state
-    for (let i = 0; i < s.plots.length; i++) {
-      const crop = s.plots[i].crop
+    for (let i = 0; i < this.plotTotal; i++) {
+      const crop = this.plotAt(i)!.crop
       if (!crop || crop.remaining <= 0) continue
       const before = Game.stageOf(crop.total, crop.remaining)
       crop.remaining = Math.max(0, crop.remaining - dt)
@@ -108,16 +138,18 @@ export class Game {
   }
 
   plant(plot: number, kind: CropKind): boolean {
-    const p = this.state.plots[plot]
+    const p = this.plotAt(plot)
     if (!p || p.crop || !this.cropUnlocked(kind)) return false
-    p.crop = { kind, total: CROPS[kind].growSec, remaining: CROPS[kind].growSec, chimed: false }
+    // greenhouse warmth: crops mature faster under glass
+    const total = CROPS[kind].growSec * (this.isGreenhouse(plot) ? GREENHOUSE_GROW_MULT : 1)
+    p.crop = { kind, total, remaining: total, chimed: false }
     this.grantXp(XP_GAIN.plant)
     this.retireChip('plant')
     return true
   }
 
   harvest(plot: number): HarvestResult | null {
-    const p = this.state.plots[plot]
+    const p = this.plotAt(plot)
     if (!p?.crop || p.crop.remaining > 0) return null
     const kind = p.crop.kind
     p.crop = null
@@ -213,17 +245,133 @@ export class Game {
     this.grantCoins(n)
   }
 
+  // ---- land expansion -----------------------------------------------------
+
+  /** the deed on offer, if any */
+  nextDeed(): TierDef | null {
+    return nextTier(this.state.expansion)
+  }
+
+  /** what's blocking the purchase ('ok' = buyable now) */
+  deedStatus(): 'ok' | 'level' | 'coins' | null {
+    const def = this.nextDeed()
+    if (!def) return null
+    if (this.state.level < def.level) return 'level'
+    if (this.state.coins < def.cost) return 'coins'
+    return 'ok'
+  }
+
+  expand(): TierDef | null {
+    const def = this.nextDeed()
+    if (!def || this.deedStatus() !== 'ok') return null
+    const s = this.state
+    s.coins -= def.cost
+    this.emit('coins', { total: s.coins, delta: -def.cost })
+    s.expansion += 1
+    while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
+    this.grantXp(XP_GAIN.expand)
+    this.emit('expanded', { tier: s.expansion, def })
+    return def
+  }
+
+  /** tractor: sow every empty unlocked plot at once; returns plot indices */
+  plantAll(kind: CropKind): number[] {
+    if (!this.cropUnlocked(kind)) return []
+    const planted: number[] = []
+    for (let i = 0; i < this.plotTotal; i++) {
+      const p = this.plotAt(i)!
+      if (p.crop) continue
+      const total = CROPS[kind].growSec * (this.isGreenhouse(i) ? GREENHOUSE_GROW_MULT : 1)
+      p.crop = { kind, total, remaining: total, chimed: false }
+      planted.push(i)
+    }
+    if (planted.length) {
+      this.grantXp(XP_GAIN.plant * planted.length)
+      this.retireChip('plant')
+    }
+    return planted
+  }
+
+  // ---- construction projects ------------------------------------------------
+
+  /** status of every project on the board (for signs + chips) */
+  projectBoard(): Array<{ def: ProjectDef; status: ReturnType<typeof projectStatus> }> {
+    const s = this.state
+    return PROJECTS.map((def) => ({
+      def,
+      status: projectStatus(def, {
+        level: s.level,
+        coins: s.coins,
+        expansion: s.expansion,
+        projects: s.projects as Partial<Record<ProjectId, boolean>>,
+      }),
+    }))
+  }
+
+  /** fund a project: deducts, marks owned, opens greenhouse planters */
+  buildProject(id: ProjectId): ProjectDef | null {
+    const entry = this.projectBoard().find((e) => e.def.id === id)
+    if (!entry || entry.status !== 'ok') return null
+    const s = this.state
+    s.coins -= entry.def.cost
+    this.emit('coins', { total: s.coins, delta: -entry.def.cost })
+    s.projects[id] = true
+    if (id === 'greenhouse') {
+      while (s.ghPlots.length < GREENHOUSE_PLOTS.length) s.ghPlots.push({ crop: null })
+    }
+    this.grantXp(XP_GAIN.expand)
+    this.emit('built', { def: entry.def })
+    return entry.def
+  }
+
+  hasProject(id: ProjectId): boolean {
+    return this.state.projects[id] === true
+  }
+
+  // ---- dog missions ---------------------------------------------------------
+
+  /** all sheep home: pay out (scales with flock size) */
+  herdComplete(sheepHomed: number): { coins: number } {
+    const coins = HERD_COIN_PER_SHEEP * sheepHomed
+    this.state.herdsDone += 1
+    this.grantCoins(coins)
+    this.grantXp(XP_GAIN.herd)
+    return { coins }
+  }
+
+  /** stick fetch returned; sometimes Rex digs up a coin or two */
+  fetchReturned(treasure: number): void {
+    this.grantXp(XP_GAIN.fetch)
+    if (treasure > 0) this.grantCoins(treasure)
+  }
+
+  /** seeded roll: what Rex dug up alongside the stick (0 = just the stick) */
+  rollFetchTreasure(): number {
+    let out = 0
+    if (this.rng.next() < FETCH_TREASURE_CHANCE) {
+      const [a, b] = FETCH_TREASURE
+      out = a + Math.floor(this.rng.next() * (b - a + 1))
+    }
+    this.syncRng()
+    return out
+  }
+
   // ---- guidance ---------------------------------------------------------
 
   /** Highest-priority obvious next action, used by dog guide + chips. */
   suggestion(): Suggestion | null {
     const s = this.state
-    const ready = s.plots.findIndex((p) => p.crop && p.crop.remaining <= 0)
+    let ready = -1
+    let empty = -1
+    for (let i = 0; i < this.plotTotal; i++) {
+      const crop = this.plotAt(i)!.crop
+      if (crop && crop.remaining <= 0 && ready < 0) ready = i
+      if (!crop && empty < 0) empty = i
+    }
     if (ready >= 0) return { kind: 'harvest', plot: ready }
     if (s.chicken.eggReady) return { kind: 'collect' }
     if (this.canFeed()) return { kind: 'feed' }
     if (this.canPet()) return { kind: 'pet' }
-    const empty = s.plots.findIndex((p) => !p.crop)
     if (empty >= 0) return { kind: 'plant', plot: empty }
     return null
   }

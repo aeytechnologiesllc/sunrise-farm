@@ -6,12 +6,32 @@
  * completion gating); gsap is re-rooted on the engine clock; slow-mo is a
  * presentation-layer dip on rare events. */
 import gsap from 'gsap'
-import { ACESFilmicToneMapping, PCFSoftShadowMap, Scene, Vector3, WebGLRenderer } from 'three'
-import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } from 'postprocessing'
+import {
+  ACESFilmicToneMapping,
+  CylinderGeometry,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  PCFShadowMap,
+  Scene,
+  Vector3,
+  WebGLRenderer,
+} from 'three'
+import { BloomEffect, EffectComposer, EffectPass, GodRaysEffect, RenderPass, VignetteEffect } from 'postprocessing'
 import { Music } from './audio/music'
 import { Sfx } from './audio/sfx'
 import { Engine } from './engine/Engine'
-import { CROPS, fountainCount, splitCoins, xpNeeded, type CropKind, type GoodKind } from './game/economy'
+import {
+  CROPS,
+  fountainCount,
+  HERD_COOLDOWN,
+  HERD_FIRST_DELAY,
+  splitCoins,
+  TRACTOR_COOLDOWN,
+  xpNeeded,
+  type CropKind,
+  type GoodKind,
+} from './game/economy'
 import { Customers } from './game/customers'
 import { Game, type Suggestion } from './game/Game'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
@@ -28,9 +48,11 @@ import { PlayerView } from './world/Player'
 import { PlotView } from './world/Plot'
 import {
   buildClouds,
+  buildDeedSign,
   buildGround,
   buildLights,
   buildMeadow,
+  buildPicketFence,
   buildSky,
   buildStand,
   CRATE_POS,
@@ -40,13 +62,24 @@ import {
   STAND_POS,
   WORLD_BOUNDS,
 } from './world/scenery'
+import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
+import {
+  availableProjects,
+  GREENHOUSE_PLOTS,
+  SHOP_PREMIUM,
+  SHOP_QUEUE_MAX,
+  type ProjectDef,
+  type ProjectId,
+} from './game/projects'
+import { buildField } from './world/field'
+import { TractorView } from './world/Tractor'
+import { Flock } from './world/Sheep'
+import { Grazers } from './world/animals'
+import { buildGreenhouse, buildShop, buildStable } from './world/buildings'
+import { Construction } from './world/cutscene'
+import { DayCycle } from './world/daycycle'
+import { FarmhandView } from './world/Farmhand'
 
-const PLOT_POSITIONS = [
-  new Vector3(1.6, 0, 0.6),
-  new Vector3(4.4, 0, 0.6),
-  new Vector3(1.6, 0, 3.4),
-  new Vector3(4.4, 0, 3.4),
-]
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
 const GOOD_EMOJI: Record<GoodKind, string> = { wheat: '\u{1F33E}', corn: '\u{1F33D}', egg: '\u{1F95A}' }
 
@@ -57,11 +90,6 @@ const CRATE_R = 2.6
 const STAND_R = 2.9
 const AUTOPLANT_AFTER = 0.6
 
-// picket fence collision: thin walls with the two gate gaps left open
-const FENCE = { minX: -8.4, maxX: 8.2, minZ: -3.4, maxZ: 10.2 }
-const GATE_SOUTH = { center: STAND_POS.x + 0.4, half: 1.7 }
-const GATE_WEST = { center: 3.2, half: 1.5 }
-
 declare global {
   interface Window {
     __farm: {
@@ -70,6 +98,11 @@ declare global {
       step: (s: number) => void
       wipe: () => void
       pos: () => [number, number]
+      dogPos: () => [number, number, number]
+      henPos: () => [number, number, number]
+      sheep: () => Array<[number, number, string]>
+      escape: () => number
+      grazers: () => Array<[number, number]>
       draws: () => number
       warp: (x: number, z: number) => void
     }
@@ -89,23 +122,17 @@ async function boot(): Promise<void> {
   const renderer = new WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' })
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = PCFSoftShadowMap
+  renderer.shadowMap.type = PCFShadowMap
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
   document.body.appendChild(renderer.domElement)
 
   const scene = new Scene()
   const cam = new FollowCamera(renderer.domElement, PLAYER_SPAWN)
 
-  // warm ACES grade + gentle bloom + soft vignette (postprocessing pkg)
+  // warm ACES grade; the effect pass (god rays + bloom + vignette) is added
+  // after the sky exists — god rays need the sun disk as a light source
   const composer = new EffectComposer(renderer, { multisampling: 4 })
   composer.addPass(new RenderPass(scene, cam.camera))
-  composer.addPass(
-    new EffectPass(
-      cam.camera,
-      new BloomEffect({ intensity: 0.42, luminanceThreshold: 0.82, mipmapBlur: true }),
-      new VignetteEffect({ darkness: 0.3, offset: 0.26 }),
-    ),
-  )
   // manual info reset: the composer runs multiple passes per frame and
   // autoReset would hide the real draw-call total from the dev driver
   renderer.info.autoReset = false
@@ -123,19 +150,41 @@ async function boot(): Promise<void> {
   const ldp = veil.querySelector('#ldp')!
   await assets.loadAll((d, t) => (ldp.textContent = `loading ${d}/${t}`))
 
-  buildLights(scene)
-  buildSky(scene)
-  buildGround(scene)
-  buildMeadow(scene, assets)
-  buildStand(scene, assets)
-  const clouds = buildClouds(scene)
-  const ambient = new AmbientLife(scene)
-
-  // ---- state + game -------------------------------------------------------
+  // ---- state first (scenery is tier-aware) --------------------------------
   const loaded = deserialize(localStorage.getItem(SAVE_KEY))
   const state = loaded ?? initialState((Math.random() * 0xffffffff) >>> 0)
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
   const game = new Game(state)
+
+  const lights = buildLights(scene)
+  const sky = buildSky(scene)
+  // the sun walks the sky: dawn -> noon -> golden hour -> dusk, looping
+  const dayCycle = new DayCycle({ ...lights, dome: sky.dome, sunDisk: sky.sunDisk, scene })
+  composer.addPass(
+    new EffectPass(
+      cam.camera,
+      new GodRaysEffect(cam.camera, sky.sunDisk, {
+        density: 0.96,
+        decay: 0.93,
+        weight: 0.25,
+        samples: 32,
+        resolutionScale: 0.5,
+      }),
+      new BloomEffect({ intensity: 0.42, luminanceThreshold: 0.82, mipmapBlur: true }),
+      new VignetteEffect({ darkness: 0.3, offset: 0.26 }),
+    ),
+  )
+  buildGround(scene)
+  const grass = buildMeadow(scene, assets)
+  // the roadside stand survives until the Farm Shop project replaces it
+  let standGroup: Group | null = state.projects.shop ? null : buildStand(scene, assets)
+  let fenceMesh = buildPicketFence(scene, state.expansion)
+  for (let t = 0; t <= state.expansion; t++) {
+    const def = TIERS[t]
+    if (def.field) scene.add(buildField(def.field, def.plots, 0x6011 + t * 97))
+  }
+  const clouds = buildClouds(scene)
+  const ambient = new AmbientLife(scene)
   const sfx = new Sfx()
   const music = new Music()
   const hud = new Hud()
@@ -144,15 +193,40 @@ async function boot(): Promise<void> {
   const joy = new Joystick({ side: 'left', keyboard: true })
   const joyCam = new Joystick({ side: 'right', glyph: '\u{1F441}' })
 
-  const plots = PLOT_POSITIONS.map((p) => {
-    const v = new PlotView(assets, p, scene)
+  const mkPlot = (px: number, pz: number, compact = false): PlotView => {
+    const v = new PlotView(assets, new Vector3(px, 0, pz), scene, compact)
     scene.add(v.group)
     return v
-  })
+  }
+  // view order mirrors Game's combined index space: field plots, then
+  // greenhouse planters (always at the tail so expansions insert BEFORE them)
+  const plots = plotPositions(state.expansion).map(([px, pz]) => mkPlot(px, pz))
+  if (state.projects.greenhouse) for (const [px, pz] of GREENHOUSE_PLOTS) plots.push(mkPlot(px, pz, true))
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
+
+  // ---- land deeds + tractor -------------------------------------------------
+  const TRACTOR_SPOT = { pos: new Vector3(-7.2, 0, -6.6), yaw: -0.35 }
+  let tractor: TractorView | null = state.expansion >= 2 ? new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw) : null
+  let sowCooldown = 0
+  let deedSign: { group: ReturnType<typeof buildDeedSign>; at: Vector3 } | null = null
+  const placeDeedSign = (): void => {
+    if (deedSign) {
+      scene.remove(deedSign.group)
+      deedSign = null
+    }
+    const def = game.nextDeed()
+    if (!def?.sign) return
+    const group = buildDeedSign(def.name, def.cost)
+    group.position.set(def.sign[0], 0, def.sign[1])
+    group.rotation.y = Math.atan2(PLAYER_SPAWN.x - def.sign[0], PLAYER_SPAWN.z - def.sign[1])
+    scene.add(group)
+    deedSign = { group, at: new Vector3(def.sign[0], 0, def.sign[1]) }
+  }
+  placeDeedSign()
   const chicken = new ChickenView(assets, scene, NEST_POS, CRATE_POS, state.chicken.seed)
   const dog = new DogView(assets, scene, DOG_HOME)
   dog.onBark = () => sfx.bark()
+  const flock = new Flock(assets, scene, sheepCount(state.expansion), (state.chicken.seed ^ 0x51f15e) >>> 0)
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
@@ -176,6 +250,11 @@ async function boot(): Promise<void> {
   game.on('cropReady', (e) => {
     sfx.chime()
     sparkleBurst(scene, plots[e.plot].center.clone().setY(0.8), false, 5)
+  })
+  // crops visibly grow while you watch (stage-up bounce)
+  game.on('stage', (e) => {
+    const crop = game.plotAt(e.plot)?.crop
+    if (crop) plots[e.plot]?.setCrop(crop.kind, e.stage, true)
   })
   game.on('eggReady', () => {
     sfx.chime()
@@ -203,8 +282,8 @@ async function boot(): Promise<void> {
   })
 
   // ---- restore visuals from save ------------------------------------------
-  for (let i = 0; i < state.plots.length; i++) {
-    const crop = state.plots[i].crop
+  for (let i = 0; i < plots.length; i++) {
+    const crop = game.plotAt(i)?.crop
     if (crop) plots[i].setCrop(crop.kind, Game.stageOf(crop.total, crop.remaining), false)
   }
   if (state.chicken.arrived) {
@@ -216,9 +295,10 @@ async function boot(): Promise<void> {
   // comeback pan: glide across everything that got ready while away
   if (offline) {
     const readySpots: Vector3[] = []
-    state.plots.forEach((p, i) => {
-      if (p.crop && p.crop.remaining <= 0) readySpots.push(plots[i].center)
-    })
+    for (let i = 0; i < plots.length; i++) {
+      const crop = game.plotAt(i)?.crop
+      if (crop && crop.remaining <= 0) readySpots.push(plots[i].center)
+    }
     if (state.chicken.eggReady) readySpots.push(NEST_POS)
     if (readySpots.length) {
       const tl = gsap.timeline({ delay: 0.5 })
@@ -287,13 +367,236 @@ async function boot(): Promise<void> {
     player.gesture(engine.uTime.value)
     if (res.golden) {
       sfx.golden()
-      sparkleBurst(scene, NEST_POS.clone().setY(1), true, 16)
+      sparkleBurst(scene, NEST_POS.clone().setY(0.45), true, 16)
       rareSlowMo()
     } else {
       sfx.pop()
     }
-    fountainFrom(NEST_POS.clone().setY(1), res.coins, res.golden)
+    fountainFrom(NEST_POS.clone().setY(0.45), res.coins, res.golden)
     saveNow()
+  }
+
+  // ---- herding missions --------------------------------------------------------
+  const PEN_GATE = new Vector3(PEN.x1 + 0.4, 0, (PEN.gate.z0 + PEN.gate.z1) / 2)
+  let herdTimer = HERD_FIRST_DELAY[0] + Math.random() * (HERD_FIRST_DELAY[1] - HERD_FIRST_DELAY[0])
+  let flankTick = 0
+  let lastBaa = -10
+  flock.onBaa = (at) => {
+    const t = engine.uTime.value
+    if (t - lastBaa < 1.4 || at.distanceTo(player.pos) > 15) return
+    lastBaa = t
+    sfx.baa()
+  }
+  flock.onSheepHome = (left) => {
+    sfx.baa()
+    sparkleBurst(scene, PEN_GATE.clone().setY(0.9), false, 6)
+    const s = cam.screenPos(PEN_GATE.clone().setY(1.4))
+    if (!s.behind) hud.floatText(s, left > 0 ? `\u{1F411} home! ${left} to go` : '\u{1F411} home!')
+  }
+  flock.onAllHome = (count) => {
+    const res = game.herdComplete(count)
+    hud.showBanner("Flock's home!", `Rex is a very good boy • +${res.coins} coins`)
+    sfx.fanfare()
+    fountainFrom(PEN_GATE.clone().setY(0.8), res.coins, false)
+    heartBurst(scene, dog.group.position.clone().setY(0.7))
+    rareSlowMo()
+    herdTimer = HERD_COOLDOWN[0] + Math.random() * (HERD_COOLDOWN[1] - HERD_COOLDOWN[0])
+    saveNow()
+  }
+
+  // ---- stick fetch (the waiting game's best friend) -----------------------------
+  let stick: Mesh | null = null
+  let fetchCool = 0
+  const dropStick = (): void => {
+    if (stick) {
+      stick.removeFromParent()
+      stick = null
+    }
+  }
+  dog.onFetchPickup = () => {
+    if (!stick) return
+    stick.removeFromParent()
+    dog.group.add(stick)
+    stick.position.set(0, 0.48, 0.38)
+    stick.rotation.set(0, 0, Math.PI / 2)
+  }
+  dog.onFetchDone = () => {
+    if (stick) {
+      dog.group.remove(stick)
+      scene.add(stick)
+      stick.position.copy(dog.group.position).setY(0.04)
+      stick.rotation.set(Math.PI / 2, 0, Math.random() * 3)
+    }
+    const treasure = game.rollFetchTreasure()
+    game.fetchReturned(treasure)
+    sfx.bark()
+    heartBurst(scene, dog.group.position.clone().setY(0.6))
+    if (treasure > 0) {
+      fountainFrom(dog.group.position.clone().setY(0.5), treasure, false)
+      const s = cam.screenPos(dog.group.position.clone().setY(1.1))
+      if (!s.behind) hud.floatText(s, 'Rex dug something up! \u{1F9B4}')
+    }
+    fetchCool = 16
+    saveNow()
+  }
+  const throwStick = (): void => {
+    dropStick()
+    const ang = Math.random() * Math.PI * 2
+    const r = 5.5 + Math.random() * 3
+    const target = player.pos.clone().add(new Vector3(Math.sin(ang) * r, 0, Math.cos(ang) * r))
+    target.x = Math.max(WORLD_BOUNDS.minX + 1.5, Math.min(WORLD_BOUNDS.maxX - 1.5, target.x))
+    target.z = Math.max(WORLD_BOUNDS.minZ + 1.5, Math.min(WORLD_BOUNDS.maxZ - 1.5, target.z))
+    if (!dog.fetch(target)) return
+    sfx.whistle()
+    player.gesture(engine.uTime.value)
+    const s = new Mesh(
+      new CylinderGeometry(0.035, 0.05, 0.6, 6),
+      new MeshStandardMaterial({ color: '#7a5a36', roughness: 1 }),
+    )
+    s.castShadow = true
+    scene.add(s)
+    stick = s
+    const from = player.pos.clone().setY(1.2)
+    s.position.copy(from)
+    const flight = { t: 0 }
+    gsap.to(flight, {
+      t: 1,
+      duration: 0.65,
+      ease: 'none',
+      onUpdate: () => {
+        const t = flight.t
+        s.position.set(
+          from.x + (target.x - from.x) * t,
+          0.15 + (1.2 - 0.15) * (1 - t) + Math.sin(t * Math.PI) * 2.4,
+          from.z + (target.z - from.z) * t,
+        )
+        s.rotation.x += 0.35
+      },
+    })
+  }
+
+  // ---- construction projects (the build-your-farm spine) -------------------------
+  const construction = new Construction({ scene, assets, cam, tickSfx: () => sfx.plant() })
+  const grazers = new Grazers(assets, scene, 0xa11ce)
+  /** the horse grazes the strip north of the east field; goats join the pen */
+  const HORSE_RECT = { x0: 9.0, z0: -3.0, x1: 14.6, z1: -0.9 }
+  const GOAT_RECT = { x0: PEN.x0 + 0.7, z0: PEN.z0 + 0.7, x1: PEN.x1 - 0.7, z1: PEN.z1 - 0.7 }
+  let farmhand: FarmhandView | null = null
+
+  const addBuilding = (builder: (seed: number) => Group, def: ProjectDef, pop: boolean): Group => {
+    const b = builder(0xb1d + def.cost)
+    b.position.set(def.site[0], 0, def.site[1])
+    b.rotation.y = def.yaw
+    scene.add(b)
+    if (pop) {
+      b.scale.setScalar(0.01)
+      gsap.to(b.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
+    }
+    return b
+  }
+
+  /** make an owned project exist in the world (boot restore + fresh reveals) */
+  const applyProject = (def: ProjectDef, fresh: boolean): void => {
+    if (def.id === 'stable') {
+      addBuilding(buildStable, def, fresh)
+      grazers.add('horse', HORSE_RECT, 1)
+    } else if (def.id === 'goats') {
+      grazers.add('goat', GOAT_RECT, 2)
+    } else if (def.id === 'shop') {
+      if (standGroup) {
+        scene.remove(standGroup)
+        standGroup = null
+      }
+      addBuilding(buildShop, def, fresh)
+      customers.premium = SHOP_PREMIUM
+      customers.queueMax = SHOP_QUEUE_MAX
+    } else if (def.id === 'greenhouse') {
+      addBuilding(buildGreenhouse, def, fresh)
+      if (fresh)
+        for (const [px, pz] of GREENHOUSE_PLOTS) {
+          plots.push(mkPlot(px, pz, true))
+          lastGlow.push('none')
+        }
+    } else if (def.id === 'farmhand') {
+      farmhand = new FarmhandView(assets, scene, new Vector3(def.site[0], 0, def.site[1]))
+      farmhand.onHarvest = (i) => doHarvest(i)
+    }
+  }
+  for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
+
+  // build-site signs for every project whose land exists
+  const projectSigns = new Map<ProjectId, { group: Group; at: Vector3 }>()
+  const refreshProjectSigns = (): void => {
+    const avail = availableProjects({
+      level: state.level,
+      coins: state.coins,
+      expansion: state.expansion,
+      projects: state.projects as Partial<Record<ProjectId, boolean>>,
+    })
+    for (const [id, s] of projectSigns) {
+      if (!avail.some((d) => d.id === id)) {
+        scene.remove(s.group)
+        projectSigns.delete(id)
+      }
+    }
+    for (const def of avail) {
+      if (projectSigns.has(def.id)) continue
+      const group = buildDeedSign(def.name, def.cost, 'BUILD', '#2e6db4')
+      group.position.set(def.site[0], 0, def.site[1])
+      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - def.site[0], PLAYER_SPAWN.z - def.site[1])
+      scene.add(group)
+      projectSigns.set(def.id, { group, at: new Vector3(def.site[0], 0, def.site[1]) })
+    }
+  }
+  refreshProjectSigns()
+
+  // ---- buying land -----------------------------------------------------------
+  /** the dig: a crew arrives, letterbox drops, shovels swing — then the new
+   * field, fence ring, and whatever the deed brought reveal at the climax */
+  const expandCeremony = (def: TierDef): void => {
+    placeDeedSign()
+    const center = def.field
+      ? new Vector3((def.field.x0 + def.field.x1) / 2, 0, (def.field.z0 + def.field.z1) / 2)
+      : player.pos.clone()
+    construction.play({
+      site: center,
+      yaw: 0,
+      footprint: def.field
+        ? { w: def.field.x1 - def.field.x0, d: def.field.z1 - def.field.z0 }
+        : { w: 3, d: 3 },
+      dig: true,
+      reveal: () => {
+        if (fenceMesh) {
+          scene.remove(fenceMesh)
+          fenceMesh.geometry.dispose()
+        }
+        fenceMesh = buildPicketFence(scene, state.expansion)
+        if (def.field) {
+          const fg = buildField(def.field, def.plots, 0x6011 + state.expansion * 97)
+          fg.scale.setScalar(0.01)
+          scene.add(fg)
+          gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
+          // insert BEFORE any greenhouse planters so view order keeps
+          // matching Game's combined plot index space
+          const insertAt = state.plots.length - def.plots.length
+          def.plots.forEach(([px, pz], k) => {
+            plots.splice(insertAt + k, 0, mkPlot(px, pz))
+            lastGlow.splice(insertAt + k, 0, 'none')
+          })
+        }
+        if (def.tractor && !tractor) tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
+        if (def.sheep) for (let i = 0; i < def.sheep; i++) flock.addSheep()
+        refreshProjectSigns()
+        sparkleBurst(scene, center.clone().setY(1.2), true, 18)
+      },
+      done: () => {
+        hud.showBanner(`${def.name}!`, def.flavor)
+        music.duck()
+        sfx.fanfare()
+        rareSlowMo()
+        saveNow()
+      },
+    })
   }
 
   // ---- customers ----------------------------------------------------------------
@@ -358,12 +661,64 @@ async function boot(): Promise<void> {
   )
 
   // proximity snapshot shared between fixed step (logic) and taps (handlers)
-  const near = { emptyPlot: -1, growingPlot: -1, chicken: false }
+  const near = {
+    emptyPlot: -1,
+    growingPlot: -1,
+    chicken: false,
+    deed: false,
+    tractor: false,
+    dog: false,
+    project: null as ProjectId | null,
+  }
   const onAction = (id: string): void => {
     touch()
     if (id === 'wheat' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'wheat')
     else if (id === 'corn' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'corn')
-    else if (id === 'feed' && game.canFeed()) {
+    else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
+    else if (id === 'build' && near.project) {
+      const def = game.buildProject(near.project)
+      if (def) {
+        hud.setCoins(state.coins)
+        refreshProjectSigns()
+        sfx.crate()
+        construction.play({
+          site: new Vector3(def.site[0], 0, def.site[1]),
+          yaw: def.yaw,
+          footprint: def.footprint,
+          dig: def.kind !== 'building',
+          reveal: () => applyProject(def, true),
+          done: () => {
+            hud.showBanner(`${def.name}!`, def.flavor)
+            music.duck()
+            sfx.fanfare()
+            rareSlowMo()
+            saveNow()
+          },
+        })
+      }
+    } else if (id === 'deed' && near.deed) {
+      const def = game.expand()
+      if (def) {
+        hud.setCoins(state.coins)
+        expandCeremony(def)
+        saveNow()
+      }
+    } else if (id === 'sow' && near.tractor && tractor && sowCooldown <= 0) {
+      const planted = game.plantAll('wheat')
+      if (planted.length) {
+        sowCooldown = TRACTOR_COOLDOWN
+        sfx.tractor()
+        tractor.chug()
+        planted.forEach((i, k) =>
+          gsap.delayedCall(0.45 + k * 0.14, () => {
+            plots[i]?.setCrop('wheat', 0, true)
+            sfx.plant()
+          }),
+        )
+        player.gesture(engine.uTime.value)
+        saveNow()
+      }
+    } else if (id === 'feed' && game.canFeed()) {
       if (game.feed()) {
         hud.setWheat(state.wheat)
         chicken.eat(engine.uTime.value)
@@ -380,23 +735,21 @@ async function boot(): Promise<void> {
     }
   }
 
-  // picket fence is solid except at its two gates
+  // picket fence is solid except at its gates (walls/gates follow the tier)
   const prevPos = { x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z }
   const fenceBlock = (): void => {
     const p = player.pos
-    const inX = Math.max(prevPos.x, p.x) > FENCE.minX - 0.2 && Math.min(prevPos.x, p.x) < FENCE.maxX + 0.2
-    const inZ = Math.max(prevPos.z, p.z) > FENCE.minZ - 0.2 && Math.min(prevPos.z, p.z) < FENCE.maxZ + 0.2
-    for (const line of [FENCE.minZ, FENCE.maxZ]) {
-      if (inX && (prevPos.z - line) * (p.z - line) < 0) {
-        const isGate = line === FENCE.maxZ && Math.abs(p.x - GATE_SOUTH.center) < GATE_SOUTH.half
-        if (!isGate) p.z = prevPos.z
-      }
+    const f = fenceFor(state.expansion)
+    const gates = gatesFor(state.expansion)
+    const open = (wall: 'N' | 'S' | 'E' | 'W', along: number): boolean =>
+      gates.some((g) => g.wall === wall && Math.abs(along - g.center) < g.half)
+    const inX = Math.max(prevPos.x, p.x) > f.minX - 0.2 && Math.min(prevPos.x, p.x) < f.maxX + 0.2
+    const inZ = Math.max(prevPos.z, p.z) > f.minZ - 0.2 && Math.min(prevPos.z, p.z) < f.maxZ + 0.2
+    for (const [line, wall] of [[f.minZ, 'N'], [f.maxZ, 'S']] as Array<[number, 'N' | 'S']>) {
+      if (inX && (prevPos.z - line) * (p.z - line) < 0 && !open(wall, p.x)) p.z = prevPos.z
     }
-    for (const line of [FENCE.minX, FENCE.maxX]) {
-      if (inZ && (prevPos.x - line) * (p.x - line) < 0) {
-        const isGate = line === FENCE.minX && Math.abs(p.z - GATE_WEST.center) < GATE_WEST.half
-        if (!isGate) p.x = prevPos.x
-      }
+    for (const [line, wall] of [[f.minX, 'W'], [f.maxX, 'E']] as Array<[number, 'W' | 'E']>) {
+      if (inZ && (prevPos.x - line) * (p.x - line) < 0 && !open(wall, p.z)) p.x = prevPos.x
     }
     prevPos.x = p.x
     prevPos.z = p.z
@@ -415,16 +768,72 @@ async function boot(): Promise<void> {
     fenceBlock()
     chicken.update(dt)
     dog.update(dt, player.pos)
+    flock.update(dt, player.pos, dog.group.position, state.expansion)
+    construction.update(dt)
+    grazers.update(dt, player.pos)
+    if (farmhand) {
+      const info = plots.map((v, i) => {
+        const c = game.plotAt(i)?.crop
+        return { center: v.center, ready: !!c && c.remaining <= 0 }
+      })
+      farmhand.update(dt, info)
+    }
+
+    // sheep slip out while you wait on crops (post-FTUE, one mission at a time)
+    if (!flock.missionActive && state.harvests >= 2 && !hud.modalOpen) {
+      herdTimer -= dt
+      if (herdTimer <= 0) {
+        const n = flock.startEscape(state.level >= 6 ? 3 : 2, state.expansion)
+        if (n > 0) {
+          dropStick() // playtime's over, Rex
+          hud.showBanner('Baaad news!', `${n} sheep slipped out of the pen \u{1F411}`)
+          sfx.baa()
+          music.duck()
+          herdTimer = Number.POSITIVE_INFINITY // reset by onAllHome
+        } else {
+          herdTimer = 60
+        }
+      }
+    }
+    // Rex works the flock: flank the sheep nearest home, push from the far side
+    if (flock.missionActive) {
+      flankTick -= dt
+      if (flankTick <= 0) {
+        flankTick = 0.4
+        const loose = flock.loosePositions()
+        if (loose.length) {
+          let best = loose[0]
+          let bd = Number.POSITIVE_INFINITY
+          for (const s of loose) {
+            const d = s.distanceTo(PEN_GATE)
+            if (d < bd) {
+              bd = d
+              best = s
+            }
+          }
+          // station just OUTSIDE the flee radius: Rex contains the far side,
+          // the PLAYER provides the push — teamwork, not a self-playing dog
+          const dir = best.clone().sub(PEN_GATE).setY(0).normalize()
+          dog.herdTo(best.clone().add(dir.multiplyScalar(3.8)))
+        } else {
+          dog.herdTo(null)
+        }
+      }
+    } else {
+      dog.herdTo(null)
+    }
     for (const v of customerViews.values()) v.update(dt)
     serveCooldown = Math.max(0, serveCooldown - dt)
+    sowCooldown = Math.max(0, sowCooldown - dt)
+    fetchCool = Math.max(0, fetchCool - dt)
     if (joy.active || joyCam.active) {
       touch()
       if (joy.active) movedEver = true
     }
 
     // glow tiers from growth progress
-    for (let i = 0; i < state.plots.length; i++) {
-      const crop = state.plots[i].crop
+    for (let i = 0; i < plots.length; i++) {
+      const crop = game.plotAt(i)?.crop ?? null
       const mode = !crop ? 'none' : crop.remaining <= 0 ? 'ready' : 1 - crop.remaining / crop.total >= 0.9 ? 'shimmer' : 'none'
       if (mode !== lastGlow[i]) {
         plots[i].setGlow(mode)
@@ -437,13 +846,25 @@ async function boot(): Promise<void> {
     near.growingPlot = -1
     const p = player.pos
     if (!hud.modalOpen) {
-      for (let i = 0; i < state.plots.length; i++) {
+      for (let i = 0; i < plots.length; i++) {
         if (p.distanceTo(plots[i].center) > PLOT_R) continue
-        const crop = state.plots[i].crop
+        const crop = game.plotAt(i)?.crop
         if (!crop) {
           if (near.emptyPlot < 0) near.emptyPlot = i
         } else if (crop.remaining <= 0) doHarvest(i)
         else near.growingPlot = i
+      }
+      near.deed = deedSign !== null && p.distanceTo(deedSign.at) < 2.5
+      near.tractor = tractor !== null && p.distanceTo(tractor.position) < 2.9
+      near.dog = !flock.missionActive && p.distanceTo(dog.group.position) < 2.6
+      near.project = null
+      let signD = 2.6
+      for (const [id, s] of projectSigns) {
+        const d = p.distanceTo(s.at)
+        if (d < signD) {
+          signD = d
+          near.project = id
+        }
       }
       near.chicken = chicken.settled && p.distanceTo(chicken.group.position) < CHICK_R
       if (state.chicken.eggReady && chicken.settled && p.distanceTo(NEST_POS) < CHICK_R) collectEgg()
@@ -490,18 +911,78 @@ async function boot(): Promise<void> {
         if (game.canFeed()) actions.push({ id: 'feed', emoji: '\u{1F33E}', label: `Feed ${name}`, sub: '1 wheat → egg' })
         if (game.canPet()) actions.push({ id: 'pet', emoji: '\u{1F497}', label: `Pet ${name}`, sub: 'once a day' })
       }
+      if (near.deed) {
+        const def = game.nextDeed()
+        const status = game.deedStatus()
+        if (def && status) {
+          actions.push({
+            id: 'deed',
+            emoji: '\u{1F4DC}',
+            label: `Buy ${def.name}`,
+            sub:
+              status === 'ok'
+                ? `${def.cost} coins`
+                : status === 'level'
+                  ? `reach Lv ${def.level} first`
+                  : `${def.cost} coins — need ${def.cost - state.coins} more`,
+            locked: status !== 'ok',
+          })
+        }
+      }
+      if (near.tractor) {
+        let empties = 0
+        for (let i = 0; i < game.plotTotal; i++) if (!game.plotAt(i)?.crop) empties++
+        const ready = sowCooldown <= 0 && empties > 0
+        actions.push({
+          id: 'sow',
+          emoji: '\u{1F69C}',
+          label: 'Sow ALL plots',
+          sub: ready ? `${empties} plots · wheat` : sowCooldown > 0 ? `catching breath ${Math.ceil(sowCooldown)}s` : 'fields are full',
+          locked: !ready,
+        })
+      }
+      if (near.project) {
+        const entry = game.projectBoard().find((e) => e.def.id === near.project)
+        if (entry && entry.status !== 'owned') {
+          const { def, status } = entry
+          actions.push({
+            id: 'build',
+            emoji: '\u{1F3D7}',
+            label: `Build ${def.name}`,
+            sub:
+              status === 'ok'
+                ? `${def.cost} coins`
+                : status === 'level'
+                  ? `reach Lv ${def.level} first`
+                  : status === 'coins'
+                    ? `${def.cost} coins — need ${def.cost - state.coins} more`
+                    : 'needs more land',
+            locked: status !== 'ok',
+          })
+        }
+      }
+      if (near.dog && !dog.fetching && fetchCool <= 0) {
+        actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
+      }
     }
     hud.setActions(actions, onAction)
 
     // ---- contextual top chip: top suggestion whose chip hasn't been retired ----
     const sug = game.suggestion()
     const customerWaiting = customers.frontServiceable(game.stock())
+    const buildable = game.projectBoard().find((e) => e.status === 'ok') ?? null
     let chipText: string | null = null
-    if (!hud.modalOpen) {
+    if (!hud.modalOpen && !construction.active) {
       if (!movedEver && !state.chipsDone.plant) {
         chipText = 'Drag the joystick to take a walk \u{1F33B}'
       } else if (customerWaiting) {
         chipText = 'A customer is waiting at the stand!'
+      } else if (flock.missionActive) {
+        chipText = `\u{1F411} ${flock.looseCount} loose — herd them back with Rex!`
+      } else if (game.deedStatus() === 'ok') {
+        chipText = `You can afford ${game.nextDeed()?.name}! Find the FOR-SALE sign \u{1F4DC}`
+      } else if (buildable) {
+        chipText = `You can afford ${buildable.def.name}! Find its BUILD sign \u{1F3D7}`
       } else if (sug) {
         const name = state.chicken.name ?? 'her'
         const texts: Record<Suggestion['kind'], string> = {
@@ -526,17 +1007,22 @@ async function boot(): Promise<void> {
     // dog guide: idle 5s + an obvious next goal -> trot near it and bounce
     const idleFor = engine.uTime.value - lastInteract
     if (idleFor > 5 && !hud.modalOpen && !chicken.ceremonyActive) {
+      const buildSignAt = buildable ? (projectSigns.get(buildable.def.id)?.at ?? null) : null
       const pos = chicken.cratePending
         ? chicken.crateWorldPos
         : customerWaiting
           ? STAND_POS
-          : sug
-            ? sug.kind === 'plant' || sug.kind === 'harvest'
-              ? plots[sug.plot].center
-              : sug.kind === 'collect'
-                ? NEST_POS
-                : chicken.tagWorldPos().setY(0)
-            : null
+          : game.deedStatus() === 'ok' && deedSign
+            ? deedSign.at
+            : buildSignAt
+              ? buildSignAt
+              : sug
+                ? sug.kind === 'plant' || sug.kind === 'harvest'
+                  ? plots[sug.plot].center
+                  : sug.kind === 'collect'
+                    ? NEST_POS
+                    : chicken.tagWorldPos().setY(0)
+                : null
       dog.guideTo(pos)
     } else {
       dog.guideTo(null)
@@ -571,14 +1057,20 @@ async function boot(): Promise<void> {
     player.frame(dt, t)
     chicken.frame(dt, t)
     dog.frame(dt)
+    flock.frame(dt)
+    grazers.frame(dt)
+    farmhand?.frame(dt)
+    construction.frame(dt)
+    dayCycle.update(dt)
     for (const v of customerViews.values()) v.frame(dt)
     for (const p of plots) p.pulse(t)
     clouds.update(dt)
+    grass.update(t)
     ambient.update(t)
 
     // countdown ring while standing by a growing crop
     const gi = near.growingPlot
-    const rp = gi >= 0 ? state.plots[gi]?.crop : null
+    const rp = gi >= 0 ? game.plotAt(gi)?.crop : null
     if (rp && rp.remaining > 0) {
       const s = cam.screenPos(plots[gi].center.clone().setY(1.2))
       hud.setRing(!s.behind, s.x, s.y, 1 - rp.remaining / rp.total, rp.remaining)
@@ -589,7 +1081,7 @@ async function boot(): Promise<void> {
     // nest pip while an egg is cooking / ready
     const eggT = state.chicken.eggTimer
     if (eggT || state.chicken.eggReady) {
-      const s = cam.screenPos(NEST_POS.clone().setY(1.1))
+      const s = cam.screenPos(NEST_POS.clone().setY(0.6))
       const frac = state.chicken.eggReady ? 1 : 1 - (eggT ? eggT.remaining / eggT.total : 0)
       hud.setPip(!s.behind, s.x, s.y, frac, state.chicken.eggReady)
     } else {
@@ -664,6 +1156,11 @@ async function boot(): Promise<void> {
       location.reload()
     },
     pos: () => [player.pos.x, player.pos.z],
+    dogPos: () => [dog.group.position.x, dog.group.position.y, dog.group.position.z],
+    henPos: () => [chicken.group.position.x, chicken.group.position.y, chicken.group.position.z],
+    sheep: () => flock.sheep.map((s) => [s.group.position.x, s.group.position.z, s.mode] as [number, number, string]),
+    escape: () => flock.startEscape(2, state.expansion),
+    grazers: () => grazers.positions().map((p) => [p.x, p.z] as [number, number]),
     draws: () => renderer.info.render.calls,
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)

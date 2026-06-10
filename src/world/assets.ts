@@ -7,19 +7,25 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 const NATURE = '/models/kenney/nature-kit'
 const FOOD = '/models/kenney/food-kit'
 const SURVIVAL = '/models/kenney/survival-kit'
-const CHARS = '/models/kenney/mini-characters'
 const QUAT = '/models/quaternius'
 
 // NOTE: the hen is procedurally sculpted in Chicken.ts — both chicken GLBs in
 // public/models read as blobs at gameplay distance (Hen.glb = gray box stack,
 // Chicken.glb = a literal "Chicken_Blob" head mesh with no body silhouette).
+// Customers are the SAME adult Quaternius family as the farmer (identical
+// CharacterArmature rig + clip set) — the chibi Kenney minis are retired.
 export const MODEL_URLS = {
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
+  sheep: `${QUAT}/animals-extra/Sheep.glb`,
+  horse: `${QUAT}/ultimate-animated-animals/Horse.glb`,
+  cow: `${QUAT}/ultimate-animated-animals/Cow.glb`,
+  // no CC0 animated goat exists anywhere (verified 2026-06-10) — the goats
+  // are smaller, darker-tinted sheep from the same rig family
+  goat: `${QUAT}/animals-extra/Sheep.glb`,
   farmer: `${QUAT}/characters/Farmer.glb`,
-  villagerA: `${CHARS}/character-female-a.glb`,
-  villagerB: `${CHARS}/character-male-c.glb`,
-  villagerC: `${CHARS}/character-female-d.glb`,
-  villagerD: `${CHARS}/character-male-e.glb`,
+  customerA: `${QUAT}/characters/Worker.glb`,
+  customerB: `${QUAT}/characters/Adventurer.glb`,
+  customerC: `${QUAT}/characters/Casual.glb`,
   signpost: `${SURVIVAL}/signpost.glb`,
   chest: `${SURVIVAL}/chest.glb`,
   egg: `${FOOD}/egg.glb`,

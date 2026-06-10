@@ -9,7 +9,6 @@
 import {
   AnimationAction,
   AnimationMixer,
-  Box3,
   CapsuleGeometry,
   CylinderGeometry,
   Group,
@@ -17,19 +16,23 @@ import {
   Mesh,
   MeshStandardMaterial,
   Scene,
-  SkinnedMesh,
   SphereGeometry,
   Vector3,
   type AnimationClip,
 } from 'three'
-import type { Assets } from './assets'
+import { tint, type Assets } from './assets'
+import { assertSpawnScale, measuredHeight, SCALE } from './scale'
 
 const WALK_SPEED = 3.4
 const RUN_SPEED = 4.9
 /** stick deflection above which the farmer breaks into a run */
 const RUN_DEFLECT = 0.7
 const TURN_RATE = 11
-const TARGET_HEIGHT = 1.6
+/** the farmer IS the scale reference — height comes from the SCALE table */
+export const FARMER_HEIGHT = SCALE.farmer
+/** readability: lift the GLB's vertex-color materials so the farmer never
+ * silhouettes dark against grass (owner screenshot note) */
+const FARMER_BRIGHTEN = 0.13
 /** ground speed (u/s) covered by one clip loop at timeScale 1 — foot-lock */
 const WALK_REF_SPEED = 2.2
 const RUN_REF_SPEED = 4.6
@@ -92,9 +95,12 @@ export class PlayerView {
         this.run = suffixAction(mixer, model, clips, 'run')
         this.gestureA =
           suffixAction(mixer, model, clips, 'interact') ?? suffixAction(mixer, model, clips, 'pick-up')
-        // normalize to ~1.6 units tall regardless of source scale
-        this.baseScale = TARGET_HEIGHT / measuredHeight(model)
+        // normalize to the SCALE-table reference height regardless of source
+        const raw = measuredHeight(model)
+        this.baseScale = FARMER_HEIGHT / raw
         model.scale.setScalar(this.baseScale)
+        assertSpawnScale('farmer', raw * this.baseScale, FARMER_HEIGHT - 0.01, FARMER_HEIGHT + 0.01)
+        tint(model, 0, FARMER_BRIGHTEN)
         idle.play()
         this.current = idle
       }
@@ -224,30 +230,6 @@ export class PlayerView {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
-}
-
-/** model height that respects skinning — Quaternius rigs keep vertices in
- * tiny bind space with the scale living on armature bones, so a plain
- * Box3.setFromObject reads near-zero. computeBoundingBox() on a SkinnedMesh
- * runs the vertices through the current bone transforms. */
-function measuredHeight(model: Group): number {
-  model.updateMatrixWorld(true)
-  const box = new Box3()
-  const tmp = new Box3()
-  let found = false
-  model.traverse((o) => {
-    if (o instanceof SkinnedMesh) {
-      o.computeBoundingBox()
-      if (o.boundingBox) {
-        tmp.copy(o.boundingBox).applyMatrix4(o.matrixWorld)
-        box.union(tmp)
-        found = true
-      }
-    }
-  })
-  if (!found) box.setFromObject(model)
-  const h = box.getSize(new Vector3()).y
-  return h > 0.01 ? h : 1
 }
 
 // ---- procedural fallback farmer -------------------------------------------
