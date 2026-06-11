@@ -134,6 +134,23 @@ One-time material surgery, done exactly once.
 - Once open: Rosie's standing order upgrades to a daily bakery contract —
   wheat in, better pay, light upkeep (everything earns).
 
+### Town acts (owner direction 2026-06-11 — expands Phases 7-8)
+The town grows EAST along the road, exactly where Hazel already gallops
+(see footprint). The farmer is never lonely again. All assets: textured
+kit GLBs (Quaternius/Kenney style) with animated characters — NO BLOBS,
+hard rule. Buildings rise over multiple days (visible scaffolds).
+- **Act 1 — Rosie's Bakery + the bus stop** (= Phase 7): first building,
+  funded by coins + delivered wheat; the bus brings a visitor wave daily.
+- **Act 2 — Neighbors move in**: two cottages built over days, named
+  residents join the customer pool; then the school with kids at recess
+  (kid-scaled characters, the dinner-kid pipeline).
+- **Act 3 — The works**: butcher + market square; the wool works factory
+  (sheepskin → coats premium chain, chimney smoke, workers ride the bus).
+- **Act 4 — Buy the old farmhouses**: two neighboring farmsteads NORTH of
+  the road go up for sale; buying one folds its land into YOUR farm as new
+  field/pasture rects (room to keep growing), and the family moves into a
+  town cottage happily (cozy rule: they thank you and shop at your stand).
+
 ## Phase 8 — Millbrook Rising: town tiers, chains & festival nights [L]
 - `src/game/town.ts`: tiers driven by cumulative delivered produce — butcher,
   school, supermarket, tailor — each a construction arc + opening beat + richer
