@@ -79,7 +79,9 @@ describe('wants scale to stock (almost always fulfillable)', () => {
       expect(w.count).toBeLessThanOrEqual(stock[w.kind])
       expect(w.count).toBeGreaterThanOrEqual(1)
       expect(w.offer).toBe(offerFor(w.kind, w.count))
-      expect(w.tip).toBe(tipFor(w.offer))
+      // tip is a variable-ratio roll: floor 1, ceiling the 2x big-tipper band
+      expect(w.tip).toBeGreaterThanOrEqual(1)
+      expect(w.tip).toBeLessThanOrEqual(Math.max(1, Math.round(w.offer * 2)))
     }
   })
 

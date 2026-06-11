@@ -1,5 +1,5 @@
 /** Celestial layer for the sleep cutscene — a starfield and a crescent moon
- * that live just inside the 170u sky dome and fade in/out on one scalar.
+ * that live just inside the 240u sky dome and fade in/out on one scalar.
  * Design intent (owner ask: 'absolutely premium... emotionally satisfying'):
  * when the farm tucks in, the dome goes dark and ~700 stars bloom with a
  * soft Milky Way band sweeping high across the sky, the crescent hanging at
@@ -25,7 +25,7 @@ import {
 import { mulberry32 } from '../game/rng'
 
 const DEG = Math.PI / 180
-/** star shell radius — inside the 170u dome, outside everything else */
+/** star shell radius — inside the 240u dome, outside everything else */
 const SKY_R = 158
 const STAR_COUNT = 700
 /** uniform field / Milky Way band split (band rejection-samples the rest) */

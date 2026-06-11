@@ -87,7 +87,7 @@ export class Customers {
     const kind = kinds[Math.floor(this.rng.next() * kinds.length)]
     const count = Math.max(1, Math.min(2, Math.floor(this.rng.next() * stock[kind]) + 1))
     const offer = offerFor(kind, count, this.premium)
-    return { kind, count, offer, tip: tipFor(offer) }
+    return { kind, count, offer, tip: tipFor(offer, this.rng.next()) }
   }
 
   /** view reports the walk-up finished; only waiting customers can be served */

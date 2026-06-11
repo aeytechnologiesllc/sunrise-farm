@@ -9,6 +9,7 @@ import {
   rollGolden,
   sellValue,
   splitCoins,
+  tipFor,
   xpNeeded,
 } from '../src/game/economy'
 import { Game } from '../src/game/Game'
@@ -38,6 +39,22 @@ describe('golden odds (seeded)', () => {
     expect(goldenEggChance(5)).toBeCloseTo(0.5)
     expect(goldenEggChance(50)).toBeCloseTo(0.5)
     for (let h = 1; h < 20; h++) expect(goldenEggChance(h)).toBeGreaterThanOrEqual(goldenEggChance(h - 1))
+  })
+})
+
+describe('variable-ratio tips', () => {
+  it('bands map to the documented schedule and never dip below 1 coin', () => {
+    expect(tipFor(20, 0.1)).toBe(2) // small thanks: 10%
+    expect(tipFor(20, 0.3)).toBe(4) // band floor: 20%
+    expect(tipFor(20, 0.9)).toBe(12) // generous: 60%
+    expect(tipFor(20, 0.99)).toBe(40) // the big tipper: 200%
+    expect(tipFor(1, 0.0)).toBe(1) // floor — nobody tips zero
+  })
+
+  it('mid-band scales between 20% and 35%', () => {
+    expect(tipFor(100, 0.3)).toBe(20)
+    expect(tipFor(100, 0.6)).toBe(28)
+    expect(tipFor(100, 0.8999)).toBe(35)
   })
 })
 

@@ -175,7 +175,9 @@ export interface SkyMeshes {
 /** vertex-colored gradient dome + a visible sun disk (god-rays light source).
  * The DayCycle rewrites the dome's color attribute and moves the disk. */
 export function buildSky(scene: Scene): SkyMeshes {
-  const geo = new SphereGeometry(170, 24, 10)
+  // radius must clear the off-world interior set at (120,0,120) ≈ 170u out —
+  // a 170 shell sliced through that room and occluded its far walls
+  const geo = new SphereGeometry(240, 24, 10)
   const pos = geo.getAttribute('position')
   const colors = new Float32Array(pos.count * 3)
   const top = new Color('#5fa8e0')
@@ -183,7 +185,7 @@ export function buildSky(scene: Scene): SkyMeshes {
   const horizon = new Color('#f2ecca')
   const tmp = new Color()
   for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i) / 170
+    const y = pos.getY(i) / 240
     const t = Math.max(0, Math.min(1, (y + 0.12) / 0.9))
     if (t < 0.35) tmp.copy(horizon).lerp(mid, t / 0.35)
     else tmp.copy(mid).lerp(top, (t - 0.35) / 0.65)

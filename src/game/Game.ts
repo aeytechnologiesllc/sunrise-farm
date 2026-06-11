@@ -427,9 +427,27 @@ export class Game {
     return startDelivery(this.state.produce)
   }
 
-  /** the sleep ritual: a new day dawns */
+  /** what today was worth — read BEFORE sleep() resets the ledger (the
+   * star-gaze card: research says the bed must double as the reward tally) */
+  daySummary(): { coins: number; harvests: number; eggs: number } {
+    const s = this.state
+    return {
+      coins: s.coins - s.dayStart.coins,
+      harvests: s.harvests - s.dayStart.harvests,
+      eggs: s.chicken.eggsLaid - s.dayStart.eggs,
+    }
+  }
+
+  /** the sleep ritual: a new day dawns — and crops grow overnight (the
+   * plant-before-bed / wake-to-harvest loop is the genre's strongest hook:
+   * the dawn walk-out should greet you with glowing ready plots) */
   sleep(): number {
     this.state.day += 1
+    for (let i = 0; i < this.plotTotal; i++) {
+      const crop = this.plotAt(i)?.crop
+      if (crop) crop.remaining = 0
+    }
+    this.state.dayStart = { coins: this.state.coins, harvests: this.state.harvests, eggs: this.state.chicken.eggsLaid }
     this.grantXp(XP_GAIN.sleep)
     return this.state.day
   }

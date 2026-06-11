@@ -78,8 +78,9 @@ export class FollowCamera {
     this.moved = true
   }
 
-  /** run-state FOV nudge; eased every frame */
+  /** run-state FOV nudge; eased every frame (a cinematic owns the lens) */
   setRunning(running: boolean): void {
+    if (this.cineTarget) return
     this.fovTarget = running ? FOV_RUN : FOV_BASE
   }
 
@@ -133,13 +134,16 @@ export class FollowCamera {
   private cineTarget: Vector3 | null = null
   private cineYaw: number | null = null
   private cinePitch: number | null = null
+  private cineDist: number | null = null
 
   /** CINEMATIC follow: focus glides toward a moving target every frame —
    * smooth pursuit with zero tween restarts (the old per-tick re-tweening
    * read as stutter). Optional `yaw` lets a scene DIRECT the shot (e.g. face
    * the homestead door) instead of inheriting whatever orbit the player left
-   * the camera at. Pass null to hand attention back to the farmer. */
-  cineFollow(target: Vector3 | null, yaw?: number, pitch?: number): void {
+   * the camera at. Optional `fov` widens the lens for a shot (interiors —
+   * three diners won't fit a 1.9u table through 42 degrees). Pass null to
+   * hand attention back to the farmer. */
+  cineFollow(target: Vector3 | null, yaw?: number, pitch?: number, dist?: number, fov?: number): void {
     if (target) {
       if (!this.cineTarget) {
         this.cineTarget = target.clone()
@@ -153,11 +157,19 @@ export class FollowCamera {
       // scenes may pitch BELOW the gameplay clamp (negative = looking up at
       // the night sky); hand back a legal pitch before releasing
       this.cinePitch = pitch ?? null
+      // and may frame closer than the gameplay zoom floor (interior shots)
+      this.cineDist = dist ?? null
+      this.fovTarget = fov ?? FOV_BASE
     } else if (this.cineTarget) {
       this.cineTarget = null
       this.cineYaw = null
       this.cinePitch = null
+      this.cineDist = null
+      this.fovTarget = FOV_BASE
       this.pitch = clampPitch(this.pitch)
+      this.smoothDist = clampDist(this.smoothDist)
+      // drop any occlusion clamp from before the scene — re-measured next frame
+      this.occlClamp = Number.POSITIVE_INFINITY
       this.release(0.9)
     }
   }
@@ -202,6 +214,9 @@ export class FollowCamera {
       if (this.cinePitch !== null) {
         this.pitch += (this.cinePitch - this.pitch) * (1 - Math.exp(-2.0 * dt))
       }
+      if (this.cineDist !== null) {
+        this.smoothDist += (this.cineDist - this.smoothDist) * (1 - Math.exp(-2.2 * dt))
+      }
     }
     const k = 1 - Math.exp(-DAMP * dt)
     const lookX = clampAbs(vel.x * LOOKAHEAD, LOOKAHEAD_MAX)
@@ -209,7 +224,7 @@ export class FollowCamera {
     this.anchor.x += (playerPos.x + lookX - this.anchor.x) * k
     this.anchor.y += (playerPos.y + 0.9 - this.anchor.y) * k
     this.anchor.z += (playerPos.z + lookZ - this.anchor.z) * k
-    this.smoothDist += (this.dist - this.smoothDist) * k
+    if (this.cineDist === null) this.smoothDist += (this.dist - this.smoothDist) * k
     const f = this.camera.fov + (this.fovTarget - this.camera.fov) * Math.min(1, 4 * dt)
     if (Math.abs(f - this.camera.fov) > 1e-4) {
       this.camera.fov = f
@@ -238,8 +253,11 @@ export class FollowCamera {
         t.z + Math.cos(this.yaw) * horiz,
       )
     }
-    // building occlusion: snap IN fast (never clip inside a wall), ease OUT
-    if (this.occlusionTest) {
+    // building occlusion: snap IN fast (never clip inside a wall), ease OUT.
+    // Cinematics opt out — an authored shot may legitimately frame ACROSS a
+    // building (construction site, interiors); the pull-in was yanking the
+    // construction wide shot to 2.4u because the focus sat inside an occluder
+    if (this.occlusionTest && !this.cineTarget) {
       const blocked = this.occlusionTest(t, place(dist, this.desired))
       const want = blocked !== null ? Math.max(2.4, blocked - 0.5) : dist
       if (want < this.occlClamp) this.occlClamp = want

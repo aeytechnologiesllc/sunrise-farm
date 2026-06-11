@@ -32,7 +32,7 @@ export interface SkyHandles {
   fill: DirectionalLight
   hemi: HemisphereLight
   ambient: AmbientLight
-  /** SphereGeometry(170, 24, 10) with a 'color' BufferAttribute and
+  /** SphereGeometry(240, 24, 10) with a 'color' BufferAttribute and
    * MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false }) */
   dome: Mesh
   /** MeshBasicMaterial sphere floated at sunDirection * 150, inside the dome */
@@ -58,7 +58,7 @@ const DISK_DIST = 150
 const FILL_DIST = 16
 const FILL_HEIGHT = 11
 /** dome radius — must match the SphereGeometry handed in via SkyHandles */
-const DOME_R = 170
+const DOME_R = 240
 
 /** one column of the keyframe table — all colors preallocated at module load */
 interface Keyframe {

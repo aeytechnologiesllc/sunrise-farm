@@ -19,6 +19,9 @@ const CSS = `
 .wheat-ico{font-size:18px;line-height:22px}
 #xpwrap{display:flex;align-items:center;gap:8px;background:rgba(255,252,240,.92);
   border-radius:999px;padding:5px 12px 5px 6px;box-shadow:0 2px 8px rgba(60,40,10,.18)}
+#daypill{display:flex;align-items:center;gap:6px;background:rgba(255,252,240,.92);
+  border-radius:999px;padding:4px 12px;box-shadow:0 2px 8px rgba(60,40,10,.18);
+  font-weight:800;font-size:13px;color:#7a5c1e}
 #lvl{min-width:26px;height:26px;border-radius:50%;background:#7cb342;color:#fff;
   display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;
   box-shadow:inset 0 -2px 0 rgba(0,0,0,.18)}
@@ -125,6 +128,7 @@ const CSS = `
   #xpwrap{padding:3px 9px 3px 4px}
   #lvl{min-width:19px;height:19px;font-size:11px}
   #xpbar{width:76px;height:7px}
+  #daypill{font-size:11px;padding:3px 9px}
   #chip{font-size:12px;padding:5px 12px;top:max(6px,env(safe-area-inset-top))}
   #topleft{gap:5px;top:max(6px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left))}
   #banner{font-size:19px;padding:10px 24px}
@@ -194,6 +198,7 @@ export class Hud {
   private wheatPill: HTMLDivElement
   private lvlBadge: HTMLDivElement
   private xpFill: HTMLDivElement
+  private dayPill: HTMLDivElement
   private chip: HTMLDivElement
   private chipText = ''
   private banner: HTMLDivElement
@@ -234,6 +239,8 @@ export class Hud {
     this.lvlBadge.textContent = '1'
     const bar = el('div', 'xpbar', xw)
     this.xpFill = el('div', 'xpfill', bar)
+    this.dayPill = el('div', 'daypill', tl)
+    this.dayPill.textContent = 'Day 1 \u{2600}\u{FE0F}'
 
     this.chip = el('div', 'chip', this.root)
     this.banner = el('div', 'banner', this.root)
@@ -411,6 +418,14 @@ export class Hud {
     gsap.to(this.xpFill, { width: `${Math.min(100, (xp / need) * 100)}%`, duration: 0.4, ease: 'power2.out' })
   }
 
+  /** the journey marker: which day of farm life this is, with a phase mood */
+  setDay(day: number, label: 'dawn' | 'morning' | 'noon' | 'golden' | 'dusk'): void {
+    const icon =
+      label === 'dawn' ? '\u{1F305}' : label === 'golden' ? '\u{1F33B}' : label === 'dusk' ? '\u{1F319}' : '\u{2600}\u{FE0F}'
+    const text = `Day ${day} ${icon}`
+    if (this.dayPill.textContent !== text) this.dayPill.textContent = text
+  }
+
   // ---- chip -------------------------------------------------------------
 
   showChip(text: string | null): void {
@@ -440,6 +455,13 @@ export class Hud {
       .to(this.banner, { opacity: 1, scale: 1, duration: 0.45, ease: 'back.out(1.8)' })
       .to(this.banner, { opacity: 0, scale: 0.8, duration: 0.4, ease: 'power2.in' }, '+=2.1')
     gsap.timeline().to(this.flash, { opacity: 1, duration: 0.18 }).to(this.flash, { opacity: 0, duration: 0.9 })
+  }
+
+  /** yank a live banner off screen — cinematics call this when the letterbox
+   * drops so a just-fired event toast never floats over the scene */
+  dismissBanner(): void {
+    gsap.killTweensOf(this.banner)
+    gsap.to(this.banner, { opacity: 0, scale: 0.8, duration: 0.25, ease: 'power2.in' })
   }
 
   // ---- proximity action buttons (above the right thumb) ------------------

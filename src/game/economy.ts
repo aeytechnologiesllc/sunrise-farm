@@ -62,7 +62,6 @@ export type GoodKind = CropKind | 'egg'
 export const GOOD_SELL: Record<GoodKind, number> = { wheat: 2, corn: 5, egg: 8 }
 /** customers pay a premium over auto-sell — additive bonus, never required */
 export const CUSTOMER_PREMIUM = 1.6
-export const CUSTOMER_TIP_RATE = 0.3
 export const CUSTOMER_QUEUE_MAX = 2
 /** spawn cadence: first visit comes quick, then a relaxed 60-120s rhythm */
 export const CUSTOMER_FIRST_DELAY: [number, number] = [18, 30]
@@ -72,8 +71,18 @@ export function offerFor(kind: GoodKind, count: number, premium = CUSTOMER_PREMI
   return Math.ceil(GOOD_SELL[kind] * count * premium)
 }
 
-export function tipFor(offer: number): number {
-  return Math.max(1, Math.round(offer * CUSTOMER_TIP_RATE))
+/** variable-ratio tip — a constant rate extinguishes anticipation after two
+ * customers, so the reveal rolls: 30% small thanks, 60% the 20-35% bread and
+ * butter, 8% generous, 2% the legendary double-tipper. Floor of 1 coin so no
+ * customer ever feels stingy (cozy safety rule). Pass the game rng's roll for
+ * determinism; the default keeps old call sites/tests on the middle band. */
+export function tipFor(offer: number, roll = 0.5): number {
+  let rate: number
+  if (roll < 0.3) rate = 0.1
+  else if (roll < 0.9) rate = 0.2 + ((roll - 0.3) / 0.6) * 0.15
+  else if (roll < 0.98) rate = 0.6
+  else rate = 2.0
+  return Math.max(1, Math.round(offer * rate))
 }
 
 /** XP needed to clear the given level (level 1 -> 20, 2 -> 30, ...) */

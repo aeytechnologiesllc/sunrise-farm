@@ -33,6 +33,13 @@ export const MODEL_URLS = {
   egg: `${FOOD}/egg.glb`,
   cornItem: `${FOOD}/corn.glb`,
   pumpkinItem: `${FOOD}/pumpkin.glb`,
+  // the family dinner table (sleep-scene interior)
+  turkey: `${FOOD}/turkey.glb`,
+  pie: `${FOOD}/pie.glb`,
+  breadLoaf: `${FOOD}/bread.glb`,
+  plateDinner: `${FOOD}/plate-dinner.glb`,
+  bowlSoup: `${FOOD}/bowl-soup.glb`,
+  cupTea: `${FOOD}/cup-tea.glb`,
   wheatA: `${NATURE}/crops_wheatStageA.glb`,
   wheatB: `${NATURE}/crops_wheatStageB.glb`,
   cornA: `${NATURE}/crops_cornStageA.glb`,

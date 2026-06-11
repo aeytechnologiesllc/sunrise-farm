@@ -15,6 +15,7 @@ import {
   PCFShadowMap,
   Raycaster,
   Scene,
+  SkinnedMesh,
   Vector3,
   WebGLRenderer,
 } from 'three'
@@ -85,6 +86,7 @@ import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
 import { Homestead } from './world/homestead'
+import { HomeInterior } from './world/interior'
 import { NightSky } from './world/nightsky'
 import { normalizeHeight } from './world/scale'
 import {
@@ -105,7 +107,7 @@ const PLOT_R = 2.1
 const CHICK_R = 2.4
 const CRATE_R = 2.6
 const STAND_R = 2.9
-const AUTOPLANT_AFTER = 0.6
+const AUTOPLANT_AFTER = 1.5
 
 declare global {
   interface Window {
@@ -125,6 +127,9 @@ declare global {
       sleepStart: () => void
       sleepSeek: (s: number) => void
       dusk: () => void
+      interiorProbe: () => Array<{ name: string; x: number; y: number; z: number; vis: boolean }>
+      camProbe: () => Record<string, unknown>
+      ray: (nx: number, ny: number) => Array<{ d: number; n: number | undefined; name: string }>
       draws: () => number
       warp: (x: number, z: number) => void
     }
@@ -192,6 +197,8 @@ async function boot(): Promise<void> {
   )
   const nightSky = new NightSky(scene)
   const homestead = new Homestead(scene)
+  // the family-dinner film set, parked far off-world until the scene cuts in
+  const homeInterior = new HomeInterior(scene, assets)
   composer.addPass(
     new EffectPass(
       cam.camera,
@@ -312,11 +319,28 @@ async function boot(): Promise<void> {
   hud.setWheat(state.wheat)
   hud.setXp(state.xp, xpNeeded(state.level), state.level)
   game.on('xp', (e) => hud.setXp(e.xp, e.need, e.level))
+  // a level-up fanfare must never be hollow — every level names what it
+  // unlocked or brought closer (an empty 'the farm grows' trains players
+  // that the fanfare means nothing)
+  const LEVEL_NEWS: Record<number, string> = {
+    2: 'The roadside stand is on sale! \u{1F3D5}',
+    3: 'Sheep! The flock pen unlocks \u{1F411}',
+    4: 'The East Meadow deed is within reach \u{1F4DC}',
+    5: 'Goats join the ladder \u{1F410}',
+    6: 'The Chicken Coop AND The Stable unlock \u{1F414}',
+    7: 'North Acres — and Grandpa’s tractor \u{1F69C}',
+    8: 'The Farm Shop is buildable \u{1F3EA}',
+    9: 'The Greenhouse unlocks \u{1F33F}',
+    10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
+  }
   game.on('levelup', (e) => {
-    const sub = e.unlocked.length ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!` : 'The farm grows.'
+    const sub = e.unlocked.length
+      ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!`
+      : (LEVEL_NEWS[e.level] ?? 'The whole town hears the news \u{1F4EF}')
     hud.showBanner(`Level ${e.level}!`, sub)
     music.duck()
     sfx.fanfare()
+    navigator.vibrate?.([20, 40, 20])
   })
   // the ready-chime is rate-limited HARD: with a dozen plots ripening near
   // each other it used to ring over and over ("toon toon") — one chime now
@@ -414,6 +438,9 @@ async function boot(): Promise<void> {
   let slowUntilReal = 0
   const rareSlowMo = (): void => {
     slowUntilReal = performance.now() + 100
+    // touch is the one juice channel phones add — rare moments only, never
+    // common pops (over-buzzing erodes the signal like the old chime spam)
+    navigator.vibrate?.(30)
   }
 
   // ---- proximity actions ------------------------------------------------------
@@ -627,6 +654,7 @@ async function boot(): Promise<void> {
   let sleepActive = false
   let sleepStarted = 0
   let skyGaze = false
+  let interiorShot = false
   let sleepTl: gsap.core.Timeline | null = null
   let wife: { group: Group; mixer: AnimationMixer } | null = null
   const nightDial = { k: 0 }
@@ -635,11 +663,38 @@ async function boot(): Promise<void> {
     nightSky.set(nightDial.k)
   }
   let sleepSkipped = false
+  /** the star-gaze tally card — the bed is also the day's reward dispenser */
+  const dayCard = document.createElement('div')
+  dayCard.style.cssText =
+    'position:fixed;left:50%;top:30%;transform:translate(-50%,-50%) scale(.92);opacity:0;z-index:39;' +
+    "text-align:center;color:#fff7e0;font:700 17px 'Trebuchet MS','Segoe UI',system-ui,sans-serif;" +
+    'text-shadow:0 1px 10px rgba(0,0,0,.65);letter-spacing:.04em;pointer-events:none;line-height:1.9'
+  document.body.appendChild(dayCard)
+  const showDayCard = (day: number, s: { coins: number; harvests: number; eggs: number }): void => {
+    const parts = [
+      s.coins > 0 ? `\u{1FA99} ${s.coins} earned` : null,
+      s.harvests > 0 ? `\u{1F33E} ${s.harvests} harvest${s.harvests === 1 ? '' : 's'}` : null,
+      s.eggs > 0 ? `\u{1F95A} ${s.eggs} egg${s.eggs === 1 ? '' : 's'}` : null,
+    ].filter(Boolean)
+    dayCard.innerHTML =
+      `<div style="font-size:13px;opacity:.75;letter-spacing:.18em;text-transform:uppercase">Day ${day} on Sunrise Farm</div>` +
+      `<div>${parts.length ? parts.join(' &nbsp;\u{B7}&nbsp; ') : 'A quiet day of good work'}</div>` +
+      `<div style="font-size:13px;opacity:.8">\u{1F331} the crops grow while everyone sleeps</div>`
+    gsap.killTweensOf(dayCard)
+    gsap.to(dayCard, { opacity: 1, scale: 1, duration: 0.9, ease: 'power2.out' })
+  }
+  const hideDayCard = (fast = false): void => {
+    gsap.killTweensOf(dayCard)
+    gsap.to(dayCard, { opacity: 0, duration: fast ? 0.15 : 0.7, ease: 'power1.in' })
+  }
   const endSleepScene = (): void => {
     if (!sleepActive) return
     sleepActive = false
     skyGaze = false
+    interiorShot = false
+    homeInterior.setLit(false)
     letterbox.hide()
+    hideDayCard(true)
     cam.cineFollow(null)
     player.autoWalkTo(null)
     nightDial.k = 0
@@ -661,6 +716,7 @@ async function boot(): Promise<void> {
     sleepStarted = engine.uTime.value
     touch()
     dropStick()
+    hud.dismissBanner() // a lingering event toast must not float over the scene
     letterbox.show('goodnight — tap to skip')
     const door = homestead.doorPos
     // his wife appears at the lit threshold, waving him in
@@ -694,37 +750,66 @@ async function boot(): Promise<void> {
       gsap.to(player.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in' })
       if (wife) gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in', delay: 0.15 })
     }, undefined, 3.6)
-    // the camera drifts up; the world breathes out into night
+    // CUT inside, through black: the family is at the table
+    tl.call(() => letterbox.fade(true, 0.45), undefined, 4.1)
     tl.call(() => {
+      homeInterior.setLit(true)
+      interiorShot = true
+      letterbox.fade(false, 0.6)
+    }, undefined, 4.7)
+    // supper — the heart of the scene. Firelight, the child looking up at
+    // dad, clinks between bites. The world outside slips into night unseen.
+    for (const at of [5.8, 7.0, 8.3, 9.6]) tl.call(quiet(() => sfx.clink()), undefined, at)
+    tl.to(nightDial, { k: 1, duration: 3.0, ease: 'sine.inOut', onUpdate: applyNight }, 5.2)
+    // dinner ends; cut up to the stars
+    tl.call(() => letterbox.fade(true, 0.5), undefined, 11.3)
+    // today's tally, read under the stars (snapshot BEFORE sleep() resets it)
+    const summary = game.daySummary()
+    tl.call(() => {
+      homeInterior.setLit(false)
+      interiorShot = false
       skyGaze = true
-    }, undefined, 4.4)
-    tl.to(nightDial, { k: 1, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 4.6)
-    for (const at of [6.2, 7.1, 8.3, 9.1, 9.9]) tl.call(quiet(() => sfx.cricket()), undefined, at)
+      letterbox.fade(false, 0.7)
+    }, undefined, 11.9)
+    tl.call(quiet(() => showDayCard(state.day, summary)), undefined, 12.7)
+    tl.call(() => hideDayCard(), undefined, 15.1)
+    for (const at of [12.8, 13.7, 14.9]) tl.call(quiet(() => sfx.cricket()), undefined, at)
     // deep night: the new day begins where no one can see the seam
     tl.call(() => {
       dayCycle.startNewDay()
       game.sleep()
-    }, undefined, 10.4)
+    }, undefined, 15.4)
     // dawn washes the stars away
-    tl.to(nightDial, { k: 0, duration: 3.0, ease: 'sine.inOut', onUpdate: applyNight }, 10.8)
-    tl.call(quiet(() => sfx.birds()), undefined, 12.0)
-    tl.call(quiet(() => sfx.birds()), undefined, 13.0)
-    // back down to the door: he steps out into the morning
+    tl.to(nightDial, { k: 0, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 15.8)
+    tl.call(quiet(() => sfx.birds()), undefined, 17.0)
+    tl.call(quiet(() => sfx.birds()), undefined, 17.9)
+    // cut back down to the door: he steps out into the morning
+    tl.call(() => letterbox.fade(true, 0.45), undefined, 18.6)
     tl.call(() => {
       skyGaze = false
+      letterbox.fade(false, 0.6)
+      gsap.killTweensOf(player.group.scale)
       player.group.scale.setScalar(1)
       player.pos.copy(homestead.thresholdPos)
       player.autoWalkTo(door.clone().add(new Vector3(1.6, 0, 2.2)))
       if (wife) {
+        gsap.killTweensOf(wife.group.scale)
         wife.group.scale.setScalar(1)
         gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.6, delay: 1.6, ease: 'power2.in' })
       }
-    }, undefined, 13.8)
+    }, undefined, 19.2)
     tl.call(() => {
-      hud.showBanner(`Day ${state.day} \u{1F305}`, 'A brand-new morning on the farm')
+      // tenure milestones make the day number an emotional scoreboard
+      const MILESTONES: Record<number, string> = {
+        7: 'One whole week on the farm \u{1F33B}',
+        14: 'Two weeks of good mornings \u{1F425}',
+        30: 'A month of mornings \u{1F304}',
+        100: 'A hundred days — this land knows you now \u{1F3E1}',
+      }
+      hud.showBanner(`Day ${state.day} \u{1F305}`, MILESTONES[state.day] ?? 'A brand-new morning on the farm')
       music.duck()
-    }, undefined, 14.8)
-    tl.call(() => endSleepScene(), undefined, 16.4)
+    }, undefined, 20.2)
+    tl.call(() => endSleepScene(), undefined, 21.8)
     sleepTl = tl
   }
 
@@ -866,6 +951,7 @@ async function boot(): Promise<void> {
         lastGlow.splice(insertAt + k, 0, 'none')
       })
     }
+    hud.dismissBanner() // a lingering event toast must not float over the scene
     construction.play({
       site: center,
       yaw: 0,
@@ -935,11 +1021,14 @@ async function boot(): Promise<void> {
     serveCooldown = 0.9
     sfx.kaching()
     player.gesture(engine.uTime.value)
+    // the 2x band of the tip roll is a once-in-fifty event — let it LAND
+    const bigTip = c.want.tip >= c.want.offer
     const at = view.bubbleAnchor().setY(1.5)
-    sparkleBurst(scene, at, false, 8)
-    fountainFrom(at, total, false)
+    sparkleBurst(scene, at, bigTip, bigTip ? 14 : 8)
+    fountainFrom(at, total, bigTip)
     const s = cam.screenPos(view.bubbleAnchor())
-    if (!s.behind) hud.floatText(s, `+${c.want.tip} tip ♥`)
+    if (!s.behind) hud.floatText(s, bigTip ? `+${c.want.tip} DOUBLE tip!! ♥♥` : `+${c.want.tip} tip ♥`)
+    if (bigTip) rareSlowMo()
     hud.setWheat(state.wheat)
     saveNow()
   }
@@ -1047,6 +1136,7 @@ async function boot(): Promise<void> {
         hud.setCoins(state.coins)
         refreshProjectSigns()
         sfx.crate()
+        hud.dismissBanner() // a lingering event toast must not float over the scene
         construction.play({
           site: new Vector3(def.site[0], 0, def.site[1]),
           yaw: def.yaw,
@@ -1126,6 +1216,8 @@ async function boot(): Promise<void> {
   let coinMismatchFor = 0
   let standT = 0
   let movedEver = false
+  /** engine time when dusk parked (-1 while the sun is up) — chip cadence */
+  let duskAt = -1
   engine.onUpdate((dt) => {
     game.update(dt)
     customers.active = state.harvests >= 1 && (game.hasProject('stand') || game.hasProject('shop'))
@@ -1151,23 +1243,26 @@ async function boot(): Promise<void> {
       farmhand.update(dt, info)
     }
 
-    // sheep slip out while you wait on crops (post-FTUE, one mission at a time)
+    // sheep slip out while you wait on crops (post-FTUE, one mission at a
+    // time). Framed as an INVITATION, not an alarm (cozy rule: no needy
+    // mechanics): the music keeps playing, and a fetch in flight finishes
+    // before any sheep wander — the game never snatches Rex's stick away.
     if (
       !flock.missionActive &&
       flock.sheep.length > 0 &&
       state.harvests >= 2 &&
       !hud.modalOpen &&
       !sleepActive &&
-      !construction.active
+      !construction.active &&
+      !dog.fetching
     ) {
       herdTimer -= dt
       if (herdTimer <= 0) {
         const n = flock.startEscape(state.level >= 6 ? 3 : 2, state.expansion)
         if (n > 0) {
-          dropStick() // playtime's over, Rex
-          hud.showBanner('Baaad news!', `${n} sheep slipped out of the pen \u{1F411}`)
+          dropStick() // pick the stick back up after the flock's home, Rex
+          hud.showBanner('Wanderers! \u{1F411}', `${n} sheep strolled out to the meadow — Rex is ready when you are`)
           sfx.baa()
-          music.duck()
           herdTimer = Number.POSITIVE_INFINITY // reset by onAllHome
         } else {
           herdTimer = 60
@@ -1264,8 +1359,11 @@ async function boot(): Promise<void> {
       }
       if (p.distanceTo(STAND_POS) < STAND_R) tryServe()
 
-      // stand still on an empty plot for a moment -> wheat plants itself
-      if (near.emptyPlot >= 0 && player.speed < 0.3) {
+      // stand still on an empty plot for a moment -> wheat plants itself.
+      // Only after the player has planted once BY CHOICE (an action the game
+      // took for me is not mine — IKEA effect), and slow enough that reaching
+      // for the corn button never loses a race to free wheat
+      if (near.emptyPlot >= 0 && player.speed < 0.3 && state.chipsDone.plant) {
         standT += dt
         if (standT >= AUTOPLANT_AFTER) {
           standT = 0
@@ -1404,12 +1502,23 @@ async function boot(): Promise<void> {
     const sug = game.suggestion()
     const customerWaiting = customers.frontServiceable(game.stock())
     const buildable = game.projectBoard().find((e) => e.status === 'ok') ?? null
+    // bedtime is an INVITATION, not a nag: the supper chip leads for its
+    // first 20s of dusk, then steps aside for customers/produce and only
+    // resurfaces once the player has gone quiet (golden hour is theirs)
+    if (dayCycle.atDusk) {
+      if (duskAt < 0) duskAt = engine.uTime.value
+    } else {
+      duskAt = -1
+    }
+    const duskFor = duskAt >= 0 ? engine.uTime.value - duskAt : -1
     let chipText: string | null = null
     if (!hud.modalOpen && !construction.active && !sleepActive) {
       if (!movedEver && !state.chipsDone.plant) {
         chipText = 'Drag the joystick to take a walk \u{1F33B}'
-      } else if (dayCycle.atDusk && !sleepActive) {
-        chipText = "\u{1F319} The sun's setting — head home for supper"
+      } else if (dayCycle.atDusk && duskFor < 20) {
+        chipText = state.plots.some((p) => !p.crop)
+          ? '\u{1F319} Plant before bed — crops grow overnight'
+          : "\u{1F319} The sun's setting — head home for supper"
       } else if (customerWaiting) {
         chipText = 'A customer is waiting at the stand!'
       } else if (state.produce.woolReady && game.hasProject('sheep')) {
@@ -1449,6 +1558,10 @@ async function boot(): Promise<void> {
           pet: 'pet',
         }
         if (!state.chipsDone[chipFor[sug.kind]]) chipText = texts[sug.kind]
+      }
+      // soft late-dusk reminder, only once the player has gone idle
+      if (!chipText && dayCycle.atDusk && duskFor >= 20 && engine.uTime.value - lastInteract > 30) {
+        chipText = "\u{1F3E1} supper's still warm — home when you're ready"
       }
     }
     hud.showChip(chipText)
@@ -1523,15 +1636,21 @@ async function boot(): Promise<void> {
         cineEnding || t - cineStarted > 0.75 ? dog.group.position.clone().setY(0.55) : cineAim,
       )
     }
-    // goodnight scene camera: framed on the lit doorway (yaw 0.55 = straight
-    // down the door's normal), then a long gaze UP into the stars
+    // goodnight scene camera: the lit doorway -> the dinner table inside ->
+    // a long gaze up into the stars -> back to the door at dawn
     if (sleepActive) {
-      if (skyGaze) {
-        cam.cineFollow(homestead.doorPos.clone().add(new Vector3(0, 34, -10)), 0.55, -0.46)
+      if (interiorShot) {
+        cam.cineFollow(homeInterior.camFocus, homeInterior.camYaw, homeInterior.camPitch, homeInterior.camDist, homeInterior.camFov)
+        homeInterior.update(dt)
+      } else if (skyGaze) {
+        // aimed at the crescent (nightsky hangs it az 47, elev 50 — world
+        // dir ~(0.47, 0.77, 0.44)) so the gaze finds the moon among the stars
+        cam.cineFollow(homestead.doorPos.clone().add(new Vector3(14, 34, 12)), -2.3, -0.55)
       } else {
         cam.cineFollow(homestead.doorPos.clone().setY(1.2), 0.55, 0.38)
       }
     }
+    hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)
     const eveK = sleepActive
       ? Math.max(nightDial.k, Math.min(1, (dayCycle.phase - 0.78) / 0.1))
@@ -1690,7 +1809,57 @@ async function boot(): Promise<void> {
       sleepScene()
       sleepTl?.pause()
     },
+    interiorProbe: () => {
+      const out: Array<{ name: string; x: number; y: number; z: number; vis: boolean; lo?: number; hi?: number }> = []
+      const v = new Vector3()
+      scene.traverse((o) => {
+        if ((o as Mesh).isMesh) {
+          o.getWorldPosition(v)
+          if (Math.abs(v.x - 120) < 14 && Math.abs(v.z - 120) < 14) {
+            const m = o as Mesh
+            const mat = Array.isArray(m.material) ? m.material[0] : m.material
+            const rec: { name: string; x: number; y: number; z: number; vis: boolean; lo?: number; hi?: number; n?: number; col?: string } = {
+              name: o.name || o.type, x: +(v.x - 120).toFixed(2), y: +v.y.toFixed(2), z: +(v.z - 120).toFixed(2), vis: o.visible,
+              n: m.geometry.getAttribute('position')?.count,
+              col: (mat as MeshStandardMaterial).color?.getHexString?.(),
+            }
+            const sm = o as SkinnedMesh
+            if (sm.isSkinnedMesh) {
+              sm.computeBoundingBox()
+              const bb = sm.boundingBox?.clone().applyMatrix4(sm.matrixWorld)
+              if (bb) {
+                rec.lo = +bb.min.y.toFixed(2)
+                rec.hi = +bb.max.y.toFixed(2)
+              }
+            }
+            out.push(rec)
+          }
+        }
+      })
+      return out
+    },
     sleepSeek: (s: number) => sleepTl?.seek(s, false),
+    camProbe: () => {
+      const c = cam as unknown as Record<string, unknown>
+      return {
+        pos: cam.camera.position.toArray().map((v) => +v.toFixed(2)),
+        fov: cam.camera.fov,
+        smoothDist: c.smoothDist,
+        cineDist: c.cineDist,
+        pitch: c.pitch,
+        yaw: c.yaw,
+        cine: c.cineTarget !== null,
+      }
+    },
+    ray: (nx: number, ny: number) => {
+      const rc = new Raycaster()
+      rc.setFromCamera({ x: nx, y: ny } as never, cam.camera)
+      return rc.intersectObjects(scene.children, true).slice(0, 4).map((h) => ({
+        d: +h.distance.toFixed(2),
+        n: (h.object as Mesh).geometry?.getAttribute('position')?.count,
+        name: h.object.name || h.object.type,
+      }))
+    },
     dusk: () => dayCycle.setPhase(0.88),
     draws: () => renderer.info.render.calls,
     warp: (x: number, z: number) => {

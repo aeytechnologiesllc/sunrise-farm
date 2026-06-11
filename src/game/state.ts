@@ -56,6 +56,8 @@ export interface GameState {
   ladder: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
+  /** totals at dawn — the goodnight scene shows today's tally against these */
+  dayStart: { coins: number; harvests: number; eggs: number }
   /** where the sun was when last saved (0..1; reload resumes the same hour) */
   dayPhase: number
   /** wool/milk/delivery production timers (see game/produce.ts) */
@@ -89,6 +91,7 @@ export function initialState(seed: number): GameState {
     projects: {},
     ladder: true,
     day: 1,
+    dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
     produce: initialProduce(),
     timers: { sow: 0, fetch: 0, herd: 45 },
@@ -178,6 +181,8 @@ export function deserialize(json: string | null): GameState | null {
       }
     }
     s.day ??= 1
+    // older saves never tracked a dawn ledger — start counting from "now"
+    s.dayStart ??= { coins: s.coins, harvests: s.harvests, eggs: s.chicken?.eggsLaid ?? 0 }
     s.dayPhase ??= 0.32
     s.produce ??= initialProduce()
     // older produce objects predate the coop eggs
