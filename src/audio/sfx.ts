@@ -1,8 +1,14 @@
 /** All audio is synthesized via WebAudio — no sample files. The context is
  * created on first user gesture; every play call no-ops until then. */
+
+/** ~0.05s of silence as a WAV data URI — see the session trick in unlock() */
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YS4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+
 export class Sfx {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
+  private session: HTMLAudioElement | null = null
 
   /** shared context so music rides the same unlock gesture */
   get context(): AudioContext | null {
@@ -19,6 +25,17 @@ export class Sfx {
     this.master = ctx.createGain()
     this.master.gain.value = 0.45
     this.master.connect(ctx.destination)
+    // iOS hard-mutes ALL WebAudio while the ringer switch is on silent —
+    // unless a media element is playing, which flips the app's audio session
+    // to 'playback'. A looping silent <audio> keeps that session alive so
+    // pops/coins/barks stay audible on silent phones (same reason the music
+    // moved to HTMLAudio).
+    const s = new Audio(SILENT_WAV)
+    s.loop = true
+    ;(s as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+    void s.play().catch(() => {})
+    this.session = s
+    void this.session // held alive for the page's lifetime
   }
 
   private tone(
@@ -68,10 +85,10 @@ export class Sfx {
     src.start(t0)
   }
 
-  /** crop ready — two soft bell notes */
+  /** crop ready — two soft bell notes (kept gentle: it plays unprompted) */
   chime(): void {
-    this.tone(659, { dur: 0.5, gain: 0.22 })
-    this.tone(988, { at: 0.09, dur: 0.6, gain: 0.16 })
+    this.tone(659, { dur: 0.5, gain: 0.14 })
+    this.tone(988, { at: 0.09, dur: 0.6, gain: 0.1 })
   }
 
   /** harvest squash-pop */
@@ -145,12 +162,10 @@ export class Sfx {
     this.tone(240, { at: 0.02, type: 'triangle', dur: 0.1, gain: 0.18, glideTo: 120 })
   }
 
-  /** storefront ding-ding — a customer reached the stand */
+  /** storefront ding — a customer wave reached the stand (single, soft) */
   bell(): void {
-    this.tone(1318, { type: 'triangle', dur: 0.4, gain: 0.18 })
-    this.tone(1975, { dur: 0.5, gain: 0.08 })
-    this.tone(1318, { at: 0.16, type: 'triangle', dur: 0.5, gain: 0.14 })
-    this.tone(1975, { at: 0.16, dur: 0.6, gain: 0.06 })
+    this.tone(1318, { type: 'triangle', dur: 0.4, gain: 0.11 })
+    this.tone(1975, { dur: 0.5, gain: 0.05 })
   }
 
   /** sale! — bright little till jingle (offer hand-over) */
@@ -169,12 +184,12 @@ export class Sfx {
     }
   }
 
-  /** gentle sheep baa */
+  /** gentle sheep baa — barely above the breeze */
   baa(): void {
     const f = 280 + Math.random() * 60
-    this.tone(f, { type: 'sawtooth', dur: 0.32, gain: 0.07, glideTo: f * 0.82 })
-    this.tone(f * 1.01, { at: 0.03, type: 'sawtooth', dur: 0.3, gain: 0.05, glideTo: f * 0.8 })
-    this.noise({ dur: 0.25, gain: 0.04, freq: 900, q: 0.8 })
+    this.tone(f, { type: 'sawtooth', dur: 0.32, gain: 0.04, glideTo: f * 0.82 })
+    this.tone(f * 1.01, { at: 0.03, type: 'sawtooth', dur: 0.3, gain: 0.028, glideTo: f * 0.8 })
+    this.noise({ dur: 0.25, gain: 0.02, freq: 900, q: 0.8 })
   }
 
   /** whistle — calling the dog for a fetch round */

@@ -5,7 +5,7 @@
  * World code (signs, cutscenes, buildings) and Game actions derive from this
  * single table; unit-tested against src/game/expansion.ts geometry. */
 
-export type ProjectId = 'goats' | 'stable' | 'shop' | 'greenhouse' | 'farmhand'
+export type ProjectId = 'stand' | 'sheep' | 'goats' | 'stable' | 'shop' | 'greenhouse' | 'farmhand'
 
 export interface ProjectDef {
   id: ProjectId
@@ -17,6 +17,8 @@ export interface ProjectDef {
   level: number
   /** land tier gate (0..3), see src/game/expansion.ts */
   requiresExpansion: number
+  /** another project that must exist first */
+  requires?: ProjectId
   /** world x,z of the build site (sign + cutscene focus) */
   site: [number, number]
   /** building facing */
@@ -25,8 +27,34 @@ export interface ProjectDef {
   kind: 'building' | 'animals' | 'staff'
 }
 
-/** the ladder, in build order — costs strictly ascend, level gates never dip */
+/** the ladder, in build order — costs strictly ascend, level gates never dip.
+ * The first level starts from SCRATCH: no stand, no flock — the player earns
+ * each piece of the farm. */
 export const PROJECTS: ProjectDef[] = [
+  {
+    id: 'stand',
+    name: 'The Roadside Stand',
+    flavor: 'Open for business — the road brings customers now.',
+    cost: 25,
+    level: 2,
+    requiresExpansion: 0,
+    site: [0.5, 7.0],
+    yaw: 0,
+    footprint: { w: 3.8, d: 2.4 },
+    kind: 'building',
+  },
+  {
+    id: 'sheep',
+    name: 'The Sheep Pen',
+    flavor: 'Three woolly tenants — and Rex finally has a job.',
+    cost: 140,
+    level: 3,
+    requiresExpansion: 0,
+    site: [-12.3, 5.3],
+    yaw: 0,
+    footprint: { w: 2, d: 2 },
+    kind: 'animals',
+  },
   {
     id: 'goats',
     name: 'Goat Friends',
@@ -34,6 +62,7 @@ export const PROJECTS: ProjectDef[] = [
     cost: 450,
     level: 5,
     requiresExpansion: 0,
+    requires: 'sheep',
     site: [-12.3, 5.3],
     yaw: 0,
     footprint: { w: 2, d: 2 },
@@ -58,6 +87,7 @@ export const PROJECTS: ProjectDef[] = [
     cost: 800,
     level: 8,
     requiresExpansion: 0,
+    requires: 'stand',
     site: [0.5, 7.0],
     yaw: 0,
     footprint: { w: 4.6, d: 3.4 },
@@ -122,9 +152,10 @@ export interface ProjectGateState {
 export function projectStatus(
   def: ProjectDef,
   s: ProjectGateState
-): 'owned' | 'ok' | 'level' | 'coins' | 'land' {
+): 'owned' | 'ok' | 'level' | 'coins' | 'land' | 'needs' {
   if (s.projects[def.id]) return 'owned'
   if (s.expansion < def.requiresExpansion) return 'land'
+  if (def.requires && !s.projects[def.requires]) return 'needs'
   if (s.level < def.level) return 'level'
   if (s.coins < def.cost) return 'coins'
   return 'ok'

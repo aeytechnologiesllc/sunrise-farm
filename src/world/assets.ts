@@ -16,7 +16,9 @@ const QUAT = '/models/quaternius'
 // CharacterArmature rig + clip set) — the chibi Kenney minis are retired.
 export const MODEL_URLS = {
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
-  sheep: `${QUAT}/animals-extra/Sheep.glb`,
+  // the ROUNDED Quaternius sheep (white wool, black Suffolk face) — the boxy
+  // animals-extra one lives on only as the goat puppet's skeleton
+  sheep: '/models/external/SheepAlt.glb',
   horse: `${QUAT}/ultimate-animated-animals/Horse.glb`,
   cow: `${QUAT}/ultimate-animated-animals/Cow.glb`,
   // no CC0 animated goat exists anywhere (verified 2026-06-10) — the goats

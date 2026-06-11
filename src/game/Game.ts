@@ -140,8 +140,10 @@ export class Game {
   plant(plot: number, kind: CropKind): boolean {
     const p = this.plotAt(plot)
     if (!p || p.crop || !this.cropUnlocked(kind)) return false
-    // greenhouse warmth: crops mature faster under glass
-    const total = CROPS[kind].growSec * (this.isGreenhouse(plot) ? GREENHOUSE_GROW_MULT : 1)
+    // greenhouse warmth: crops mature faster under glass; the very FIRST
+    // crop races (FTUE: the player tastes the harvest loop in ~30s)
+    const ftue = this.state.harvests === 0 ? 0.35 : 1
+    const total = CROPS[kind].growSec * (this.isGreenhouse(plot) ? GREENHOUSE_GROW_MULT : 1) * ftue
     p.crop = { kind, total, remaining: total, chimed: false }
     this.grantXp(XP_GAIN.plant)
     this.retireChip('plant')

@@ -19,7 +19,7 @@ import {
 import { mulberry32, type Rng } from '../game/rng'
 import { tint, type Assets, type ModelKey } from './assets'
 import { assertSpawnScale, measuredHeight } from './scale'
-import { applyWool, setCoatHSL } from './wool'
+import { dressSheep } from './sheepLook'
 
 export type GrazerKind = 'horse' | 'cow' | 'goat'
 
@@ -139,11 +139,12 @@ export class Grazers {
     g.scale.setScalar(s)
     assertSpawnScale(kind, rawH * s, min, max)
     const v = VARIETY[kind]
-    if (v.base) setCoatHSL(g, v.base.h, v.base.s, v.base.l)
     tint(g, (this.rng.next() - 0.5) * v.hue, (this.rng.next() - 0.5) * v.light)
-    // goats ride the box-bodied sheep rig — seeded fleece displacement
-    // de-blobs the silhouette (after sizing, so the scale band still holds)
-    if (kind === 'goat') applyWool(g, Math.floor(this.rng.next() * 0xffffffff))
+    // goats ride the box-bodied sheep rig — bone-puppet dressing hides the
+    // boxy GLB meshes and hangs hand-built tan parts on the animated bones
+    // (after sizing, so the scale band still holds; the tint above only ever
+    // touched the now-hidden materials on goats)
+    if (kind === 'goat') dressSheep(g, Math.floor(this.rng.next() * 0xffffffff), 'goat')
     g.position.copy(this.spotIn(rect))
     const heading = this.rng.next() * Math.PI * 2
     g.rotation.y = heading

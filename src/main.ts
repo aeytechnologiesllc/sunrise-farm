@@ -55,6 +55,7 @@ import {
   buildPicketFence,
   buildSky,
   buildStand,
+  buildPen,
   CRATE_POS,
   DOG_HOME,
   groundClear,
@@ -182,8 +183,10 @@ async function boot(): Promise<void> {
   )
   buildGround(scene)
   const grass = buildMeadow(scene, assets)
-  // the roadside stand survives until the Farm Shop project replaces it
-  let standGroup: Group | null = state.projects.shop ? null : buildStand(scene, assets)
+  // level one starts from SCRATCH: the stand exists only once its project is
+  // built (and the Farm Shop later replaces it)
+  let standGroup: Group | null =
+    state.projects.shop || !state.projects.stand ? null : buildStand(scene, assets)
   let fenceMesh = buildPicketFence(scene, state.expansion)
   for (let t = 0; t <= state.expansion; t++) {
     const def = TIERS[t]
@@ -233,7 +236,13 @@ async function boot(): Promise<void> {
   const chicken = new ChickenView(assets, scene, NEST_POS, CRATE_POS, state.chicken.seed)
   const dog = new DogView(assets, scene, DOG_HOME)
   dog.onBark = () => sfx.bark()
-  const flock = new Flock(assets, scene, sheepCount(state.expansion), (state.chicken.seed ^ 0x51f15e) >>> 0)
+  // the flock exists only after The Sheep Pen project (fresh farms are empty)
+  const flock = new Flock(
+    assets,
+    scene,
+    state.projects.sheep ? sheepCount(state.expansion) : 0,
+    (state.chicken.seed ^ 0x51f15e) >>> 0,
+  )
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
@@ -254,8 +263,15 @@ async function boot(): Promise<void> {
     music.duck()
     sfx.fanfare()
   })
+  // the ready-chime is rate-limited HARD: with a dozen plots ripening near
+  // each other it used to ring over and over ("toon toon") — one chime now
+  // speaks for the whole batch
+  let lastChime = -99
   game.on('cropReady', (e) => {
-    sfx.chime()
+    if (engine.uTime.value - lastChime > 9) {
+      lastChime = engine.uTime.value
+      sfx.chime()
+    }
     sparkleBurst(scene, plots[e.plot].center.clone().setY(0.8), false, 5)
   })
   // crops visibly grow while you watch (stage-up bounce)
@@ -390,7 +406,8 @@ async function boot(): Promise<void> {
   let lastBaa = -10
   flock.onBaa = (at) => {
     const t = engine.uTime.value
-    if (t - lastBaa < 1.4 || at.distanceTo(player.pos) > 15) return
+    // ambient bleats stay occasional and close-range — flavor, not noise
+    if (t - lastBaa < 5 || at.distanceTo(player.pos) > 10) return
     lastBaa = t
     sfx.baa()
   }
@@ -555,7 +572,20 @@ async function boot(): Promise<void> {
 
   /** make an owned project exist in the world (boot restore + fresh reveals) */
   const applyProject = (def: ProjectDef, fresh: boolean): void => {
-    if (def.id === 'stable') {
+    if (def.id === 'stand') {
+      if (!state.projects.shop && !standGroup) {
+        standGroup = buildStand(scene, assets)
+        if (fresh) {
+          standGroup.scale.setScalar(0.01)
+          gsap.to(standGroup.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
+        }
+      }
+      customers.active = state.harvests >= 1
+    } else if (def.id === 'sheep') {
+      buildPen(scene)
+      // at boot the Flock constructor already spawned the saved flock
+      if (fresh) for (let i = 0; i < 3; i++) flock.addSheep()
+    } else if (def.id === 'stable') {
       addBuilding(buildStable, def, fresh)
       grazers.add('horse', HORSE_RECT, 1)
     } else if (def.id === 'goats') {
@@ -585,25 +615,35 @@ async function boot(): Promise<void> {
   // build-site signs for every project whose land exists
   const projectSigns = new Map<ProjectId, { group: Group; at: Vector3 }>()
   const refreshProjectSigns = (): void => {
+    // chained projects (shop after stand, goats after sheep) keep their sign
+    // hidden until the prerequisite exists — they also share build sites, so
+    // early signs would stack on top of each other
     const avail = availableProjects({
       level: state.level,
       coins: state.coins,
       expansion: state.expansion,
       projects: state.projects as Partial<Record<ProjectId, boolean>>,
-    })
+    }).filter((d) => !d.requires || state.projects[d.requires])
     for (const [id, s] of projectSigns) {
       if (!avail.some((d) => d.id === id)) {
         scene.remove(s.group)
         projectSigns.delete(id)
       }
     }
+    // upgrade signs can't stand inside the building they replace
+    const SIGN_OFFSET: Partial<Record<ProjectId, [number, number]>> = {
+      shop: [-3.0, 0.6],
+      goats: [1.6, -3.4],
+    }
     for (const def of avail) {
       if (projectSigns.has(def.id)) continue
+      const [ox, oz] = SIGN_OFFSET[def.id] ?? [0, 0]
+      const at = new Vector3(def.site[0] + ox, 0, def.site[1] + oz)
       const group = buildDeedSign(def.name, def.cost, 'BUILD', '#2e6db4')
-      group.position.set(def.site[0], 0, def.site[1])
-      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - def.site[0], PLAYER_SPAWN.z - def.site[1])
+      group.position.copy(at)
+      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
       scene.add(group)
-      projectSigns.set(def.id, { group, at: new Vector3(def.site[0], 0, def.site[1]) })
+      projectSigns.set(def.id, { group, at })
     }
   }
   refreshProjectSigns()
@@ -643,7 +683,7 @@ async function boot(): Promise<void> {
           })
         }
         if (def.tractor && !tractor) tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
-        if (def.sheep) for (let i = 0; i < def.sheep; i++) flock.addSheep()
+        if (def.sheep && game.hasProject('sheep')) for (let i = 0; i < def.sheep; i++) flock.addSheep()
         refreshProjectSigns()
         sparkleBurst(scene, center.clone().setY(1.2), true, 18)
       },
@@ -661,11 +701,16 @@ async function boot(): Promise<void> {
   const reflowQueue = (): void => {
     for (const c of customers.queue) customerViews.get(c.id)?.moveToSpot(customers.spotOf(c.id))
   }
+  let lastBell = -99
   customers.onSpawn = (c) => {
     const view = new CustomerView(assets, scene, c.id, c.seed, customers.spotOf(c.id))
     view.onArrive = () => {
       customers.notifyArrived(c.id)
-      sfx.bell()
+      // ding once for a NEW wave, not for every walker-up
+      if (engine.uTime.value - lastBell > 20) {
+        lastBell = engine.uTime.value
+        sfx.bell()
+      }
     }
     view.onGone = () => {
       customers.remove(c.id)
@@ -822,7 +867,7 @@ async function boot(): Promise<void> {
   let movedEver = false
   engine.onUpdate((dt) => {
     game.update(dt)
-    customers.active = state.harvests >= 1
+    customers.active = state.harvests >= 1 && (game.hasProject('stand') || game.hasProject('shop'))
     customers.update(dt, game.stock())
     player.update(dt, joy.value, cam.yaw)
     fenceBlock()
@@ -843,7 +888,7 @@ async function boot(): Promise<void> {
     }
 
     // sheep slip out while you wait on crops (post-FTUE, one mission at a time)
-    if (!flock.missionActive && state.harvests >= 2 && !hud.modalOpen) {
+    if (!flock.missionActive && flock.sheep.length > 0 && state.harvests >= 2 && !hud.modalOpen) {
       herdTimer -= dt
       if (herdTimer <= 0) {
         const n = flock.startEscape(state.level >= 6 ? 3 : 2, state.expansion)
@@ -1019,7 +1064,9 @@ async function boot(): Promise<void> {
                   ? `reach Lv ${def.level} first`
                   : status === 'coins'
                     ? `${def.cost} coins — need ${def.cost - state.coins} more`
-                    : 'needs more land',
+                    : status === 'needs'
+                      ? `build ${game.projectBoard().find((e) => e.def.id === def.requires)?.def.name ?? 'the prerequisite'} first`
+                      : 'needs more land',
             locked: status !== 'ok',
           })
         }
@@ -1046,6 +1093,14 @@ async function boot(): Promise<void> {
         chipText = `You can afford ${game.nextDeed()?.name}! Find the FOR-SALE sign \u{1F4DC}`
       } else if (buildable) {
         chipText = `You can afford ${buildable.def.name}! Find its BUILD sign \u{1F3D7}`
+      } else if (
+        state.harvests === 0 &&
+        state.plots.some((p) => p.crop) &&
+        !dog.fetching &&
+        fetchCool <= 0
+      ) {
+        // first-ever wait: hand the player something to DO right away
+        chipText = 'While the wheat grows — walk to Rex and throw his stick \u{1FAB5}'
       } else if (sug) {
         const name = state.chicken.name ?? 'her'
         const texts: Record<Suggestion['kind'], string> = {
@@ -1198,9 +1253,55 @@ async function boot(): Promise<void> {
   addEventListener('resize', resize)
   resize()
   addEventListener('pagehide', saveNow)
+  // crops keep growing while the tab/app is in the background: the engine's
+  // rAF freezes when hidden, so on return we fast-forward the SAVE timers by
+  // the wall-clock gap and refresh every plot's look. Works for minimized
+  // browsers and home-screen PWAs alike.
+  let hiddenAt = 0
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') saveNow()
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now()
+      saveNow()
+    } else if (hiddenAt) {
+      const away = (Date.now() - hiddenAt) / 1000
+      hiddenAt = 0
+      if (away > 3) {
+        catchUp(state, away)
+        for (let i = 0; i < plots.length; i++) {
+          const c = game.plotAt(i)?.crop ?? null
+          plots[i].setCrop(c ? c.kind : null, c ? Game.stageOf(c.total, c.remaining) : 0, false)
+        }
+        if (state.chicken.eggReady && chicken.settled) chicken.showEgg(false)
+        hud.setWheat(state.wheat)
+        hud.setCoins(state.coins)
+        saveNow()
+      }
+    }
   })
+
+  // iOS Safari ignores user-scalable=no: a stray pinch zooms the PAGE and
+  // sticks. Blocking gesture events kills page-zoom while the canvas pinch
+  // (camera zoom) keeps working through pointer events.
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false })
+  }
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false })
+
+  // one-time fullscreen tip for iPhone Safari (no Fullscreen API there —
+  // Add to Home Screen is THE way to lose the browser bars)
+  const standalone = matchMedia('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  if (
+    isCoarse &&
+    !standalone &&
+    typeof document.documentElement.requestFullscreen !== 'function' &&
+    localStorage.getItem('sunrise-farm.fsHint') !== '1'
+  ) {
+    gsap.delayedCall(45, () => {
+      localStorage.setItem('sunrise-farm.fsHint', '1')
+      hud.showBanner('Play fullscreen!', 'Share button → Add to Home Screen')
+    })
+  }
 
   // ---- dev driver ------------------------------------------------------------------
   window.__farm = {

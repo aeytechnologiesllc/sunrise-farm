@@ -148,21 +148,20 @@ export function buildForest(scene: Scene, isClear: (x: number, z: number) => boo
   const rng = mulberry32(7771234)
   const bins: TreeBins = { bark: [], leafA: [], leafB: [], needle: [] }
 
-  // ring of mature trees just outside the play space
+  // ring of mature trees pushed WELL outside the maximum farm footprint —
+  // the owner kept losing the farmer behind trunks as the farm expanded
+  // toward the old 18.5u ring, and no tree may ever stand between the
+  // follow-camera and the play space
   for (let i = 0; i < 34; i++) {
     const a = (i / 34) * Math.PI * 2 + rng.next() * 0.26
-    const r = 18.5 + rng.next() * 9.5
+    const r = 23.5 + rng.next() * 8.5
     const x = Math.cos(a) * r
-    const z = Math.sin(a) * r * 0.9
+    const z = Math.sin(a) * r * 0.92
     if (isClear(x, z)) continue
     const roll = rng.next()
     if (roll < 0.3) makePine(bins, rng, x, z)
     else makeOak(bins, rng, x, z, roll > 0.8)
   }
-  // friendly trees inside the meadow
-  makeOak(bins, rng, -9.5, 8.6, true)
-  makeOak(bins, rng, 8.6, -4.2) // east of field A, clear of field C
-  makePine(bins, rng, 11.8, 7.6)
 
   // bush scatter
   for (let i = 0; i < 26; i++) {

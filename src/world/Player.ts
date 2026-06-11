@@ -23,8 +23,8 @@ import {
 import { tint, type Assets } from './assets'
 import { assertSpawnScale, measuredHeight, SCALE } from './scale'
 
-const WALK_SPEED = 3.4
-const RUN_SPEED = 4.9
+const WALK_SPEED = 3.2
+const RUN_SPEED = 4.15
 /** stick deflection above which the farmer breaks into a run */
 const RUN_DEFLECT = 0.7
 const TURN_RATE = 11

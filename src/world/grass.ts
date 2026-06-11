@@ -5,9 +5,13 @@
  * forward bend, tinted per instance and darkened toward the root with a
  * per-vertex gradient. Blades grow in clumps that share a tint family — real
  * grass tillers from a crown, and uniform scatter is what reads as fake.
- * Per pixel this is CHEAPER than the cards: zero overdraw discard, zero
- * texture fetches, ~0.42M tris desktop / ~0.24M on coarse-pointer devices,
- * still a single draw call. */
+ * SOFT LAWN retune: the first geometry pass read as sparse spiky weeds in
+ * the farmyard, so blades are now shorter, finer, denser and more upright —
+ * a smooth even carpet underfoot — and the taller, wilder look is reserved
+ * for the far meadow. Per pixel this stays cheaper than the cards: zero
+ * overdraw discard, zero texture fetches, ~0.51M tris desktop / ~0.29M on
+ * coarse-pointer devices (each blade is much smaller on screen, so fill
+ * cost drops even as counts rise), still a single draw call. */
 import {
   BufferAttribute,
   BufferGeometry,
@@ -26,8 +30,9 @@ export interface GrassField {
   update(t: number): void
 }
 
-/** blade root width in object space (instances scale it 0.7..1.6) */
-const BLADE_W = 0.035
+/** blade root width in object space (instances scale it 0.7..1.6) — fine
+ * blades are what separate a soft lawn from coarse weeds */
+const BLADE_W = 0.022
 /** vertical segments per blade: 5 vertex rows = 10 verts, 8 indexed tris */
 const SEGS = 4
 /** baked forward lean of the tip, as a fraction of blade height */
@@ -82,7 +87,7 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // phones get a thinner field; each blade is only 8 tris so even the
   // desktop count is lighter per pixel than the old alpha-cutout cards
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
-  const COUNT = coarse ? 30000 : 52000
+  const COUNT = coarse ? 36000 : 64000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
@@ -103,13 +108,22 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
           vec4 gIpos = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
           float gPh = gIpos.x * 1.7 + gIpos.z * 1.3;
           float gW = gradient * gradient;
-          // fine flutter: two detuned sines on the blade's world phase
-          transformed.x += (sin(uTime * 1.9 + gPh) * 0.5 + sin(uTime * 3.7 + gPh * 1.7) * 0.25) * 0.1 * gW;
+          // amplitude must ride the blade's HEIGHT so the short yard lawn
+          // barely moves while the tall meadow keeps its gust wave. The z
+          // displacement gets that for free (instanceMatrix scales z by hy)
+          // but x is scaled by the independent width factor, so recover the
+          // height from column 1 of the instance matrix — the rotated y
+          // basis, whose length is exactly hy
+          float gH = length(instanceMatrix[1].xyz);
+          // fine flutter: two detuned sines on the blade's world phase;
+          // 0.35 * meadow-height ~0.29 keeps the old meadow amplitude while
+          // the ~0.12 yard blades drop to well under half of it
+          transformed.x += (sin(uTime * 1.9 + gPh) * 0.5 + sin(uTime * 3.7 + gPh * 1.7) * 0.25) * 0.35 * gH * gW;
           transformed.z += cos(uTime * 1.4 + gPh * 1.3) * 0.05 * gW;
           // slow large gust: long wavelength across world space, so whole
           // patches of meadow lean together and a wave rolls through
           float gGust = sin((gIpos.x + gIpos.z) * 0.13 + uTime * 0.7);
-          transformed.x += gGust * 0.12 * gW;
+          transformed.x += gGust * 0.42 * gH * gW;
           transformed.z += gGust * 0.07 * gW;
         #endif`,
       )
@@ -140,41 +154,46 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   let attempts = 0
   while (placed < COUNT && attempts < COUNT * 10) {
     attempts++
-    // 62% of clumps pack the play space; the rest fade into the far meadow
-    const inner = rng.next() < 0.62
+    // 72% of clumps pack the play space so the lawn carpet is continuous
+    // underfoot with no bald patches; the rest fade into the far meadow
+    const inner = rng.next() < 0.72
     const cx = inner ? -17 + rng.next() * 34 : -34 + rng.next() * 68
     const cz = inner ? -11 + rng.next() * 24 : -28 + rng.next() * 56
     if (!inner && cx > -17 && cx < 17 && cz > -11 && cz < 13) continue
     if (isClear(cx, cz)) continue
     const inYard = cx > YARD.minX && cx < YARD.maxX && cz > YARD.minZ && cz < YARD.maxZ
-    // each clump shares a tint family and a base height; ~12% of clumps have
-    // dried to straw, which breaks the monochrome-green read at a glance
-    const dry = rng.next() < 0.12
-    const ch = dry ? 0.115 + rng.next() * 0.035 : 0.26 + rng.next() * 0.09
-    const cs = dry ? 0.38 + rng.next() * 0.2 : 0.38 + rng.next() * 0.25
+    // each clump shares a tint family and a base height; a kept lawn is
+    // close to uniform green, so straw clumps are rare (~5% overall) and
+    // live almost entirely out in the wild meadow
+    const dry = rng.next() < (inYard ? 0.01 : 0.09)
+    const ch = dry ? 0.115 + rng.next() * 0.035 : 0.275 + rng.next() * 0.055
+    const cs = dry ? 0.38 + rng.next() * 0.2 : 0.43 + rng.next() * 0.15
     const cl = dry ? 0.42 + rng.next() * 0.18 : 0.3 + rng.next() * 0.16
-    const baseH = inYard ? 0.16 + rng.next() * 0.1 : 0.34 + rng.next() * 0.22
-    const blades = 3 + Math.floor(rng.next() * 4)
+    // yard blades stay mower-short (0.09..0.16 world units) so the lawn
+    // reads smooth; the meadow grows 0.20..0.38 for the wilder fringe
+    const baseH = inYard ? 0.09 + rng.next() * 0.05 : 0.2 + rng.next() * 0.14
+    const blades = 4 + Math.floor(rng.next() * 4)
     for (let b = 0; b < blades && placed < COUNT; b++) {
       const a = rng.next() * Math.PI * 2
-      const r = rng.next() * 0.14
+      const r = rng.next() * 0.11
       const x = cx + Math.cos(a) * r
       const z = cz + Math.sin(a) * r
       if (isClear(x, z)) continue
       // width varies independently of height so the silhouette breaks up
       const sw = 0.7 + rng.next() * 0.9
-      const hy = baseH + rng.next() * (inYard ? 0.04 : 0.06)
+      const hy = baseH + rng.next() * (inYard ? 0.02 : 0.04)
       pos.set(x, 0, z)
       quat.setFromAxisAngle(up, rng.next() * Math.PI * 2)
-      // slight lean off vertical — perfectly upright blades read as combed
-      quat.multiply(tilt.setFromAxisAngle(side, rng.next() * 0.18))
+      // barely off vertical — neat upright blades are the lawn look, and
+      // splayed tilts were what read as weeds sticking out
+      quat.multiply(tilt.setFromAxisAngle(side, rng.next() * 0.1))
       // z scales with height so the baked lean stays proportional to it
       scl.set(sw, hy, hy)
       m.compose(pos, quat, scl)
       mesh.setMatrixAt(placed, m)
       col.setHSL(
-        ch + (rng.next() - 0.5) * 0.016,
-        cs + (rng.next() - 0.5) * 0.1,
+        ch + (rng.next() - 0.5) * 0.01,
+        cs + (rng.next() - 0.5) * 0.06,
         cl + (rng.next() - 0.5) * 0.12,
       )
       mesh.setColorAt(placed, col)

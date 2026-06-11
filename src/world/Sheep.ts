@@ -10,16 +10,17 @@ import {
   AnimationAction,
   AnimationMixer,
   Group,
+  Mesh,
+  MeshStandardMaterial,
   Scene,
   Vector3,
   type AnimationClip,
 } from 'three'
 import { fenceFor, gatesFor, PEN } from '../game/expansion'
 import { mulberry32, type Rng } from '../game/rng'
-import { tint, type Assets } from './assets'
+import { type Assets } from './assets'
 import { WORLD_BOUNDS } from './scenery'
 import { assertSpawnScale, measuredHeight, SCALE, sheepScaleFor } from './scale'
-import { applyWool, setCoatHSL } from './wool'
 
 const GRAZE_SPEED = 0.7
 const ESCAPE_SPEED = 1.6
@@ -112,11 +113,22 @@ export class Flock {
     const s = sheepScaleFor(this.rng, rawH)
     g.scale.setScalar(s)
     assertSpawnScale('sheep', rawH * s, SCALE.sheep.min, SCALE.sheep.max)
-    // warm cream fleece (the raw atlas renders concrete-gray) + per-sheep drift
-    setCoatHSL(g, 0.09, 0.14, 0.82 + (this.rng.next() - 0.5) * 0.08)
-    tint(g, (this.rng.next() - 0.5) * 0.02, (this.rng.next() - 0.5) * 0.06)
-    // seeded fleece displacement (after sizing, so the scale band still holds)
-    applyWool(g, Math.floor(this.rng.next() * 0xffffffff))
+    // SheepAlt.glb is a proper rounded sheep — no puppet dressing needed.
+    // Its FBX2glTF materials ship metallic; force matte wool + a touch of
+    // per-sheep warmth so the flock isn't carbon copies.
+    g.traverse((o) => {
+      if (o instanceof Mesh) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material]
+        for (const m of mats) {
+          if (m instanceof MeshStandardMaterial) {
+            m.metalness = 0
+            m.roughness = 1
+            // only the white wool shifts; the black face/legs stay black
+            if (m.color.r > 0.5) m.color.offsetHSL(0.02, 0.04, -0.02 + this.rng.next() * 0.04)
+          }
+        }
+      }
+    })
     const x = PEN.x0 + 0.9 + this.rng.next() * (PEN.x1 - PEN.x0 - 1.8)
     const z = PEN.z0 + 0.9 + this.rng.next() * (PEN.z1 - PEN.z0 - 1.8)
     g.position.set(x, 0, z)

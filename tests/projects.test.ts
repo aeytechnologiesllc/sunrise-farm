@@ -52,10 +52,10 @@ describe('project ladder', () => {
       expect(PROJECTS[i].level).toBeGreaterThanOrEqual(PROJECTS[i - 1].level)
   })
 
-  it('every site sits inside the fence ring of its land tier (goats: the pen)', () => {
+  it('every site sits inside the fence ring of its land tier (pen projects: the pen)', () => {
     for (const p of PROJECTS) {
       const [x, z] = p.site
-      if (p.id === 'goats') {
+      if (p.id === 'goats' || p.id === 'sheep') {
         expect(x).toBeGreaterThan(PEN.x0)
         expect(x).toBeLessThan(PEN.x1)
         expect(z).toBeGreaterThan(PEN.z0)
@@ -70,9 +70,9 @@ describe('project ladder', () => {
     }
   })
 
-  it('no footprint collides with any field rect or the sheep pen (goats: the pen)', () => {
+  it('no footprint collides with any field rect or the sheep pen (pen projects exempt)', () => {
     for (const p of PROJECTS) {
-      if (p.id === 'goats') continue
+      if (p.id === 'goats' || p.id === 'sheep') continue
       const r = footprintRect(p)
       for (const field of allFieldRects()) expect(rectsOverlap(r, field)).toBe(false)
       expect(rectsOverlap(r, PEN)).toBe(false)
@@ -98,16 +98,25 @@ describe('project ladder', () => {
     expect(projectStatus(stable, gate({ level: stable.level - 1, coins: 0 }))).toBe('level')
     expect(projectStatus(stable, gate({ coins: stable.cost - 1 }))).toBe('coins')
     expect(projectStatus(stable, gate({ coins: stable.cost, level: stable.level }))).toBe('ok')
+    // dependency gate: goats need the sheep pen first, shop needs the stand
+    const goats = PROJECTS.find((p) => p.id === 'goats')!
+    expect(projectStatus(goats, gate({}))).toBe('needs')
+    expect(projectStatus(goats, gate({ projects: { sheep: true } }))).toBe('ok')
+    const shop = PROJECTS.find((p) => p.id === 'shop')!
+    expect(projectStatus(shop, gate({}))).toBe('needs')
+    expect(projectStatus(shop, gate({ projects: { stand: true } }))).toBe('ok')
   })
 
   it('availableProjects respects the land gate and omits owned projects', () => {
     const atTier0 = availableProjects(gate({ expansion: 0 }))
-    expect(atTier0.map((p) => p.id)).toEqual(['goats', 'shop'])
+    expect(atTier0.map((p) => p.id)).toEqual(['stand', 'sheep', 'goats', 'shop'])
 
     const atTier2 = availableProjects(gate({ expansion: 2 }))
     expect(atTier2.map((p) => p.id)).toEqual(PROJECTS.map((p) => p.id))
 
-    const owned = availableProjects(gate({ expansion: 3, projects: { goats: true, shop: true } }))
+    const owned = availableProjects(
+      gate({ expansion: 3, projects: { stand: true, sheep: true, goats: true, shop: true } }),
+    )
     expect(owned.map((p) => p.id)).toEqual(['stable', 'greenhouse', 'farmhand'])
   })
 })

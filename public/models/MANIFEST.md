@@ -121,6 +121,31 @@ clip; use `Run`. `Idle_Eating` = eating.
   drive, die, pick-up, emote-yes, emote-no, holding-right/left/both(+-shoot),
   attack-melee-right/left, attack-kick-right/left, interact-right/left, wheelchair-* (7 clips).
 
+## external/
+- `SheepAlt.glb` — replacement sheep ("real sheep" pass; the Farm Animal Pack
+  `animals-extra/Sheep.glb` reads as boxy in-game).
+- Source: Quaternius — "Sheep" from the LowPoly Animated (Farm) Animal Pack family,
+  mirrored via Poly Pizza. Model page: https://poly.pizza/m/C39AUXUUes (uploaded
+  2021-08-17, 610 tris; same model ships in
+  https://opengameart.org/content/lowpoly-animated-farm-animal-pack). Note: the
+  public CDN file `static.poly.pizza/a4bd2c4e-….glb` is a stripped 2-clip preview;
+  this local copy is the full 6-clip variant. Added 2026-06-10.
+- License: CC0 1.0 / Public Domain (stated on the Poly Pizza model page, creator
+  `/u/Quaternius`; OGA mirror also CC0). No attribution required.
+- Look: white rounded faceted wool body, black Suffolk-style face + legs — an actual
+  sheep silhouette (verified against the model-page render).
+- Skinned + animated (1 skin, 24 joints, vertex-color materials `White`/`Black`,
+  no textures). Self-contained GLB, machine-verified: `glTF` v2 header, declared
+  length matches (306,980 bytes), JSON chunk parsed, zero external URI references.
+
+| File | Animation clips (prefix `Armature\|`) |
+|---|---|
+| `SheepAlt.glb` | Idle (6.25s), Jump (1.12s), Death (1.25s), Run (1.42s), Walk (3.33s), WalkSlow (2.08s) |
+
+Note: match clips by suffix (`Armature|Walk` etc.). No Eating/graze clip — fake
+grazing with a head-down pose or reuse `Idle` (it includes head movement) at low
+timeScale. NOT yet integrated into game code.
+
 ---
 
 ## Loading notes (three.js)

@@ -451,7 +451,6 @@ export function buildMeadow(scene: Scene, assets: Assets): GrassField {
   batch.flush(scene)
 
   buildBarn(scene)
-  buildPen(scene)
   return grass
 }
 
@@ -528,9 +527,9 @@ export function buildPicketFence(scene: Scene, tier: number): Mesh | null {
   return mesh
 }
 
-// ---- wooden sheep pen --------------------------------------------------------------
+// ---- wooden sheep pen (built by The Sheep Pen project) -------------------------------
 
-function buildPen(scene: Scene): void {
+export function buildPen(scene: Scene): void {
   const rng = mulberry32(424242)
   const woodTex = toTexture(woodCanvas(rng, '#7a5c38'), true)
   const geos: BufferGeometry[] = []

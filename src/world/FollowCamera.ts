@@ -18,9 +18,10 @@ const MAX_DIST = 17
 const DAMP = 5.5
 const LOOKAHEAD = 0.55
 const LOOKAHEAD_MAX = 1.4
-/** right-stick orbit rates, rad/s at full deflection */
-const YAW_RATE = 2.6
-const PITCH_RATE = 1.4
+/** right-stick orbit rates, rad/s at full deflection — deliberately gentle,
+ * the owner found the old 2.6 'too fast' */
+const YAW_RATE = 1.7
+const PITCH_RATE = 0.95
 /** desktop drag: radians per CSS pixel */
 const DRAG_RATE = 0.0042
 const FOV_BASE = 42
@@ -57,11 +58,13 @@ export class FollowCamera {
     addEventListener('blur', () => this.pointers.clear())
   }
 
-  /** right-stick orbit (called per frame with the stick vector) */
+  /** right-stick orbit (called per frame with the stick vector).
+   * INVERTED on both axes per the owner's hand-feel: push right = look right
+   * (camera swings left around you), push up = look down. */
   orbit(stickX: number, stickY: number, dt: number): void {
     if (stickX === 0 && stickY === 0) return
-    this.yaw -= stickX * YAW_RATE * dt
-    this.pitch = clampPitch(this.pitch + stickY * PITCH_RATE * dt)
+    this.yaw += stickX * YAW_RATE * dt
+    this.pitch = clampPitch(this.pitch - stickY * PITCH_RATE * dt)
     this.moved = true
   }
 

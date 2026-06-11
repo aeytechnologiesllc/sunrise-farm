@@ -50,6 +50,9 @@ export interface GameState {
   herdsDone: number
   /** construction projects owned (see game/projects.ts) */
   projects: Partial<Record<string, boolean>>
+  /** save knows the start-from-scratch ladder (pre-ladder saves get
+   * grandfathered exactly once) */
+  ladder: boolean
   plots: PlotState[]
   /** greenhouse planters — separate array so land expansions never reindex */
   ghPlots: PlotState[]
@@ -75,6 +78,7 @@ export function initialState(seed: number): GameState {
     expansion: 0,
     herdsDone: 0,
     projects: {},
+    ladder: true,
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
     chicken: {
@@ -141,6 +145,15 @@ export function deserialize(json: string | null): GameState | null {
     s.herdsDone ??= 0
     s.projects ??= {}
     s.ghPlots ??= []
+    // grandfather PRE-LADDER saves exactly once: they already had the stand
+    // + the flock (new saves carry ladder:true from birth and earn theirs)
+    if (!s.ladder) {
+      s.ladder = true
+      if (s.harvests > 0) {
+        s.projects.stand ??= true
+        s.projects.sheep ??= true
+      }
+    }
     while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
     return s
   } catch {
