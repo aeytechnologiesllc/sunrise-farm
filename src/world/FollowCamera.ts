@@ -35,9 +35,16 @@ const AUTO_FOLLOW_AFTER = 1.4
 const AUTO_FOLLOW_RATE = 1.7
 /** below this planar speed (u/s) the camera stays where the player left it */
 const AUTO_FOLLOW_MIN_SPEED = 1.1
-/** hard ceiling on auto-yaw (rad/s): a held strafe becomes a slow, wide
- * orbit instead of a dizzy spin, and big corrections glide rather than whip */
+/** ceiling on auto-yaw (rad/s) for SMALL corrections: a held strafe becomes
+ * a slow, wide orbit instead of a dizzy spin */
 const AUTO_FOLLOW_MAX_RATE = 0.85
+/** course-change ceiling: past 90° of misalignment the cap ramps up to this
+ * so an abrupt 180/360 catches up in ~1.5s instead of four (owner: "small
+ * turns are fine, abrupt turns need to be quicker"). NOTE the taper below:
+ * camera-relative input means a HELD stick keeps the misalignment constant,
+ * so any rate here is also the orbit speed of a held diagonal-back stick —
+ * keep it brisk, not violent. */
+const AUTO_FOLLOW_FAST_RATE = 2.2
 
 export class FollowCamera {
   readonly camera: PerspectiveCamera
@@ -247,10 +254,26 @@ export class FollowCamera {
       let d = want - this.yaw
       while (d > Math.PI) d -= Math.PI * 2
       while (d < -Math.PI) d += Math.PI * 2
-      // deadband so an aligned camera never micro-hunts behind the farmer
-      if (Math.abs(d) > 0.04) {
+      // deadbands: an aligned camera never micro-hunts behind the farmer,
+      // and dead-backward (within ~5° of 180) HOLDS deliberately — at exact
+      // opposition the correction sign flip-flops per frame (the target
+      // rotates with the camera), which would read as shimmer, and walking
+      // straight at the lens is how you look at your farmer's face anyway
+      const ad = Math.abs(d)
+      if (ad > 0.04 && ad < 3.05) {
         const k = Math.min(1, planar / 3.2) * (1 - Math.exp(-AUTO_FOLLOW_RATE * dt))
-        this.yaw += clampAbs(d * k, AUTO_FOLLOW_MAX_RATE * dt)
+        // urgency lives in the COURSE-CHANGE band (90°-160°): a held strafe
+        // (90°) keeps its slow orbit, a real turn catches up briskly, and
+        // dead-backward (180°) tapers back to slow — walking toward the lens
+        // pins the misalignment at 180°, so speed there would be a perpetual
+        // whip-pan, not a catch-up
+        let urgency = 0
+        if (ad > Math.PI / 2) {
+          urgency = Math.min(1, (ad - Math.PI / 2) / 0.85)
+          if (ad > 2.75) urgency *= Math.max(0, (Math.PI - ad) / (Math.PI - 2.75))
+        }
+        const cap = AUTO_FOLLOW_MAX_RATE + (AUTO_FOLLOW_FAST_RATE - AUTO_FOLLOW_MAX_RATE) * urgency
+        this.yaw += clampAbs(d * k, cap * dt)
       }
     }
     if (this.cineTarget) {
