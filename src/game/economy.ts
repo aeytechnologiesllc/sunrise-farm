@@ -1,19 +1,30 @@
 /** Economy constants and pure math. No three/DOM imports — unit-tested. */
 import type { Rng } from './rng'
 
-export type CropKind = 'wheat' | 'corn'
+export type CropKind = 'wheat' | 'corn' | 'tomato' | 'pepper' | 'eggplant'
 
 export interface CropDef {
   label: string
   growSec: number
   sell: number
   unlockLevel: number
+  /** greenhouse-exclusive: Game.plant refuses it outside a glass bed */
+  greenhouse?: true
 }
 
+/** the greenhouse crops ladder: tomato's unlockLevel 9 mirrors the greenhouse
+ * project's level gate; pepper and eggplant keep the late game earning — each
+ * slower but richer than the last (and all beat corn per second under glass) */
 export const CROPS: Record<CropKind, CropDef> = {
   wheat: { label: 'Wheat', growSec: 90, sell: 2, unlockLevel: 1 },
   corn: { label: 'Corn', growSec: 240, sell: 5, unlockLevel: 2 },
+  tomato: { label: 'Tomato', growSec: 320, sell: 9, unlockLevel: 9, greenhouse: true },
+  pepper: { label: 'Pepper', growSec: 400, sell: 13, unlockLevel: 10, greenhouse: true },
+  eggplant: { label: 'Eggplant', growSec: 480, sell: 18, unlockLevel: 11, greenhouse: true },
 }
+
+/** the greenhouse ladder in unlock order (HUD buttons, tests) */
+export const GREENHOUSE_CROPS = (Object.keys(CROPS) as CropKind[]).filter((k) => CROPS[k].greenhouse)
 
 export const GOLDEN_CROP_CHANCE = 0.08
 export const GOLDEN_MULT = 4
@@ -59,7 +70,7 @@ export const FETCH_TREASURE: [number, number] = [2, 6]
 /** what a customer can ask for; eggs only exist once the hen is laying */
 export type GoodKind = CropKind | 'egg'
 
-export const GOOD_SELL: Record<GoodKind, number> = { wheat: 2, corn: 5, egg: 8 }
+export const GOOD_SELL: Record<GoodKind, number> = { wheat: 2, corn: 5, tomato: 9, pepper: 13, eggplant: 18, egg: 8 }
 /** customers pay a premium over auto-sell — additive bonus, never required */
 export const CUSTOMER_PREMIUM = 1.6
 export const CUSTOMER_QUEUE_MAX = 2

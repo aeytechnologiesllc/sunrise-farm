@@ -2,14 +2,14 @@
   "name": "Sunrise Farm",
   "short_name": "Sunrise Farm",
   "description": "Build your farm: plant, harvest, herd, and grow.",
-  "start_url": "/",
+  "start_url": "./",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#87b86a",
   "theme_color": "#87b86a",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

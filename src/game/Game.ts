@@ -31,8 +31,8 @@ import {
   WOOL_COIN_PER_SHEEP,
 } from './produce'
 import {
+  GREENHOUSE_BEDS,
   GREENHOUSE_GROW_MULT,
-  GREENHOUSE_PLOTS,
   PROJECTS,
   projectStatus,
   type ProjectDef,
@@ -178,6 +178,9 @@ export class Game {
   plant(plot: number, kind: CropKind): boolean {
     const p = this.plotAt(plot)
     if (!p || p.crop || !this.cropUnlocked(kind)) return false
+    // greenhouse exclusives only thrive under glass — the rare crops are
+    // what makes the building an upgrade, not a skin
+    if (CROPS[kind].greenhouse && !this.isGreenhouse(plot)) return false
     // greenhouse warmth: crops mature faster under glass; the very FIRST
     // crop races (FTUE: the player tastes the harvest loop in ~30s)
     const ftue = this.state.harvests === 0 ? 0.35 : 1
@@ -199,8 +202,7 @@ export class Game {
     this.grantCoins(coins)
     // bank the good as stand stock too (wheat doubles as feed) — customers
     // buying it later is a pure bonus on top of the auto-sell
-    if (kind === 'wheat') this.state.wheat += 1
-    else this.state.corn += 1
+    this.bank(kind, 1)
     this.state.harvests += 1
     this.grantXp(XP_GAIN.harvest)
     this.retireChip('harvest')
@@ -248,19 +250,27 @@ export class Game {
 
   /** current stand stock, used to scale customer wants */
   stock(): Record<GoodKind, number> {
-    return { wheat: this.state.wheat, corn: this.state.corn, egg: this.state.eggs }
+    const s = this.state
+    return { wheat: s.wheat, corn: s.corn, tomato: s.tomatoes, pepper: s.peppers, eggplant: s.eggplants, egg: s.eggs }
+  }
+
+  /** adjust the stand-stock counter for a good (wheat doubles as feed) */
+  private bank(kind: GoodKind, delta: number): void {
+    const s = this.state
+    if (kind === 'wheat') s.wheat += delta
+    else if (kind === 'corn') s.corn += delta
+    else if (kind === 'tomato') s.tomatoes += delta
+    else if (kind === 'pepper') s.peppers += delta
+    else if (kind === 'eggplant') s.eggplants += delta
+    else s.eggs += delta
   }
 
   /** hand goods to a customer: decrements stock, pays the offered coins.
    * Fails (returns false) only when stock ran out since the want was rolled —
    * the customer simply keeps waiting (no-punishment rule). */
   fulfill(kind: GoodKind, count: number, coins: number): boolean {
-    const s = this.state
-    const have = kind === 'wheat' ? s.wheat : kind === 'corn' ? s.corn : s.eggs
-    if (have < count) return false
-    if (kind === 'wheat') s.wheat -= count
-    else if (kind === 'corn') s.corn -= count
-    else s.eggs -= count
+    if (this.stock()[kind] < count) return false
+    this.bank(kind, -count)
     this.grantCoins(coins)
     this.grantXp(XP_GAIN.serve)
     return true
@@ -314,14 +324,15 @@ export class Game {
     return def
   }
 
-  /** tractor: sow every empty unlocked plot at once; returns plot indices */
+  /** tractor: sow every empty FIELD plot at once; returns plot indices.
+   * Greenhouse beds are off-limits — they're hand-planted with rare crops */
   plantAll(kind: CropKind): number[] {
-    if (!this.cropUnlocked(kind)) return []
+    if (!this.cropUnlocked(kind) || CROPS[kind].greenhouse) return []
     const planted: number[] = []
     for (let i = 0; i < this.plotTotal; i++) {
       const p = this.plotAt(i)!
-      if (p.crop) continue
-      const total = CROPS[kind].growSec * (this.isGreenhouse(i) ? GREENHOUSE_GROW_MULT : 1)
+      if (p.crop || this.isGreenhouse(i)) continue
+      const total = CROPS[kind].growSec
       p.crop = { kind, total, remaining: total, chimed: false }
       planted.push(i)
     }
@@ -357,7 +368,7 @@ export class Game {
     this.emit('coins', { total: s.coins, delta: -entry.def.cost })
     s.projects[id] = true
     if (id === 'greenhouse') {
-      while (s.ghPlots.length < GREENHOUSE_PLOTS.length) s.ghPlots.push({ crop: null })
+      while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
     }
     this.grantXp(XP_GAIN.expand)
     this.emit('built', { def: entry.def })
@@ -478,7 +489,9 @@ export class Game {
     for (let i = 0; i < this.plotTotal; i++) {
       const crop = this.plotAt(i)!.crop
       if (crop && crop.remaining <= 0 && ready < 0) ready = i
-      if (!crop && empty < 0) empty = i
+      // never steer the player (or the guide dog) toward the off-world
+      // glasshouse beds — those are found by walking through the door
+      if (!crop && empty < 0 && !this.isGreenhouse(i)) empty = i
     }
     if (ready >= 0) return { kind: 'harvest', plot: ready }
     if (s.chicken.eggReady) return { kind: 'collect' }

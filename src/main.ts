@@ -27,6 +27,7 @@ import { Engine } from './engine/Engine'
 import {
   CROPS,
   fountainCount,
+  GREENHOUSE_CROPS,
   HERD_COOLDOWN,
   HERD_FIRST_DELAY,
   splitCoins,
@@ -74,7 +75,6 @@ import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef
 import { orderFor } from './game/orders'
 import {
   availableProjects,
-  GREENHOUSE_PLOTS,
   PADDOCK,
   PROJECTS,
   SHOP_PREMIUM,
@@ -90,6 +90,7 @@ import { buildGreenhouse, buildShop, buildStable } from './world/buildings'
 import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
+import { GreenhouseInterior } from './world/greenhouseInterior'
 import { Homestead } from './world/homestead'
 import { HomeInterior } from './world/interior'
 import { NightSky } from './world/nightsky'
@@ -105,7 +106,14 @@ import { buildCoopHouse, CoopHens } from './world/coop'
 import { AnimationMixer, type AnimationAction } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
-const GOOD_EMOJI: Record<GoodKind, string> = { wheat: '\u{1F33E}', corn: '\u{1F33D}', egg: '\u{1F95A}' }
+const GOOD_EMOJI: Record<GoodKind, string> = {
+  wheat: '\u{1F33E}',
+  corn: '\u{1F33D}',
+  tomato: '\u{1F345}',
+  pepper: '\u{1FAD1}',
+  eggplant: '\u{1F346}',
+  egg: '\u{1F95A}',
+}
 
 // interaction radii (diner grammar: you go to it)
 const PLOT_R = 2.1
@@ -209,6 +217,13 @@ async function boot(): Promise<void> {
   const homestead = new Homestead(scene)
   // the family-dinner film set, parked far off-world until the scene cuts in
   const homeInterior = new HomeInterior(scene, assets)
+  // the WALKABLE glasshouse set — small shed outside, a whole building inside
+  const ghInterior = new GreenhouseInterior(scene)
+  // its shell occludes like any barn: the camera pulls INSIDE the glass
+  // instead of filming the room through a washed-out pane
+  OCCLUDERS.push(...ghInterior.shell)
+  /** true while the player is inside the glasshouse set */
+  let inGreenhouse = false
   composer.addPass(
     new EffectPass(
       cam.camera,
@@ -268,7 +283,8 @@ async function boot(): Promise<void> {
   // view order mirrors Game's combined index space: field plots, then
   // greenhouse planters (always at the tail so expansions insert BEFORE them)
   const plots = plotPositions(state.expansion).map(([px, pz]) => mkPlot(px, pz))
-  if (state.projects.greenhouse) for (const [px, pz] of GREENHOUSE_PLOTS) plots.push(mkPlot(px, pz, true))
+  // greenhouse planters live INSIDE the walkable glasshouse set
+  if (state.projects.greenhouse) for (const b of ghInterior.bedPositions) plots.push(mkPlot(b.x, b.z, true))
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
 
   /** free GPU resources of a removed object tree (textures included) */
@@ -359,7 +375,10 @@ async function boot(): Promise<void> {
       lastChime = engine.uTime.value
       sfx.chime()
     }
-    sparkleBurst(scene, plots[e.plot].center.clone().setY(0.8), false, 5)
+    // glasshouse beds sparkle only while the player is actually in there
+    if (!game.isGreenhouse(e.plot) || inGreenhouse) {
+      sparkleBurst(scene, plots[e.plot].center.clone().setY(0.8), false, 5)
+    }
   })
   // crops visibly grow while you watch (stage-up bounce)
   game.on('stage', (e) => {
@@ -429,7 +448,8 @@ async function boot(): Promise<void> {
     const readySpots: Vector3[] = []
     for (let i = 0; i < plots.length; i++) {
       const crop = game.plotAt(i)?.crop
-      if (crop && crop.remaining <= 0) readySpots.push(plots[i].center)
+      // glasshouse beds live on the far-off set — the pan must not stare there
+      if (crop && crop.remaining <= 0 && !game.isGreenhouse(i)) readySpots.push(plots[i].center)
     }
     if (state.chicken.eggReady) readySpots.push(NEST_POS)
     if (readySpots.length) {
@@ -758,7 +778,10 @@ async function boot(): Promise<void> {
     saveNow()
   }
   const sleepScene = (): void => {
-    if (sleepActive || construction.active || fetchCine || !dayCycle.atDusk) return
+    // inGreenhouse can't happen via the button (near.home needs the real
+    // door) — the guard protects the dev driver and future callers from
+    // auto-walking 170u toward a homestead the room bounds will never reach
+    if (sleepActive || construction.active || fetchCine || inGreenhouse || !dayCycle.atDusk) return
     sleepActive = true
     sleepStarted = engine.uTime.value
     touch()
@@ -1067,8 +1090,8 @@ async function boot(): Promise<void> {
     } else if (def.id === 'greenhouse') {
       addBuilding(buildGreenhouse, def, fresh)
       if (fresh)
-        for (const [px, pz] of GREENHOUSE_PLOTS) {
-          plots.push(mkPlot(px, pz, true))
+        for (const b of ghInterior.bedPositions) {
+          plots.push(mkPlot(b.x, b.z, true))
           lastGlow.push('none')
         }
     } else if (def.id === 'farmhand') {
@@ -1273,12 +1296,46 @@ async function boot(): Promise<void> {
   const STABLE_DEF = PROJECTS.find((p) => p.id === 'stable')!
   const STABLE_AT = new Vector3(STABLE_DEF.site[0], 0, STABLE_DEF.site[1])
   const PEN_CENTER = new Vector3((PEN.x0 + PEN.x1) / 2, 0, (PEN.z0 + PEN.z1) / 2)
+
+  // ---- the glasshouse door: walk up to it and the set fades up around you ----
+  // (diner grammar — no button; the dip-to-black hides the off-world teleport)
+  const GH_DEF = PROJECTS.find((p) => p.id === 'greenhouse')!
+  const ghDoorDir = new Vector3(Math.sin(GH_DEF.yaw), 0, Math.cos(GH_DEF.yaw))
+  /** just outside the shed door (its +z face sits 1.7u from the site center) */
+  const ghDoorOut = new Vector3(GH_DEF.site[0], 0, GH_DEF.site[1]).addScaledVector(ghDoorDir, 1.95)
+  /** where leaving drops you — beyond the enter trigger so it can't re-fire */
+  const ghExitSpot = new Vector3(GH_DEF.site[0], 0, GH_DEF.site[1]).addScaledVector(ghDoorDir, 3.2)
+  let ghBusy = false
+  const throughGhDoor = (enter: boolean): void => {
+    if (ghBusy) return
+    ghBusy = true
+    touch()
+    sfx.crate() // the old hinge
+    letterbox.fade(true, 0.22)
+    gsap.delayedCall(0.26, () => {
+      inGreenhouse = enter
+      ghInterior.setActive(enter)
+      const to = enter ? ghInterior.spawnPos : ghExitSpot
+      player.pos.copy(to)
+      prevPos.x = to.x
+      prevPos.z = to.z
+      player.setBounds(enter ? ghInterior.bounds : WORLD_BOUNDS)
+      // CUT the camera through the black — never fly it 170u across the map.
+      // Walking in it faces up the aisle; walking out, back toward the farm.
+      cam.snapTo(player.pos)
+      cam.yaw = enter ? 0 : Math.PI + GH_DEF.yaw
+      letterbox.fade(false, 0.45)
+      gsap.delayedCall(0.5, () => {
+        ghBusy = false
+      })
+    })
+  }
   const onAction = (id: string): void => {
     touch()
     // belt-and-braces: a stale button can never start a second scene
-    if (sleepActive || construction.active) return
-    if (id === 'wheat' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'wheat')
-    else if (id === 'corn' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'corn')
+    // (ghBusy: nor act through the door-transition's dip to black)
+    if (sleepActive || construction.active || ghBusy) return
+    if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
     else if (id === 'shear' && near.pen) {
@@ -1444,9 +1501,10 @@ async function boot(): Promise<void> {
     // the farmhand clocks off during cinematics (his coin fountains were
     // landing on top of the goodnight scene)
     if (farmhand && !sleepActive && !construction.active) {
+      // the glasshouse is off his rounds — its beds live on the off-world set
       const info = plots.map((v, i) => {
         const c = game.plotAt(i)?.crop
-        return { center: v.center, ready: !!c && c.remaining <= 0 }
+        return { center: v.center, ready: !!c && c.remaining <= 0 && !game.isGreenhouse(i) }
       })
       farmhand.update(dt, info)
     }
@@ -1462,7 +1520,11 @@ async function boot(): Promise<void> {
       !hud.modalOpen &&
       !sleepActive &&
       !construction.active &&
-      !dog.fetching
+      !dog.fetching &&
+      // no wanderers while the player is under glass (or mid-door-cut) —
+      // an invitation you can't see is a nag waiting at the exit
+      !inGreenhouse &&
+      !ghBusy
     ) {
       herdTimer -= dt
       if (herdTimer <= 0) {
@@ -1553,6 +1615,16 @@ async function boot(): Promise<void> {
           near.project = id
         }
       }
+      // glasshouse door, both directions (the swap itself is a blink in black).
+      // Gated on WALKING INTO the doorway — brushing past the doorstep
+      // sideways or backing across it must never teleport anyone.
+      if (game.hasProject('greenhouse') && !construction.active && !fetchCine) {
+        const inward = player.vel.x * ghDoorDir.x + player.vel.z * ghDoorDir.z
+        if (!inGreenhouse && p.distanceTo(ghDoorOut) < 0.95 && inward < -0.4) throughGhDoor(true)
+        // exit is the forgiving side: any unhurried step into the doorway
+        // leaves — a room you can't get out of would break the cozy contract
+        else if (inGreenhouse && p.distanceTo(ghInterior.exitPos) < 0.7 && player.vel.z > 0.2) throughGhDoor(false)
+      }
       near.chicken = chicken.settled && p.distanceTo(chicken.group.position) < CHICK_R
       if (state.chicken.eggReady && chicken.settled && p.distanceTo(NEST_POS) < CHICK_R) collectEgg()
       if (chicken.cratePending && p.distanceTo(chicken.crateWorldPos) < CRATE_R) {
@@ -1570,8 +1642,9 @@ async function boot(): Promise<void> {
       // stand still on an empty plot for a moment -> wheat plants itself.
       // Only after the player has planted once BY CHOICE (an action the game
       // took for me is not mine — IKEA effect), and slow enough that reaching
-      // for the corn button never loses a race to free wheat
-      if (near.emptyPlot >= 0 && player.speed < 0.3 && state.chipsDone.plant) {
+      // for the corn button never loses a race to free wheat. Glasshouse beds
+      // are exempt: those are CHOSEN plantings of rare crops, never wheat.
+      if (near.emptyPlot >= 0 && !game.isGreenhouse(near.emptyPlot) && player.speed < 0.3 && state.chipsDone.plant) {
         standT += dt
         if (standT >= AUTOPLANT_AFTER) {
           standT = 0
@@ -1585,17 +1658,32 @@ async function boot(): Promise<void> {
     // ---- context action buttons (big, above the right thumb) ----
     // one scene at a time: no buttons exist while ANY cinematic is rolling
     const actions: ActionDef[] = []
-    if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine) {
+    if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !ghBusy) {
       if (near.emptyPlot >= 0) {
-        actions.push({ id: 'wheat', emoji: '\u{1F33E}', label: 'Plant Wheat', sub: '90s · 2c' })
-        const cornOk = game.cropUnlocked('corn')
-        actions.push({
-          id: 'corn',
-          emoji: '\u{1F33D}',
-          label: 'Plant Corn',
-          sub: cornOk ? '4m · 5c' : `Lv ${CROPS.corn.unlockLevel}`,
-          locked: !cornOk,
-        })
+        if (game.isGreenhouse(near.emptyPlot)) {
+          // the glasshouse ladder — rare crops, planted only under glass
+          for (const kind of GREENHOUSE_CROPS) {
+            const def = CROPS[kind]
+            const ok = game.cropUnlocked(kind)
+            actions.push({
+              id: kind,
+              emoji: GOOD_EMOJI[kind],
+              label: `Plant ${def.label}${def.label.endsWith('o') ? 'es' : 's'}`,
+              sub: ok ? `~${Math.round((def.growSec * 0.6) / 60)}m under glass · ${def.sell}c` : `Lv ${def.unlockLevel}`,
+              locked: !ok,
+            })
+          }
+        } else {
+          actions.push({ id: 'wheat', emoji: '\u{1F33E}', label: 'Plant Wheat', sub: '90s · 2c' })
+          const cornOk = game.cropUnlocked('corn')
+          actions.push({
+            id: 'corn',
+            emoji: '\u{1F33D}',
+            label: 'Plant Corn',
+            sub: cornOk ? '4m · 5c' : `Lv ${CROPS.corn.unlockLevel}`,
+            locked: !cornOk,
+          })
+        }
       }
       if (near.chicken) {
         const name = state.chicken.name ?? 'her'
@@ -1622,7 +1710,8 @@ async function boot(): Promise<void> {
       }
       if (near.tractor) {
         let empties = 0
-        for (let i = 0; i < game.plotTotal; i++) if (!game.plotAt(i)?.crop) empties++
+        // the tractor sows FIELDS — glasshouse beds are hand-planted
+        for (let i = 0; i < game.plotTotal; i++) if (!game.plotAt(i)?.crop && !game.isGreenhouse(i)) empties++
         const ready = sowCooldown <= 0 && empties > 0
         actions.push({
           id: 'sow',
@@ -1793,7 +1882,9 @@ async function boot(): Promise<void> {
               ? buildSignAt
               : sug
                 ? sug.kind === 'plant' || sug.kind === 'harvest'
-                  ? plots[sug.plot].center
+                  ? game.isGreenhouse(sug.plot)
+                    ? null // Rex can't lead anyone through the glasshouse door
+                    : plots[sug.plot].center
                   : sug.kind === 'collect'
                     ? NEST_POS
                     : chicken.tagWorldPos().setY(0)
@@ -1865,6 +1956,7 @@ async function boot(): Promise<void> {
         cam.cineFollow(homestead.doorPos.clone().setY(1.2), 0.55, 0.38)
       }
     }
+    ghInterior.update(dt)
     hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)
     const eveK = sleepActive
@@ -1889,9 +1981,10 @@ async function boot(): Promise<void> {
       hud.setRing(false)
     }
 
-    // nest pip while an egg is cooking / ready
+    // nest pip while an egg is cooking / ready (the farm's widgets stay
+    // outside — projected from the glasshouse they'd float over the glass)
     const eggT = state.chicken.eggTimer
-    if ((eggT || state.chicken.eggReady) && !sleepActive) {
+    if ((eggT || state.chicken.eggReady) && !sleepActive && !inGreenhouse) {
       const s = cam.screenPos(NEST_POS.clone().setY(0.6))
       const frac = state.chicken.eggReady ? 1 : 1 - (eggT ? eggT.remaining / eggT.total : 0)
       hud.setPip(!s.behind, s.x, s.y, frac, state.chicken.eggReady)
@@ -1900,7 +1993,7 @@ async function boot(): Promise<void> {
     }
 
     // floating name tag with hearts
-    if (state.chicken.name && chicken.visible && !sleepActive) {
+    if (state.chicken.name && chicken.visible && !sleepActive && !inGreenhouse) {
       const s = cam.screenPos(chicken.tagWorldPos())
       hud.setNameTag(!s.behind, s.x, s.y, state.chicken.name, state.chicken.hearts)
     } else {
@@ -1910,7 +2003,7 @@ async function boot(): Promise<void> {
     // customer want bubbles
     let slot = 0
     for (const c of customers.queue) {
-      if (c.phase === 'leaving' || sleepActive) continue
+      if (c.phase === 'leaving' || sleepActive || inGreenhouse) continue
       const v = customerViews.get(c.id)
       if (!v?.active) continue
       const s = cam.screenPos(v.bubbleAnchor())

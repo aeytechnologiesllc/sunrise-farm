@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CROPS,
+  type CropKind,
   EGG_SELL,
   eggTimerFor,
   eggValue,
   fountainCount,
   GOLDEN_CROP_CHANCE,
+  GOOD_SELL,
   goldenEggChance,
+  GREENHOUSE_CROPS,
   rollGolden,
   sellValue,
   splitCoins,
@@ -13,6 +17,7 @@ import {
   xpNeeded,
 } from '../src/game/economy'
 import { Game } from '../src/game/Game'
+import { GREENHOUSE_GROW_MULT } from '../src/game/projects'
 import { mulberry32 } from '../src/game/rng'
 import { catchUp, initialState } from '../src/game/state'
 
@@ -64,6 +69,12 @@ describe('coin grants', () => {
     expect(sellValue('wheat', true)).toBe(8)
     expect(sellValue('corn', false)).toBe(5)
     expect(sellValue('corn', true)).toBe(20)
+    expect(sellValue('tomato', false)).toBe(9)
+    expect(sellValue('tomato', true)).toBe(36)
+    expect(sellValue('pepper', false)).toBe(13)
+    expect(sellValue('pepper', true)).toBe(52)
+    expect(sellValue('eggplant', false)).toBe(18)
+    expect(sellValue('eggplant', true)).toBe(72)
     expect(eggValue(false)).toBe(EGG_SELL)
     expect(eggValue(true)).toBe(EGG_SELL * 4)
   })
@@ -80,6 +91,62 @@ describe('coin grants', () => {
       expect(shares.reduce((a, b) => a + b, 0)).toBe(total)
       for (const s of shares) expect(s).toBeGreaterThanOrEqual(0)
     }
+  })
+})
+
+describe('greenhouse crops (tomato, pepper, eggplant)', () => {
+  it('the ladder is exactly the flagged crops, in unlock order', () => {
+    expect(GREENHOUSE_CROPS).toEqual(['tomato', 'pepper', 'eggplant'])
+    let last = 0
+    for (const k of GREENHOUSE_CROPS) {
+      expect(CROPS[k].greenhouse).toBe(true)
+      expect(CROPS[k].unlockLevel).toBeGreaterThan(last)
+      last = CROPS[k].unlockLevel
+    }
+    expect(CROPS.tomato.unlockLevel).toBe(9) // mirrors the greenhouse project gate
+  })
+
+  it('each rung sells for more than the last (and all beat corn)', () => {
+    expect(CROPS.tomato.sell).toBeGreaterThan(CROPS.corn.sell)
+    expect(CROPS.pepper.sell).toBeGreaterThan(CROPS.tomato.sell)
+    expect(CROPS.eggplant.sell).toBeGreaterThan(CROPS.pepper.sell)
+  })
+
+  it('every greenhouse crop out-earns corn per second UNDER GLASS', () => {
+    const cornRate = CROPS.corn.sell / CROPS.corn.growSec
+    for (const k of GREENHOUSE_CROPS) {
+      const rate = CROPS[k].sell / (CROPS[k].growSec * GREENHOUSE_GROW_MULT)
+      expect(rate).toBeGreaterThan(cornRate)
+    }
+  })
+
+  it('stand price table stays exhaustive: every crop sells at its CROPS price', () => {
+    const kinds = Object.keys(CROPS) as CropKind[]
+    expect(kinds).toEqual(['wheat', 'corn', 'tomato', 'pepper', 'eggplant'])
+    for (const k of kinds) expect(GOOD_SELL[k]).toBe(CROPS[k].sell)
+  })
+
+  it('plant in the field refuses greenhouse crops; glass beds accept them', () => {
+    const g = new Game(initialState(4))
+    g.state.level = 20
+    g.state.ghPlots.push({ crop: null })
+    const ghIndex = g.state.plots.length
+    for (const k of GREENHOUSE_CROPS) {
+      expect(g.plant(0, k)).toBe(false) // field plot says no
+      expect(g.plant(ghIndex, k)).toBe(true) // glass bed says yes
+      g.state.ghPlots[0].crop = null
+    }
+  })
+
+  it('the tractor sows fields only — glass beds stay hand-planted', () => {
+    const g = new Game(initialState(4))
+    g.state.level = 20
+    g.state.ghPlots.push({ crop: null })
+    const planted = g.plantAll('wheat')
+    expect(planted).not.toHaveLength(0)
+    expect(planted.every((i) => i < g.state.plots.length)).toBe(true)
+    expect(g.state.ghPlots[0].crop).toBeNull()
+    expect(g.plantAll('tomato')).toHaveLength(0) // no drive-by tomato sowing
   })
 })
 

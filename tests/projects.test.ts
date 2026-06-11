@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { allFieldRects, fenceFor, PEN, TIERS } from '../src/game/expansion'
 import {
   availableProjects,
-  GREENHOUSE_PLOTS,
+  GREENHOUSE_BEDS,
   PROJECTS,
   projectStatus,
   type ProjectDef,
   type ProjectId,
 } from '../src/game/projects'
+import { deserialize, initialState, serialize } from '../src/game/state'
 
 interface Rect {
   x0: number
@@ -135,16 +136,24 @@ describe('project ladder', () => {
     }
   })
 
-  it('greenhouse plots all lie inside the greenhouse footprint', () => {
-    const gh = byId('greenhouse')
-    const r = footprintRect(gh)
-    expect(GREENHOUSE_PLOTS).toHaveLength(4)
-    for (const [x, z] of GREENHOUSE_PLOTS) {
-      expect(x).toBeGreaterThan(r.x0)
-      expect(x).toBeLessThan(r.x1)
-      expect(z).toBeGreaterThan(r.z0)
-      expect(z).toBeLessThan(r.z1)
-    }
+  it('the glasshouse opens its beds on build, and old saves top up on load', () => {
+    expect(GREENHOUSE_BEDS).toBeGreaterThanOrEqual(4)
+    // a save that owned the original 4-bed greenhouse grows to the full set
+    const s = initialState(11)
+    s.projects.greenhouse = true
+    s.ghPlots = [{ crop: null }, { crop: null }, { crop: null }, { crop: null }]
+    // pre-pepper saves never carried the new counters — strip them
+    const raw = JSON.parse(serialize(s)) as Record<string, unknown>
+    delete raw.peppers
+    delete raw.eggplants
+    const back = deserialize(JSON.stringify(raw))
+    expect(back?.ghPlots).toHaveLength(GREENHOUSE_BEDS)
+    // and the new stand-stock counters backfill to zero
+    expect(back?.peppers).toBe(0)
+    expect(back?.eggplants).toBe(0)
+    // a save WITHOUT the project gains no free beds
+    const fresh = deserialize(serialize(initialState(12)))
+    expect(fresh?.ghPlots).toHaveLength(0)
   })
 
   it('projectStatus reports every gate with the right precedence', () => {

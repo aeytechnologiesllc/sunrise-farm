@@ -135,6 +135,12 @@ export class PlayerView {
     this.autoTo = p ? p.clone().setY(0) : null
   }
 
+  /** swap the walkable rectangle (entering/leaving an interior set teleports
+   * the farmer AND replaces the world bounds with the room's) */
+  setBounds(b: { minX: number; maxX: number; minZ: number; maxZ: number }): void {
+    this.bounds = b
+  }
+
   get autoWalking(): boolean {
     return this.autoTo !== null
   }

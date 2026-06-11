@@ -4,10 +4,13 @@ import { Group, Mesh, MeshStandardMaterial, SkinnedMesh, type AnimationClip, typ
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
-const NATURE = '/models/kenney/nature-kit'
-const FOOD = '/models/kenney/food-kit'
-const SURVIVAL = '/models/kenney/survival-kit'
-const QUAT = '/models/quaternius'
+/** BASE-relative so the build works from a subpath host (GitHub Pages
+ * serves at /<repo>/ — absolute /models/... would 404 there) */
+const BASE = import.meta.env.BASE_URL
+const NATURE = `${BASE}models/kenney/nature-kit`
+const FOOD = `${BASE}models/kenney/food-kit`
+const SURVIVAL = `${BASE}models/kenney/survival-kit`
+const QUAT = `${BASE}models/quaternius`
 
 // NOTE: the hen is procedurally sculpted in Chicken.ts — both chicken GLBs in
 // public/models read as blobs at gameplay distance (Hen.glb = gray box stack,
@@ -18,7 +21,7 @@ export const MODEL_URLS = {
   dog: `${QUAT}/ultimate-animated-animals/ShibaInu.glb`,
   // the ROUNDED Quaternius sheep (white wool, black Suffolk face) — the boxy
   // animals-extra one lives on only as the goat puppet's skeleton
-  sheep: '/models/external/SheepAlt.glb',
+  sheep: `${BASE}models/external/SheepAlt.glb`,
   horse: `${QUAT}/ultimate-animated-animals/Horse.glb`,
   cow: `${QUAT}/ultimate-animated-animals/Cow.glb`,
   // no CC0 animated goat exists anywhere (verified 2026-06-10) — the goats
@@ -33,6 +36,9 @@ export const MODEL_URLS = {
   egg: `${FOOD}/egg.glb`,
   cornItem: `${FOOD}/corn.glb`,
   pumpkinItem: `${FOOD}/pumpkin.glb`,
+  tomatoItem: `${FOOD}/tomato.glb`,
+  pepperItem: `${FOOD}/paprika.glb`,
+  eggplantItem: `${FOOD}/eggplant.glb`,
   // the family dinner table (sleep-scene interior)
   turkey: `${FOOD}/turkey.glb`,
   pie: `${FOOD}/pie.glb`,

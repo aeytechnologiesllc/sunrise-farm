@@ -2,6 +2,7 @@
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
 import { initialProduce, tickProduce, type Produce } from './produce'
+import { GREENHOUSE_BEDS } from './projects'
 
 export interface CropState {
   kind: CropKind
@@ -41,6 +42,9 @@ export interface GameState {
   wheat: number
   /** stand stock for customers — banked on harvest/collect, additive bonus */
   corn: number
+  tomatoes: number
+  peppers: number
+  eggplants: number
   eggs: number
   xp: number
   level: number
@@ -87,6 +91,9 @@ export function initialState(seed: number): GameState {
     coins: 0,
     wheat: 0,
     corn: 0,
+    tomatoes: 0,
+    peppers: 0,
+    eggplants: 0,
     eggs: 0,
     xp: 0,
     level: 1,
@@ -182,11 +189,16 @@ export function deserialize(json: string | null): GameState | null {
     if (s.v !== 1 || !Array.isArray(s.plots)) return null
     // backfill fields added after first ship (saves stay v1-compatible)
     s.corn ??= 0
+    s.tomatoes ??= 0
+    s.peppers ??= 0
+    s.eggplants ??= 0
     s.eggs ??= 0
     s.expansion = clampTier(s.expansion ?? 0)
     s.herdsDone ??= 0
     s.projects ??= {}
     s.ghPlots ??= []
+    // the glasshouse grew from 4 beds to 8 — owners get the new beds on load
+    if (s.projects.greenhouse) while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
     // grandfather PRE-LADDER saves exactly once: they already had the stand
     // + the flock (new saves carry ladder:true from birth and earn theirs)
     if (!s.ladder) {

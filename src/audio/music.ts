@@ -13,7 +13,11 @@
  * Sits quietly under the SFX (~0.25), ducks during fanfares, and the HUD
  * corner button mutes it (persisted). Purely presentational. */
 
-const TRACKS = ['/audio/music/still-pickin.mp3', '/audio/music/happy-whistling-ukulele.mp3']
+// BASE-relative so a subpath host (GitHub Pages /<repo>/) still finds them
+const TRACKS = [
+  `${import.meta.env.BASE_URL}audio/music/still-pickin.mp3`,
+  `${import.meta.env.BASE_URL}audio/music/happy-whistling-ukulele.mp3`,
+]
 const VOLUME = 0.25
 /** crossfade length between tracks, seconds */
 const XFADE = 2.5

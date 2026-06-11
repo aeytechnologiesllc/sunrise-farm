@@ -150,7 +150,7 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 0.1,
     footprint: { w: 4.8, d: 3.4 },
     kind: 'building',
-    earns: 'Indoor plots that grow 40 percent faster.',
+    earns: 'A walk-in glasshouse: rare, pricier crops on beds that grow 40 percent faster.',
   },
   {
     id: 'farmhand',
@@ -171,13 +171,9 @@ export const PROJECTS: ProjectDef[] = [
  * live in world code) */
 export const PADDOCK = { x0: -14.4, z0: -2.9, x1: -10.4, z1: 2.2 }
 
-/** 4 plot centers inside the greenhouse footprint at site [-5.2, -2.0] */
-export const GREENHOUSE_PLOTS: Array<[number, number]> = [
-  [-6.35, -2.75],
-  [-4.05, -2.75],
-  [-6.35, -1.25],
-  [-4.05, -1.25],
-]
+/** raised beds inside the WALKABLE glasshouse set (positions live in
+ * world/greenhouseInterior.ts — the small shed exterior is just the door) */
+export const GREENHOUSE_BEDS = 8
 
 /** greenhouse crops grow 40% faster (growSec multiplier) */
 export const GREENHOUSE_GROW_MULT = 0.6

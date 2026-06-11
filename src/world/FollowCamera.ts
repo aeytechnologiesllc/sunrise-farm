@@ -26,6 +26,18 @@ const PITCH_RATE = 0.95
 const DRAG_RATE = 0.0042
 const FOV_BASE = 42
 const FOV_RUN = 46.5
+/** auto-follow: after this long hands-off, the camera eases around behind
+ * the farmer's direction of travel — the player steers, the camera keeps up
+ * (owner ask: "no constantly adjusting the camera by hand") */
+const AUTO_FOLLOW_AFTER = 1.4
+/** pursuit smoothing constant — deliberately gentle, same hand-feel rule as
+ * the orbit rates above (never a hard snap behind the player) */
+const AUTO_FOLLOW_RATE = 1.7
+/** below this planar speed (u/s) the camera stays where the player left it */
+const AUTO_FOLLOW_MIN_SPEED = 1.1
+/** hard ceiling on auto-yaw (rad/s): a held strafe becomes a slow, wide
+ * orbit instead of a dizzy spin, and big corrections glide rather than whip */
+const AUTO_FOLLOW_MAX_RATE = 0.85
 
 export class FollowCamera {
   readonly camera: PerspectiveCamera
@@ -51,6 +63,8 @@ export class FollowCamera {
   occlusionTest: ((focus: Vector3, camPos: Vector3) => number | null) | null = null
   private occlClamp = Number.POSITIVE_INFINITY
   private lastDt = 0.016
+  /** seconds since the player last touched the camera (drag/orbit/zoom) */
+  private sinceManual = 99
 
   constructor(dom: HTMLElement, start: Vector3) {
     this.camera = new PerspectiveCamera(FOV_BASE, innerWidth / innerHeight, 0.5, 400)
@@ -190,6 +204,14 @@ export class FollowCamera {
     this.camera.updateProjectionMatrix()
   }
 
+  /** teleport follow: snap the smoothed anchor/focus to a far point so an
+   * interior-set door transition doesn't fly the camera 170u across the map */
+  snapTo(p: Vector3): void {
+    this.anchor.set(p.x, p.y + 0.9, p.z)
+    this.focusPoint.copy(this.anchor)
+    this.occlClamp = Number.POSITIVE_INFINITY
+  }
+
   /** glide attention to a world point; returns the tween for sequencing */
   focusOn(p: Vector3, dur = 0.9): gsap.core.Tween {
     gsap.killTweensOf(this.focusW)
@@ -214,6 +236,23 @@ export class FollowCamera {
   /** smooth-damp toward the farmer (+ look-ahead), then place the camera */
   follow(playerPos: Vector3, vel: Vector3, dt: number): void {
     this.lastDt = dt
+    // soft auto-follow: once the hands have been off the camera a beat and
+    // the farmer is really walking, glide the yaw around behind the travel
+    // direction. Any manual touch wins instantly and holds for a while.
+    if (this.moved) this.sinceManual = 0
+    else this.sinceManual += dt
+    const planar = Math.hypot(vel.x, vel.z)
+    if (!this.cineTarget && this.sinceManual > AUTO_FOLLOW_AFTER && planar > AUTO_FOLLOW_MIN_SPEED) {
+      const want = Math.atan2(-vel.x, -vel.z) // camera sits opposite travel
+      let d = want - this.yaw
+      while (d > Math.PI) d -= Math.PI * 2
+      while (d < -Math.PI) d += Math.PI * 2
+      // deadband so an aligned camera never micro-hunts behind the farmer
+      if (Math.abs(d) > 0.04) {
+        const k = Math.min(1, planar / 3.2) * (1 - Math.exp(-AUTO_FOLLOW_RATE * dt))
+        this.yaw += clampAbs(d * k, AUTO_FOLLOW_MAX_RATE * dt)
+      }
+    }
     if (this.cineTarget) {
       this.focusPoint.lerp(this.cineTarget, 1 - Math.exp(-3.4 * dt))
       // a ceremony's release() may fight a running cinematic for focusW —

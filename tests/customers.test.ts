@@ -17,14 +17,14 @@ const step = (c: Customers, seconds: number, stock: Stock): void => {
 describe('customer cadence', () => {
   it('never spawns while inactive (FTUE protection)', () => {
     const c = new Customers(7)
-    step(c, 600, { wheat: 5, corn: 5, egg: 5 })
+    step(c, 600, { wheat: 5, corn: 5, tomato: 0, pepper: 0, eggplant: 0, egg: 5 })
     expect(c.queue).toHaveLength(0)
   })
 
   it('first visit lands inside the first-delay window once active', () => {
     const c = new Customers(7)
     c.active = true
-    const stock: Stock = { wheat: 3, corn: 0, egg: 0 }
+    const stock: Stock = { wheat: 3, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 }
     let elapsed = 0
     while (c.queue.length === 0 && elapsed < 600) {
       c.update(0.25, stock)
@@ -37,7 +37,7 @@ describe('customer cadence', () => {
   it('later visits respect the 60-120s rhythm', () => {
     const c = new Customers(99)
     c.active = true
-    const stock: Stock = { wheat: 9, corn: 9, egg: 9 }
+    const stock: Stock = { wheat: 9, corn: 9, tomato: 0, pepper: 0, eggplant: 0, egg: 9 }
     // get the first one, clear it, then time the second
     while (c.queue.length === 0) c.update(0.25, stock)
     c.remove(c.queue[0].id)
@@ -53,16 +53,16 @@ describe('customer cadence', () => {
   it('holds the spawn until something is in stock, then fires on restock', () => {
     const c = new Customers(11)
     c.active = true
-    step(c, 200, { wheat: 0, corn: 0, egg: 0 })
+    step(c, 200, { wheat: 0, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 })
     expect(c.queue).toHaveLength(0)
-    step(c, 0.5, { wheat: 1, corn: 0, egg: 0 })
+    step(c, 0.5, { wheat: 1, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 })
     expect(c.queue).toHaveLength(1)
   })
 
   it('queue is capped (no crowd pressure)', () => {
     const c = new Customers(5)
     c.active = true
-    step(c, 3600, { wheat: 50, corn: 50, egg: 50 })
+    step(c, 3600, { wheat: 50, corn: 50, tomato: 0, pepper: 0, eggplant: 0, egg: 50 })
     expect(c.queue.length).toBeLessThanOrEqual(CUSTOMER_QUEUE_MAX)
   })
 })
@@ -72,7 +72,7 @@ describe('wants scale to stock (almost always fulfillable)', () => {
     for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
       const c = new Customers(seed)
       c.active = true
-      const stock: Stock = { wheat: 2, corn: 0, egg: 1 }
+      const stock: Stock = { wheat: 2, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 1 }
       while (c.queue.length === 0) c.update(0.25, stock)
       const w = c.queue[0].want
       expect(stock[w.kind]).toBeGreaterThan(0)
@@ -96,7 +96,7 @@ describe('wants scale to stock (almost always fulfillable)', () => {
     const mk = (): Array<[string, number]> => {
       const c = new Customers(1234)
       c.active = true
-      const stock: Stock = { wheat: 5, corn: 5, egg: 5 }
+      const stock: Stock = { wheat: 5, corn: 5, tomato: 0, pepper: 0, eggplant: 0, egg: 5 }
       while (c.queue.length === 0) c.update(0.25, stock)
       return c.queue.map((q) => [q.want.kind, q.want.count])
     }
@@ -113,7 +113,7 @@ describe('serving flow', () => {
   }
 
   it('arriving customers cannot be served until they reach the stand', () => {
-    const stock: Stock = { wheat: 4, corn: 0, egg: 0 }
+    const stock: Stock = { wheat: 4, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 }
     const c = spawnOne(stock)
     expect(c.frontServiceable(stock)).toBeNull()
     c.notifyArrived(c.queue[0].id)
@@ -121,18 +121,18 @@ describe('serving flow', () => {
   })
 
   it('unserved customers wait forever — never removed, never angry', () => {
-    const stock: Stock = { wheat: 1, corn: 0, egg: 0 }
+    const stock: Stock = { wheat: 1, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 }
     const c = spawnOne(stock)
     c.notifyArrived(c.queue[0].id)
-    const empty: Stock = { wheat: 0, corn: 0, egg: 0 }
+    const empty: Stock = { wheat: 0, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 }
     step(c, 1800, empty)
     expect(c.queue[0].phase).toBe('waiting')
     expect(c.frontServiceable(empty)).toBeNull() // browses until restock
-    expect(c.frontServiceable({ wheat: 1, corn: 0, egg: 0 })).not.toBeNull()
+    expect(c.frontServiceable({ wheat: 1, corn: 0, tomato: 0, pepper: 0, eggplant: 0, egg: 0 })).not.toBeNull()
   })
 
   it('serve -> leaving -> remove, and the queue spot shifts forward', () => {
-    const stock: Stock = { wheat: 50, corn: 50, egg: 50 }
+    const stock: Stock = { wheat: 50, corn: 50, tomato: 0, pepper: 0, eggplant: 0, egg: 50 }
     const c = spawnOne(stock)
     step(c, 130, stock) // second customer arrives
     expect(c.queue.length).toBe(2)
@@ -171,5 +171,22 @@ describe('serving flow', () => {
     g.state.chicken.eggReady = true
     g.collectEgg()
     expect(g.state.eggs).toBe(1)
+  })
+
+  it('greenhouse harvests bank their own stand stock (customers can want them)', () => {
+    const g = new Game(initialState(3))
+    g.state.level = 20
+    g.state.ghPlots.push({ crop: null }, { crop: null })
+    const gi = g.state.plots.length
+    g.plant(gi, 'pepper')
+    g.plant(gi + 1, 'eggplant')
+    g.update(2000)
+    g.harvest(gi)
+    g.harvest(gi + 1)
+    expect(g.state.peppers).toBe(1)
+    expect(g.state.eggplants).toBe(1)
+    expect(g.stock().pepper).toBe(1)
+    expect(g.fulfill('eggplant', 1, 30)).toBe(true)
+    expect(g.state.eggplants).toBe(0)
   })
 })
