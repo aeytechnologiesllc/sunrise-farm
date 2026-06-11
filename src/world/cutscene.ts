@@ -438,6 +438,11 @@ export class Construction {
     const siteA = opts.site.clone().add(new Vector3(0.5, 0.3, 0.75))
     const siteB = opts.site.clone().add(new Vector3(-0.1, 0.85, -0.15))
     this.camAim = siteA.clone()
+    // hard CUT to the establishing wide as the letterbox slides in (film
+    // grammar) — easing there could drag the camera through farm buildings.
+    // Values must match update()'s per-tick cineFollow call.
+    this.deps.cam.cineFollow(this.camAim, undefined, 0.46, 11.5, 46)
+    this.deps.cam.cineCut()
 
     const tl = gsap.timeline()
     tl.call(

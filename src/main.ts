@@ -127,10 +127,12 @@ declare global {
       grazers: () => Array<[number, number]>
       music: () => Music['debug']
       musicUnlock: () => void
-      sleepStart: () => void
+      sleepStart: (pause?: boolean) => void
       sleepSeek: (s: number) => void
       dusk: () => void
       interiorProbe: () => Array<{ name: string; x: number; y: number; z: number; vis: boolean }>
+      sheet: (n?: number, stepS?: number) => number
+      sheetOff: () => void
       camProbe: () => Record<string, unknown>
       ray: (nx: number, ny: number) => Array<{ d: number; n: number | undefined; name: string }>
       draws: () => number
@@ -613,7 +615,9 @@ async function boot(): Promise<void> {
       }
     }
     if (!dog.fetch(target)) return
-    sfx.whistle()
+    // ANTICIPATION first (film grammar: setup -> action -> payoff): the stick
+    // is visibly IN HAND through a wind-up beat — Rex bolts early like a real
+    // dog — and only then sails out of the hand on its arc.
     player.gesture(engine.uTime.value)
     // roll camera: letterbox in, eye on the flight line, then the per-frame
     // smooth follow rides alongside Rex out and back until the handoff
@@ -627,25 +631,37 @@ async function boot(): Promise<void> {
       new MeshStandardMaterial({ color: '#7a5a36', roughness: 1 }),
     )
     s.castShadow = true
-    scene.add(s)
+    player.group.add(s)
+    s.position.set(0.32, 0.82, 0.2) // gripped at the right hand
+    s.rotation.set(0, 0, Math.PI / 2.6)
     stick = s
-    const from = player.pos.clone().setY(1.2)
-    s.position.copy(from)
-    const flight = { t: 0 }
-    gsap.to(flight, {
-      t: 1,
-      duration: 0.65,
-      ease: 'none',
-      onUpdate: () => {
-        const t = flight.t
-        s.position.set(
-          from.x + (target.x - from.x) * t,
-          0.15 + (1.2 - 0.15) * (1 - t) + Math.sin(t * Math.PI) * 2.4,
-          from.z + (target.z - from.z) * t,
-        )
-        s.rotation.x += 0.35
+    gsap.timeline().call(
+      () => {
+        if (stick !== s) return // skip/cleanup landed during the wind-up
+        const from = s.getWorldPosition(new Vector3())
+        player.group.remove(s)
+        scene.add(s)
+        s.position.copy(from)
+        sfx.whistle()
+        const flight = { t: 0 }
+        gsap.to(flight, {
+          t: 1,
+          duration: 0.65,
+          ease: 'none',
+          onUpdate: () => {
+            const t = flight.t
+            s.position.set(
+              from.x + (target.x - from.x) * t,
+              0.15 + (from.y - 0.15) * (1 - t) + Math.sin(t * Math.PI) * 2.4,
+              from.z + (target.z - from.z) * t,
+            )
+            s.rotation.x += 0.35
+          },
+        })
       },
-    })
+      undefined,
+      0.5,
+    )
   }
 
   // ---- the sleep ritual: supper, stars, sunrise -----------------------------------
@@ -757,6 +773,14 @@ async function boot(): Promise<void> {
     /** where mom stands holding the door (her evening spot, reused at dawn) */
     const jamb = homestead.thresholdPos.addScaledVector(doorN, 0.5).add(side(0.6))
     const tl = gsap.timeline()
+    // scene entry: a quick blink-cut to the authored door shot — easing there
+    // from an arbitrary gameplay angle could sweep the camera THROUGH the barn
+    tl.call(() => letterbox.fade(true, 0.16), undefined, 0.02)
+    tl.call(() => {
+      cam.cineFollow(homestead.doorPos.clone().setY(1.2), 0.55, 0.38)
+      cam.cineCut()
+      letterbox.fade(false, 0.4)
+    }, undefined, 0.24)
     // supper drifting out of the kitchen window
     tl.call(quiet(() => sfx.clink()), undefined, 1.1)
     tl.call(quiet(() => sfx.clink()), undefined, 2.3)
@@ -780,6 +804,9 @@ async function boot(): Promise<void> {
     tl.call(() => {
       homeInterior.setLit(true)
       interiorShot = true
+      // CUT to the dinner table while the screen is black — never dolly in
+      cam.cineFollow(homeInterior.camFocus, homeInterior.camYaw, homeInterior.camPitch, homeInterior.camDist, homeInterior.camFov)
+      cam.cineCut()
       letterbox.fade(false, 0.6)
     }, undefined, 4.7)
     // the door shuts behind them, unseen in the black
@@ -796,6 +823,9 @@ async function boot(): Promise<void> {
       homeInterior.setLit(false)
       interiorShot = false
       skyGaze = true
+      // CUT up to the crescent in the black — the moon shot holds steady
+      cam.cineFollow(homestead.doorPos.clone().add(new Vector3(14, 34, 12)), -2.3, -0.55)
+      cam.cineCut()
       letterbox.fade(false, 0.7)
     }, undefined, 11.9)
     tl.call(quiet(() => showDayCard(state.day, summary)), undefined, 12.7)
@@ -816,6 +846,10 @@ async function boot(): Promise<void> {
     tl.call(() => letterbox.fade(true, 0.45), undefined, 18.6)
     tl.call(() => {
       skyGaze = false
+      // CUT down from the stars to the door while black — easing down used
+      // to leave the camera INSIDE the barn as the morning faded in
+      cam.cineFollow(homestead.doorPos.clone().setY(1.2), 0.55, 0.38)
+      cam.cineCut()
       letterbox.fade(false, 0.6)
       gsap.killTweensOf(player.group.scale)
       player.group.scale.setScalar(1)
@@ -1988,9 +2022,9 @@ async function boot(): Promise<void> {
     grazers: () => grazers.positions().map((p) => [p.x, p.z] as [number, number]),
     music: () => music.debug,
     musicUnlock: () => music.unlock(),
-    sleepStart: () => {
+    sleepStart: (pause = true) => {
       sleepScene()
-      sleepTl?.pause()
+      if (pause) sleepTl?.pause()
     },
     interiorProbe: () => {
       const out: Array<{ name: string; x: number; y: number; z: number; vis: boolean; lo?: number; hi?: number }> = []
@@ -2022,6 +2056,39 @@ async function boot(): Promise<void> {
       return out
     },
     sleepSeek: (s: number) => sleepTl?.seek(s, false),
+    /** cutscene QA: advance the sim n times by stepS, tiling a REAL rendered
+     * frame into a grid after each step, then overlay the grid — one outside
+     * screenshot reviews a whole scene including every camera transition */
+    sheet: (n = 12, stepS = 0.75) => {
+      document.getElementById('qa-sheet')?.remove()
+      const src = renderer.domElement
+      const cols = Math.ceil(Math.sqrt(n))
+      const rows = Math.ceil(n / cols)
+      const cw = Math.floor(1280 / cols)
+      const ch = Math.floor((cw * src.height) / src.width)
+      const grid = document.createElement('canvas')
+      grid.width = cw * cols
+      grid.height = ch * rows
+      const g = grid.getContext('2d')!
+      g.fillStyle = '#111'
+      g.fillRect(0, 0, grid.width, grid.height)
+      for (let i = 0; i < n; i++) {
+        engine.advance(stepS)
+        // copy is synchronous right after the advance's render — the WebGL
+        // buffer is still valid without preserveDrawingBuffer
+        g.drawImage(src, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch)
+        g.fillStyle = '#ffe9a0'
+        g.font = 'bold 13px monospace'
+        g.fillText(`${((i + 1) * stepS).toFixed(2)}s`, (i % cols) * cw + 5, Math.floor(i / cols) * ch + 16)
+      }
+      const img = document.createElement('img')
+      img.id = 'qa-sheet'
+      img.src = grid.toDataURL('image/jpeg', 0.7)
+      img.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#111;z-index:999'
+      document.body.appendChild(img)
+      return n * stepS
+    },
+    sheetOff: () => document.getElementById('qa-sheet')?.remove(),
     camProbe: () => {
       const c = cam as unknown as Record<string, unknown>
       return {

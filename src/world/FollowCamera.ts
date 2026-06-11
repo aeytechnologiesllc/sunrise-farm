@@ -174,6 +174,22 @@ export class FollowCamera {
     }
   }
 
+  /** CUT to the current cinematic shot: snap the eased yaw/pitch/dist/focus
+   * to their targets instantly. Scenes call this behind a dip-to-black so
+   * the camera never visibly flies through buildings to reach a new angle —
+   * films cut, they don't sweep. */
+  cineCut(): void {
+    if (!this.cineTarget) return
+    this.focusPoint.copy(this.cineTarget)
+    gsap.killTweensOf(this.focusW)
+    this.focusW.value = 1
+    if (this.cineYaw !== null) this.yaw = this.cineYaw
+    if (this.cinePitch !== null) this.pitch = this.cinePitch
+    if (this.cineDist !== null) this.smoothDist = this.cineDist
+    this.camera.fov = this.fovTarget
+    this.camera.updateProjectionMatrix()
+  }
+
   /** glide attention to a world point; returns the tween for sequencing */
   focusOn(p: Vector3, dur = 0.9): gsap.core.Tween {
     gsap.killTweensOf(this.focusW)
@@ -254,10 +270,17 @@ export class FollowCamera {
       )
     }
     // building occlusion: snap IN fast (never clip inside a wall), ease OUT.
-    // Cinematics opt out — an authored shot may legitimately frame ACROSS a
-    // building (construction site, interiors); the pull-in was yanking the
-    // construction wide shot to 2.4u because the focus sat inside an occluder
-    if (this.occlusionTest && !this.cineTarget) {
+    // During cinematics the rule is softer: if the hit is in the NEAR third
+    // of the shot distance the focus itself sits at/inside an occluder (the
+    // construction wide shot frames across the old stand) — ignore it; a
+    // far hit means a building stands between subject and lens (the barn in
+    // the dawn shot) and the pull-in keeps the subject visible.
+    if (this.occlusionTest && this.cineTarget) {
+      const blocked = this.occlusionTest(t, place(dist, this.desired))
+      if (blocked !== null && blocked > dist * 0.35) {
+        dist = Math.max(2.4, blocked - 0.5)
+      }
+    } else if (this.occlusionTest) {
       const blocked = this.occlusionTest(t, place(dist, this.desired))
       const want = blocked !== null ? Math.max(2.4, blocked - 0.5) : dist
       if (want < this.occlClamp) this.occlClamp = want
