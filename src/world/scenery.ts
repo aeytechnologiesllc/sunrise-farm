@@ -171,7 +171,10 @@ export function buildLights(scene: Scene): LightHandles {
   const sun = new DirectionalLight('#ffe9bd', 2.6)
   sun.position.set(12, 22, -9)
   sun.castShadow = true
-  sun.shadow.mapSize.set(2048, 2048)
+  // phones render the shadow map every frame too — half-res there ("heavy"
+  // report); PCF + normalBias keep edges acceptable at 1024
+  const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+  sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048)
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.02
   const c = sun.shadow.camera

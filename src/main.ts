@@ -156,7 +156,9 @@ async function boot(): Promise<void> {
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = PCFShadowMap
-  renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarse ? 1.7 : 2))
+  // 1.5 on phones: fill rate is the #1 mobile cost and the tone-mapped,
+  // post-processed image hides the resolution drop ("feels heavy" report)
+  renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarse ? 1.5 : 2))
   document.body.appendChild(renderer.domElement)
 
   const scene = new Scene()
@@ -209,8 +211,8 @@ async function boot(): Promise<void> {
         density: 0.96,
         decay: 0.93,
         weight: 0.25,
-        samples: isCoarse ? 16 : 32,
-        resolutionScale: isCoarse ? 0.35 : 0.5,
+        samples: isCoarse ? 12 : 32,
+        resolutionScale: isCoarse ? 0.3 : 0.5,
       }),
       new BloomEffect({ intensity: 0.42, luminanceThreshold: 0.82, mipmapBlur: true }),
       new VignetteEffect({ darkness: 0.3, offset: 0.26 }),
@@ -1857,11 +1859,16 @@ async function boot(): Promise<void> {
 
   // ---- frame driver with rare-event slow-mo (presentation only) -------------------
   let last = performance.now()
+  let driftTick = 0
   const loop = (now: number): void => {
     requestAnimationFrame(loop)
     // self-healing viewport: iOS standalone misses resize events — if the
-    // window drifted from what we sized for, fix it before drawing
-    if (viewW() !== sizedW || viewH() !== sizedH) resize()
+    // window drifted from what we sized for, fix it before drawing. Checked
+    // every 10th frame: viewport reads can force layout, no need per-frame
+    if (++driftTick >= 10) {
+      driftTick = 0
+      if (viewW() !== sizedW || viewH() !== sizedH) resize()
+    }
     const dt = Math.min((now - last) / 1000, 0.1)
     last = now
     engine.advance(dt * (now < slowUntilReal ? 0.2 : 1))
@@ -1884,6 +1891,12 @@ async function boot(): Promise<void> {
     cam.resize(sizedW, sizedH)
     renderer.setSize(sizedW, sizedH, false)
     composer.setSize(sizedW, sizedH)
+    // composer.setSize stamps INLINE px width/height on the canvas (inline
+    // beats the stylesheet pin in index.html) — re-assert fill so a stale
+    // measurement can never leave a background bar
+    const cs = renderer.domElement.style
+    cs.width = '100%'
+    cs.height = '100%'
   }
   addEventListener('resize', resize)
   visualViewport?.addEventListener('resize', resize)

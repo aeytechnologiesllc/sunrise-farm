@@ -87,7 +87,9 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // phones get a thinner field; each blade is only 8 tris so even the
   // desktop count is lighter per pixel than the old alpha-cutout cards
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
-  const COUNT = coarse ? 36000 : 64000
+  // 28k on phones ("heavy" report): the wind shader prices every blade every
+  // frame — the drop reads as a slightly airier lawn, not as missing grass
+  const COUNT = coarse ? 28000 : 64000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
