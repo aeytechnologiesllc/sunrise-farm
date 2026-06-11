@@ -199,7 +199,12 @@ async function boot(): Promise<void> {
   await assets.loadAll((d, t) => (ldp.textContent = `loading ${d}/${t}`))
 
   // ---- state first (scenery is tier-aware) --------------------------------
-  const loaded = deserialize(localStorage.getItem(SAVE_KEY))
+  const rawSave = localStorage.getItem(SAVE_KEY)
+  const loaded = deserialize(rawSave)
+  // a save that EXISTS but no longer parses is rescued, never clobbered: the
+  // autosave would otherwise overwrite a farm a bad update failed to read.
+  // The copy keeps the original recoverable (manually, or by a future fix).
+  if (rawSave && !loaded) localStorage.setItem(`${SAVE_KEY}.rescue`, rawSave)
   const state = loaded ?? initialState((Math.random() * 0xffffffff) >>> 0)
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
   const game = new Game(state)
