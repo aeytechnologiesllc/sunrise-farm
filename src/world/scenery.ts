@@ -676,15 +676,7 @@ function buildBarn(scene: Scene): void {
     slab.translate((side * W) / 4 - side * 0.06, H + 0.78, 0)
     roofGeos.push(slab)
   }
-  const door = new BoxGeometry(1.7, 1.9, 0.1)
-  door.translate(0.0, 0.95, D / 2 + 0.03)
-  trimGeos.push(door)
-  for (const s of [-1, 1]) {
-    const brace = new BoxGeometry(0.16, 2.2, 0.06)
-    brace.rotateZ((s * Math.PI) / 5.2)
-    brace.translate(0, 0.95, D / 2 + 0.1)
-    redGeos.push(brace)
-  }
+  // door + cross braces are LIVE geometry owned by Homestead (homestead.ts) so cutscenes can swing it
   for (const cx of [-W / 2, W / 2]) {
     const corner = new BoxGeometry(0.16, H, 0.16)
     corner.translate(cx, H / 2, D / 2)

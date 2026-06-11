@@ -26,6 +26,18 @@ story-first "one cast" rule).
 
 ---
 
+## Phase 0 — Goodnight/Good-morning v3: the door and the goodbye [S] (BUILT 2026-06-11)
+Owner feedback: the family never visibly enters the home (no door), and the
+morning exit is abrupt — no farewell. Fix:
+- Real pivoted barn door on the homestead (the old door was painted-on merged
+  geometry): swings open as the farmer arrives at dusk, family walks through,
+  closes behind them under the fade; doorway recess so the opening reads as a
+  real entrance.
+- Morning farewell beat: door opens at dawn, dad steps out, the KID runs out
+  after him, dad stoops (pick-up gesture clip) for a goodbye kiss/hug, kid
+  runs back to mom at the door, both wave as he walks to the fields, door
+  closes. Skippable like everything; all tweens killed on skip.
+
 ## Phase 1 — Hazel's Story: a delivery you can finally see [M]
 Pure legibility pass, zero economy changes (75s run / 200s cooldown / 26-42c).
 - Button states the trip ("Send Hazel — 75s") per the plant-button convention.
@@ -49,6 +61,16 @@ The deterministic spine; zero particles.
 - New pure `src/game/weather.ts`: per-day forecast = f(weatherSeed, day) via
   mulberry32(hash); kinds clear|breezy|overcast; vitest coverage; weatherSeed
   backfill `??= (s.rng ^ 0x9e3779b9)>>>0`.
+- **WEATHER PACING LAW (owner directive — do not overdo it)**: weather must
+  feel like real weather, not a mood ring. One weather kind per DAY (it can
+  soften toward evening, never flip-flop within a day). Persistence model:
+  weather arrives in 2-4 day stretches; ~60-65% of days are simply clear or
+  breezy; rain arrives as a front you can see coming (breezy → overcast →
+  rain over consecutive days); at most ~1 rain day in 4 on average, seeded so
+  some weeks have none. All sky transitions ease over 30-60s of real time.
+  A dramatic sky is RARE — that's what makes it an event. Vitest asserts the
+  distribution (long-run frequencies + max change rate) so the law can't
+  regress silently.
 - DayCycle `setOvercast(k)` cloned from the setNight(k) post-multiply pattern,
   composed BEFORE the night block. God rays die by lerping sunDisk color toward
   fog/bg (never toggle the EffectPass — shader recompile hitch).

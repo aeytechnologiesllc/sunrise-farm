@@ -8,6 +8,7 @@
 import gsap from 'gsap'
 import {
   ACESFilmicToneMapping,
+  Color,
   CylinderGeometry,
   Group,
   Mesh,
@@ -97,7 +98,7 @@ import {
   WOOL_COIN_PER_SHEEP,
 } from './game/produce'
 import { buildCoopHouse, CoopHens } from './world/coop'
-import { AnimationMixer } from 'three'
+import { AnimationMixer, type AnimationAction } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
 const GOOD_EMOJI: Record<GoodKind, string> = { wheat: '\u{1F33E}', corn: '\u{1F33D}', egg: '\u{1F95A}' }
@@ -657,6 +658,8 @@ async function boot(): Promise<void> {
   let interiorShot = false
   let sleepTl: gsap.core.Timeline | null = null
   let wife: { group: Group; mixer: AnimationMixer } | null = null
+  /** the kid joins the morning farewell (spawned at the dawn cut) */
+  let kiddo: { group: Group; mixer: AnimationMixer; walk: AnimationAction | null; idle: AnimationAction | null } | null = null
   const nightDial = { k: 0 }
   const applyNight = (): void => {
     dayCycle.setNight(nightDial.k)
@@ -705,9 +708,17 @@ async function boot(): Promise<void> {
     player.group.scale.setScalar(1)
     if (wife) {
       gsap.killTweensOf(wife.group.scale)
+      gsap.killTweensOf(wife.group.position)
       scene.remove(wife.group)
       wife = null
     }
+    if (kiddo) {
+      gsap.killTweensOf(kiddo.group.position)
+      gsap.killTweensOf(kiddo.group.scale)
+      scene.remove(kiddo.group)
+      kiddo = null
+    }
+    homestead.setDoorOpen(0)
     saveNow()
   }
   const sleepScene = (): void => {
@@ -739,16 +750,28 @@ async function boot(): Promise<void> {
     const quiet = (fn: () => void) => () => {
       if (!sleepSkipped) fn()
     }
+    /** lateral offset along the door frame (+ = the wife's side) */
+    const side = (s: number): Vector3 => new Vector3(doorN.z, 0, -doorN.x).multiplyScalar(s)
+    /** where mom stands holding the door (her evening spot, reused at dawn) */
+    const jamb = homestead.thresholdPos.addScaledVector(doorN, 0.5).add(side(0.6))
     const tl = gsap.timeline()
     // supper drifting out of the kitchen window
     tl.call(quiet(() => sfx.clink()), undefined, 1.1)
     tl.call(quiet(() => sfx.clink()), undefined, 2.3)
-    // they step inside together
+    // the door swings open ahead of him — the old hinge creaks
+    tl.call(quiet(() => {
+      homestead.openDoor(0.9)
+      sfx.crate()
+    }), undefined, 2.6)
+    // they actually WALK inside: past the wall plane the dark doorway recess
+    // swallows them — no shrink tricks, a real entrance
     tl.call(() => {
-      player.autoWalkTo(null)
-      if (!sleepSkipped) sfx.crate() // the old door creaks
-      gsap.to(player.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in' })
-      if (wife) gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in', delay: 0.15 })
+      player.autoWalkTo(homestead.thresholdPos.addScaledVector(doorN, -0.45))
+      if (wife) {
+        const inSpot = homestead.thresholdPos.addScaledVector(doorN, -0.5).add(side(0.25))
+        wife.group.rotation.y = Math.atan2(inSpot.x - wife.group.position.x, inSpot.z - wife.group.position.z)
+        gsap.to(wife.group.position, { x: inSpot.x, z: inSpot.z, duration: 1.2, ease: 'power1.inOut', delay: 0.45 })
+      }
     }, undefined, 3.6)
     // CUT inside, through black: the family is at the table
     tl.call(() => letterbox.fade(true, 0.45), undefined, 4.1)
@@ -757,6 +780,8 @@ async function boot(): Promise<void> {
       interiorShot = true
       letterbox.fade(false, 0.6)
     }, undefined, 4.7)
+    // the door shuts behind them, unseen in the black
+    tl.call(quiet(() => homestead.closeDoor(0.6)), undefined, 4.8)
     // supper — the heart of the scene. Firelight, the child looking up at
     // dad, clinks between bites. The world outside slips into night unseen.
     for (const at of [5.8, 7.0, 8.3, 9.6]) tl.call(quiet(() => sfx.clink()), undefined, at)
@@ -783,21 +808,113 @@ async function boot(): Promise<void> {
     tl.to(nightDial, { k: 0, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 15.8)
     tl.call(quiet(() => sfx.birds()), undefined, 17.0)
     tl.call(quiet(() => sfx.birds()), undefined, 17.9)
-    // cut back down to the door: he steps out into the morning
+    // cut back down to the door — the morning farewell. The whole family
+    // starts INSIDE behind the closed door; everyone emerges from the dark
+    // doorway when it opens (the recess plane reveals them naturally).
     tl.call(() => letterbox.fade(true, 0.45), undefined, 18.6)
     tl.call(() => {
       skyGaze = false
       letterbox.fade(false, 0.6)
       gsap.killTweensOf(player.group.scale)
       player.group.scale.setScalar(1)
-      player.pos.copy(homestead.thresholdPos)
-      player.autoWalkTo(door.clone().add(new Vector3(1.6, 0, 2.2)))
+      homestead.setDoorOpen(0)
+      player.pos.copy(homestead.thresholdPos.addScaledVector(doorN, -0.4))
+      player.autoWalkTo(null)
       if (wife) {
         gsap.killTweensOf(wife.group.scale)
+        gsap.killTweensOf(wife.group.position)
         wife.group.scale.setScalar(1)
-        gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.6, delay: 1.6, ease: 'power2.in' })
+        wife.group.position.copy(homestead.thresholdPos).addScaledVector(doorN, -0.5).add(side(0.4))
+        wife.group.rotation.y = 0.55
+      }
+      if (!sleepSkipped && !kiddo) {
+        // their little one joins the goodbye (the kid from the dinner table)
+        const g = assets.spawnSkinned('customerC')
+        normalizeHeight(g, 0.95)
+        g.traverse((o) => {
+          if (o instanceof SkinnedMesh && o.material instanceof MeshStandardMaterial) {
+            // customerC materials are SHARED across clones and their color IS
+            // the garment — clone, then only warm it (a blanket recolor turns
+            // her into a gray mannequin)
+            o.material = o.material.clone()
+            o.material.color.lerp(new Color('#ffd9b0'), 0.22)
+          }
+        })
+        g.position.copy(homestead.thresholdPos).addScaledVector(doorN, -0.45).add(side(-0.3))
+        g.rotation.y = 0.55
+        scene.add(g)
+        const m = new AnimationMixer(g)
+        const clipOf = (n: string): AnimationAction | null => {
+          const c = assets.clips('customerC').find((k) => {
+            const l = k.name.toLowerCase()
+            return l === n || l.endsWith(`|${n}`)
+          })
+          return c ? m.clipAction(c, g) : null
+        }
+        const idle = clipOf('idle')
+        idle?.play()
+        kiddo = { group: g, mixer: m, walk: clipOf('walk'), idle }
       }
     }, undefined, 19.2)
+    // the door opens on the new day
+    tl.call(quiet(() => {
+      homestead.openDoor(0.8)
+      sfx.crate()
+    }), undefined, 19.35)
+    // dad steps out into the light
+    tl.call(() => player.autoWalkTo(door.clone().addScaledVector(doorN, 0.5)), undefined, 19.9)
+    // mom comes to hold the door frame
+    tl.call(quiet(() => {
+      if (wife) gsap.to(wife.group.position, { x: jamb.x, z: jamb.z, duration: 0.9, ease: 'power1.inOut' })
+    }), undefined, 20.1)
+    // the kid bursts out after dad for one more goodbye
+    tl.call(quiet(() => {
+      if (!kiddo) return
+      const to = door.clone().addScaledVector(doorN, 1.0).add(side(0.18))
+      kiddo.group.rotation.y = Math.atan2(to.x - kiddo.group.position.x, to.z - kiddo.group.position.z)
+      kiddo.idle?.stop()
+      if (kiddo.walk) {
+        kiddo.walk.reset().play()
+        kiddo.walk.timeScale = 1.5
+      }
+      gsap.to(kiddo.group.position, {
+        x: to.x,
+        z: to.z,
+        duration: 1.0,
+        ease: 'power1.inOut',
+        onComplete: () => {
+          kiddo?.walk?.stop()
+          kiddo?.idle?.reset().play()
+        },
+      })
+    }), undefined, 20.7)
+    // the stoop: dad bends down for a goodbye kiss on her head
+    tl.call(quiet(() => {
+      player.gesture(engine.uTime.value)
+      if (kiddo) sparkleBurst(scene, kiddo.group.position.clone().setY(1.05), false, 4)
+    }), undefined, 21.7)
+    // she scampers back to mom; dad turns for the fields
+    tl.call(quiet(() => {
+      if (!kiddo) return
+      const back = jamb.clone().add(side(-0.55))
+      kiddo.group.rotation.y = Math.atan2(back.x - kiddo.group.position.x, back.z - kiddo.group.position.z)
+      kiddo.idle?.stop()
+      if (kiddo.walk) {
+        kiddo.walk.reset().play()
+        kiddo.walk.timeScale = 1.5
+      }
+      gsap.to(kiddo.group.position, {
+        x: back.x,
+        z: back.z,
+        duration: 1.1,
+        ease: 'power1.inOut',
+        onComplete: () => {
+          kiddo?.walk?.stop()
+          kiddo?.idle?.reset().play()
+        },
+      })
+    }), undefined, 22.6)
+    tl.call(() => player.autoWalkTo(door.clone().add(new Vector3(1.6, 0, 2.2))), undefined, 22.8)
     tl.call(() => {
       // tenure milestones make the day number an emotional scoreboard
       const MILESTONES: Record<number, string> = {
@@ -808,8 +925,18 @@ async function boot(): Promise<void> {
       }
       hud.showBanner(`Day ${state.day} \u{1F305}`, MILESTONES[state.day] ?? 'A brand-new morning on the farm')
       music.duck()
-    }, undefined, 20.2)
-    tl.call(() => endSleepScene(), undefined, 21.8)
+    }, undefined, 23.2)
+    // the family slips back inside and the door closes on a good morning
+    tl.call(quiet(() => {
+      const inSpot = homestead.thresholdPos.addScaledVector(doorN, -0.55)
+      if (wife) gsap.to(wife.group.position, { x: inSpot.x, z: inSpot.z, duration: 0.8, ease: 'power1.in', delay: 0.1 })
+      if (kiddo) {
+        const kidIn = inSpot.clone().add(side(-0.3))
+        gsap.to(kiddo.group.position, { x: kidIn.x, z: kidIn.z, duration: 0.75, ease: 'power1.in' })
+      }
+    }), undefined, 23.7)
+    tl.call(quiet(() => homestead.closeDoor(0.7)), undefined, 24.7)
+    tl.call(() => endSleepScene(), undefined, 25.5)
     sleepTl = tl
   }
 
@@ -1639,6 +1766,10 @@ async function boot(): Promise<void> {
     // goodnight scene camera: the lit doorway -> the dinner table inside ->
     // a long gaze up into the stars -> back to the door at dawn
     if (sleepActive) {
+      // the door-side family lives: mom's wave, the kid's run (these mixers
+      // only tick during the scene — they're removed at endSleepScene)
+      wife?.mixer.update(dt)
+      kiddo?.mixer.update(dt)
       if (interiorShot) {
         cam.cineFollow(homeInterior.camFocus, homeInterior.camYaw, homeInterior.camPitch, homeInterior.camDist, homeInterior.camFov)
         homeInterior.update(dt)

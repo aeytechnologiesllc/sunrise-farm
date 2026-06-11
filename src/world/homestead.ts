@@ -7,7 +7,11 @@
  * like buildBarn() in scenery.ts (BARN_POS + rotation.y 0.55), so window
  * quads sit flush on the painted walls. Budget: ONE PointLight, one merged
  * window mesh, two additive planes, four tiny smoke spheres — all glow
- * geometry fully hidden during the day. Zero allocations in update(). */
+ * geometry fully hidden during the day. Zero allocations in update().
+ * Also owns the LIVE front door (panel + painted interior recess) so the
+ * home cutscenes can actually swing it open — scenery.ts buildBarn() no
+ * longer bakes a fake door into the merged statics. */
+import gsap from 'gsap'
 import {
   AdditiveBlending,
   BoxGeometry,
@@ -34,6 +38,9 @@ const D = 4.2
 const H = 2.6
 /** wall-glow planes float this far outside the wall to dodge z-fighting */
 const INSET = 0.06
+/** full-open hinge angle: negative y-rotation swings the panel OUTWARD and
+ * back toward local -x, so it never sweeps through anyone waiting at +x */
+const DOOR_OPEN_RAD = -1.92
 /** chimney mouth in barn-local coords — where the smoke wisp is born */
 const SMOKE_X = 0
 const SMOKE_Y = 4.9
@@ -114,6 +121,46 @@ function spillCanvas(): HTMLCanvasElement {
   return c
 }
 
+/** dim barn interior glimpsed through the doorway: warm near-black brown
+ * sinking to shadow at the jambs and lintel, a faint hearth-warm heart just
+ * above the floor, and a low plank-seam floor line — painted depth (house
+ * rule: no flat untextured rectangles) so by day it reads as a real dark
+ * room and at dusk it sits quietly behind the additive door-glow sheet */
+function doorRecessCanvas(): HTMLCanvasElement {
+  const { c, g } = makeCanvas(96, 128)
+  g.fillStyle = '#140c07'
+  g.fillRect(0, 0, 96, 128)
+  // faint warm center, brightest a little above the floor where a lamp sits
+  const heart = g.createRadialGradient(48, 84, 4, 48, 78, 70)
+  heart.addColorStop(0, 'rgba(96, 62, 34, 0.5)')
+  heart.addColorStop(0.55, 'rgba(58, 38, 22, 0.28)')
+  heart.addColorStop(1, 'rgba(20, 12, 7, 0)')
+  g.fillStyle = heart
+  g.fillRect(0, 0, 96, 128)
+  // hint of floor: a dim plank seam with a slightly lifted strip below it
+  g.fillStyle = 'rgba(122, 84, 48, 0.26)'
+  g.fillRect(0, 104, 96, 2)
+  const floor = g.createLinearGradient(0, 106, 0, 128)
+  floor.addColorStop(0, 'rgba(74, 50, 30, 0.3)')
+  floor.addColorStop(1, 'rgba(30, 19, 11, 0.1)')
+  g.fillStyle = floor
+  g.fillRect(0, 106, 96, 22)
+  // vignette: edges fall away into darkness so the opening reads as depth
+  const side = g.createLinearGradient(0, 0, 96, 0)
+  side.addColorStop(0, 'rgba(0, 0, 0, 0.55)')
+  side.addColorStop(0.18, 'rgba(0, 0, 0, 0)')
+  side.addColorStop(0.82, 'rgba(0, 0, 0, 0)')
+  side.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
+  g.fillStyle = side
+  g.fillRect(0, 0, 96, 128)
+  const lintel = g.createLinearGradient(0, 0, 0, 30)
+  lintel.addColorStop(0, 'rgba(0, 0, 0, 0.6)')
+  lintel.addColorStop(1, 'rgba(0, 0, 0, 0)')
+  g.fillStyle = lintel
+  g.fillRect(0, 0, 96, 30)
+  return c
+}
+
 interface Puff {
   mesh: Mesh
   mat: MeshBasicMaterial
@@ -131,6 +178,9 @@ export class Homestead {
   /** everything that only exists at dusk — windows, door glow, spill, light */
   private readonly glow = new Group()
   private readonly smoke = new Group()
+  /** hinge group at the opening's local -x edge — the door panel hangs off
+   * it at +0.82, so rotating this y swings the whole leaf like a real door */
+  private readonly doorPivot = new Group()
   private readonly light: PointLight
   private readonly windowMat: MeshBasicMaterial
   private readonly doorGlowMat: MeshBasicMaterial
@@ -159,6 +209,43 @@ export class Homestead {
       chimney.castShadow = true
       this.root.add(chimney)
     }
+
+    // ---- live front door: painted interior recess + hinged swinging leaf --
+    // recess quad sits just proud of the wall so the opening reads as a dim
+    // room (not a hole in a cardboard wall) the moment the door swings clear
+    const recess = new PlaneGeometry(1.54, 1.86)
+    recess.translate(0, 0.93, D / 2 + 0.015)
+    const recessMesh = new Mesh(recess, new MeshBasicMaterial({ map: toTexture(doorRecessCanvas()) }))
+    this.root.add(recessMesh)
+
+    // hinge at the opening's left edge (facing the front); the leaf matches
+    // the old baked door's footprint so the closed barn looks unchanged
+    this.doorPivot.position.set(-0.82, 0, D / 2 + 0.06)
+    const panelGeo = new BoxGeometry(1.64, 1.86, 0.07)
+    panelGeo.translate(0.82, 0.93, 0)
+    const panel = new Mesh(panelGeo, new MeshStandardMaterial({ color: '#f4eedd', roughness: 0.85 }))
+    panel.castShadow = true
+    this.doorPivot.add(panel)
+    const braceGeos: BufferGeometry[] = []
+    for (const s of [-1, 1]) {
+      const brace = new BoxGeometry(0.15, 2.05, 0.05)
+      brace.rotateZ((s * Math.PI) / 5.2)
+      brace.translate(0.82, 0.93, 0.06)
+      braceGeos.push(brace)
+    }
+    const braceGeo = mergeGeometries(braceGeos)
+    if (braceGeo) {
+      const braces = new Mesh(braceGeo, new MeshStandardMaterial({ color: '#b4402e', roughness: 0.9 }))
+      braces.castShadow = true
+      this.doorPivot.add(braces)
+    }
+    const knob = new Mesh(
+      new SphereGeometry(0.045, 10, 8),
+      new MeshStandardMaterial({ color: '#3a3128', roughness: 0.55 }),
+    )
+    knob.position.set(1.46, 0.93, 0.06)
+    this.doorPivot.add(knob)
+    this.root.add(this.doorPivot)
 
     // ---- window glow: five quads flanking door + sides + loft, one mesh ----
     this.windowMat = new MeshBasicMaterial({
@@ -292,6 +379,26 @@ export class Homestead {
       // fade in fast off the chimney mouth, thin out as the wisp rises
       p.mat.opacity = 0.42 * smokeK * (1 - t) * Math.min(1, t * 6)
     }
+  }
+
+  /** immediate door pose for cutscene scrubbing/restores: k 0 (closed, flush
+   * in the frame) .. 1 (full open outward toward local -x) — kills any tween
+   * in flight so a hard set never fights an animation */
+  setDoorOpen(k: number): void {
+    gsap.killTweensOf(this.doorPivot.rotation)
+    this.doorPivot.rotation.y = DOOR_OPEN_RAD * Math.min(1, Math.max(0, k))
+  }
+
+  /** cutscene beat: swing the door open (gsap rides the engine clock) */
+  openDoor(dur = 0.7): void {
+    gsap.killTweensOf(this.doorPivot.rotation)
+    gsap.to(this.doorPivot.rotation, { y: DOOR_OPEN_RAD, duration: dur, ease: 'power2.inOut' })
+  }
+
+  /** cutscene beat: swing the door shut behind the farmer */
+  closeDoor(dur = 0.7): void {
+    gsap.killTweensOf(this.doorPivot.rotation)
+    gsap.to(this.doorPivot.rotation, { y: 0, duration: dur, ease: 'power2.inOut' })
   }
 
   /** world-space point just OUTSIDE the door (the farmer walks here) */
