@@ -1,6 +1,7 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
+import { initialProduce, tickProduce, type Produce } from './produce'
 
 export interface CropState {
   kind: CropKind
@@ -53,6 +54,10 @@ export interface GameState {
   /** save knows the start-from-scratch ladder (pre-ladder saves get
    * grandfathered exactly once) */
   ladder: boolean
+  /** which day of farm life this is (sleep ritual advances it) */
+  day: number
+  /** wool/milk/delivery production timers (see game/produce.ts) */
+  produce: Produce
   plots: PlotState[]
   /** greenhouse planters — separate array so land expansions never reindex */
   ghPlots: PlotState[]
@@ -79,6 +84,8 @@ export function initialState(seed: number): GameState {
     herdsDone: 0,
     projects: {},
     ladder: true,
+    day: 1,
+    produce: initialProduce(),
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
     chicken: {
@@ -126,6 +133,16 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       eggBecameReady = true
     }
   }
+  // production keeps running while away; a delivery that finished offline
+  // pays out flat (no seeded roll for absentee landlords)
+  if (s.produce) {
+    const ev = tickProduce(s.produce, el, {
+      sheep: s.projects?.sheep === true,
+      goats: s.projects?.goats === true,
+      stable: s.projects?.stable === true,
+    })
+    if (ev.deliveryReturned) s.coins += 34
+  }
   return { readyPlots, eggBecameReady }
 }
 
@@ -154,6 +171,8 @@ export function deserialize(json: string | null): GameState | null {
         s.projects.sheep ??= true
       }
     }
+    s.day ??= 1
+    s.produce ??= initialProduce()
     while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
     return s
   } catch {

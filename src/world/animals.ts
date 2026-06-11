@@ -32,6 +32,8 @@ export interface PaddockRect {
 }
 
 const GRAZE_SPEED = 0.7
+/** scripted delivery gallop */
+const RUN_SPEED = 4.6
 const TURN_RATE = 6
 /** player distance that flips a grazer into watch-the-farmer mode */
 const CURIOUS_R = 2.6
@@ -91,6 +93,9 @@ interface GrazerUnit {
   heading: number
   speed: number
   grazeTimer: number
+  gallop: AnimationAction | null
+  /** scripted run (paid delivery): out along points, hold offstage, back */
+  run: { points: Vector3[]; back: Vector3[]; holdT: number; phase: 'out' | 'hold' | 'back' } | null
 }
 
 export class Grazers {
@@ -107,9 +112,13 @@ export class Grazers {
     for (let i = 0; i < count; i++) this.spawn(kind, rect)
   }
 
-  /** gameplay step (fixed dt): graze-wander or player-curiosity per animal */
+  /** gameplay step (fixed dt): scripted runs outrank curiosity outranks graze */
   update(dt: number, playerPos: Vector3): void {
     for (const u of this.units) {
+      if (u.run) {
+        this.runStep(u, dt)
+        continue
+      }
       const toPlayer = playerPos.clone().sub(u.group.position).setY(0)
       if (toPlayer.length() < CURIOUS_R) this.watch(u, dt, toPlayer)
       else this.graze(u, dt)
@@ -124,6 +133,11 @@ export class Grazers {
   /** live positions of every grazer (references, not copies) */
   positions(): Vector3[] {
     return this.units.map((u) => u.group.position)
+  }
+
+  /** how many of a kind live here (milk pay scales on this) */
+  count(kind: GrazerKind): number {
+    return this.units.filter((u) => u.kind === kind).length
   }
 
   // ---- internals -------------------------------------------------------------
@@ -167,11 +181,61 @@ export class Grazers {
       speed: 0,
       // staggered first wander so a freshly added herd doesn't move in sync
       grazeTimer: 1 + this.rng.next() * 4,
+      gallop: suffixAction(mixer, g, clips, 'Gallop') ?? suffixAction(mixer, g, clips, 'Run'),
+      run: null,
     }
     const first = unit.eat ?? unit.idle
     first?.play()
     unit.current = first
     this.units.push(unit)
+  }
+
+  /** send the first animal of `kind` on a scripted run: gallop out along
+   * `via`, vanish offstage ("in town") for `holdS`, then gallop home.
+   * Returns false if no such animal exists or she's already out. */
+  sendRun(kind: GrazerKind, via: Vector3[], holdS: number): boolean {
+    const u = this.units.find((x) => x.kind === kind)
+    if (!u || u.run) return false
+    u.run = {
+      points: via.map((p) => p.clone().setY(0)),
+      back: [...via].reverse().map((p) => p.clone().setY(0)),
+      holdT: holdS,
+      phase: 'out',
+    }
+    u.dest = u.run.points.shift() ?? null
+    return true
+  }
+
+  /** true while the first animal of `kind` is out on a run */
+  isRunning(kind: GrazerKind): boolean {
+    return this.units.some((x) => x.kind === kind && x.run !== null)
+  }
+
+  /** scripted-run step: gallop the chain, hide offstage, gallop home */
+  private runStep(u: GrazerUnit, dt: number): void {
+    const r = u.run!
+    if (r.phase === 'hold') {
+      r.holdT -= dt
+      if (r.holdT <= 0) {
+        r.phase = 'back'
+        u.group.visible = true
+        u.dest = r.back.shift() ?? null
+      }
+      return
+    }
+    if (this.walkTo(u, dt, RUN_SPEED, u.gallop)) {
+      const queue = r.phase === 'out' ? r.points : r.back
+      u.dest = queue.shift() ?? null
+      if (!u.dest) {
+        if (r.phase === 'out') {
+          r.phase = 'hold'
+          u.group.visible = false // she's off down the road, in town
+        } else {
+          u.run = null // home again — back to grazing
+          u.grazeTimer = 2
+        }
+      }
+    }
   }
 
   /** head down and nibble; every 4-9s pick a fresh spot in the paddock */
@@ -199,8 +263,8 @@ export class Grazers {
   }
 
   /** returns true when arrived; eases speed and heading like Sheep.walkTo,
-   * Walk anim timeScale rides the actual ground speed */
-  private walkTo(u: GrazerUnit, dt: number): boolean {
+   * anim timeScale rides the actual ground speed */
+  private walkTo(u: GrazerUnit, dt: number, speed = GRAZE_SPEED, anim?: AnimationAction | null): boolean {
     if (!u.dest) return true
     const to = u.dest.clone().sub(u.group.position).setY(0)
     const d = to.length()
@@ -208,11 +272,11 @@ export class Grazers {
       u.speed = 0
       return true
     }
-    u.speed += (GRAZE_SPEED - u.speed) * Math.min(1, 5 * dt)
+    u.speed += (speed - u.speed) * Math.min(1, 5 * dt)
     this.turnToward(u, Math.atan2(to.x, to.z), dt)
     const step = Math.min(d, u.speed * dt)
     u.group.position.add(to.normalize().multiplyScalar(step))
-    this.play(u, u.walk ?? u.idle, Math.max(0.7, u.speed / GRAZE_SPEED))
+    this.play(u, anim ?? u.walk ?? u.idle, Math.max(0.7, u.speed / speed))
     return false
   }
 

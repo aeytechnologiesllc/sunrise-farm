@@ -42,6 +42,16 @@ export interface SkyHandles {
 }
 
 const DEG = Math.PI / 180
+// the starlit palette setNight() pulls toward (preallocated, never mutated)
+const NIGHT_SUN = new Color('#9db8ff')
+const NIGHT_HEMI_SKY = new Color('#1c2b4d')
+const NIGHT_HEMI_GROUND = new Color('#101820')
+const NIGHT_AMBIENT = new Color('#25304a')
+const NIGHT_FOG = new Color('#0e1626')
+const NIGHT_BG = new Color('#0b1322')
+const NIGHT_DOME_H = new Color('#16223d')
+const NIGHT_DOME_M = new Color('#0c1530')
+const NIGHT_DOME_T = new Color('#060c1e')
 /** sun orbit radius — keep within ~24-30 so the shadow frustum stays valid */
 const SUN_DIST = 27
 const DISK_DIST = 150
@@ -168,9 +178,39 @@ export class DayCycle {
     this.apply()
   }
 
-  /** advance the cycle — dt in seconds, time only ever flows through here */
+  /** the evening holds HERE until the farmer goes to bed (sleep ritual) */
+  private static readonly DUSK_HOLD = 0.88
+  /** 0 = keyframe look, 1 = full starlit night (sleep cutscene drives this) */
+  private nightK = 0
+
+  /** advance the cycle — dt in seconds, time only ever flows through here.
+   * The sun never wraps past dusk on its own: it parks at DUSK_HOLD and waits
+   * for startNewDay() — bedtime is a player ritual, not a timer. */
   update(dt: number): void {
-    this.p = (this.p + dt / this.dayLengthS) % 1
+    this.p = Math.min(DayCycle.DUSK_HOLD, this.p + dt / this.dayLengthS)
+    this.apply()
+  }
+
+  /** true once the sun has parked at the dusk hold (time to head home) */
+  get atDusk(): boolean {
+    return this.p >= DayCycle.DUSK_HOLD - 1e-6
+  }
+
+  /** the sleep cutscene's master dial: fades every light/sky channel toward
+   * a deep starlit night, on top of whatever the keyframes say */
+  setNight(k: number): void {
+    this.nightK = Math.max(0, Math.min(1, k))
+    this.apply()
+  }
+
+  /** dawn of a brand-new day (the cutscene calls this under full night) */
+  startNewDay(): void {
+    this.p = 0.02
+    this.apply()
+  }
+
+  setPhase(p: number): void {
+    this.p = Math.max(0, Math.min(DayCycle.DUSK_HOLD, p))
     this.apply()
   }
 
@@ -230,6 +270,27 @@ export class DayCycle {
     this.sH.lerpColors(a.domeH, b.domeH, e)
     this.sM.lerpColors(a.domeM, b.domeM, e)
     this.sT.lerpColors(a.domeT, b.domeT, e)
+
+    // night override: pull every channel toward deep starlit blue. Moonlight
+    // is a faint cool key so silhouettes stay readable; the sun disk melts
+    // into the sky color so the god rays die with the light.
+    const n = this.nightK
+    if (n > 0) {
+      this.h.sun.color.lerp(NIGHT_SUN, n)
+      this.h.sun.intensity = lerp(this.h.sun.intensity, 0.14, n)
+      this.h.hemi.color.lerp(NIGHT_HEMI_SKY, n)
+      this.h.hemi.groundColor.lerp(NIGHT_HEMI_GROUND, n)
+      this.h.hemi.intensity = lerp(this.h.hemi.intensity, 0.32, n)
+      this.h.ambient.color.lerp(NIGHT_AMBIENT, n)
+      this.h.ambient.intensity = lerp(this.h.ambient.intensity, 0.26, n)
+      this.h.fill.intensity = lerp(this.h.fill.intensity, 0.05, n)
+      this.fogColor.lerp(NIGHT_FOG, n)
+      this.bgColor.lerp(NIGHT_BG, n)
+      this.diskColor.lerp(NIGHT_BG, n)
+      this.sH.lerp(NIGHT_DOME_H, n)
+      this.sM.lerp(NIGHT_DOME_M, n)
+      this.sT.lerp(NIGHT_DOME_T, n)
+    }
     this.writeDome(this.sH, this.sM, this.sT)
   }
 

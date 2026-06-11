@@ -119,11 +119,15 @@ export class FollowCamera {
   // ---- ceremony focus (visual only; never locks input) --------------------
 
   private cineTarget: Vector3 | null = null
+  private cineYaw: number | null = null
+  private cinePitch: number | null = null
 
   /** CINEMATIC follow: focus glides toward a moving target every frame —
    * smooth pursuit with zero tween restarts (the old per-tick re-tweening
-   * read as stutter). Pass null to hand attention back to the farmer. */
-  cineFollow(target: Vector3 | null): void {
+   * read as stutter). Optional `yaw` lets a scene DIRECT the shot (e.g. face
+   * the homestead door) instead of inheriting whatever orbit the player left
+   * the camera at. Pass null to hand attention back to the farmer. */
+  cineFollow(target: Vector3 | null, yaw?: number, pitch?: number): void {
     if (target) {
       if (!this.cineTarget) {
         this.cineTarget = target.clone()
@@ -133,8 +137,15 @@ export class FollowCamera {
       } else {
         this.cineTarget.copy(target)
       }
+      this.cineYaw = yaw ?? null
+      // scenes may pitch BELOW the gameplay clamp (negative = looking up at
+      // the night sky); hand back a legal pitch before releasing
+      this.cinePitch = pitch ?? null
     } else if (this.cineTarget) {
       this.cineTarget = null
+      this.cineYaw = null
+      this.cinePitch = null
+      this.pitch = clampPitch(this.pitch)
       this.release(0.9)
     }
   }
@@ -162,7 +173,18 @@ export class FollowCamera {
 
   /** smooth-damp toward the farmer (+ look-ahead), then place the camera */
   follow(playerPos: Vector3, vel: Vector3, dt: number): void {
-    if (this.cineTarget) this.focusPoint.lerp(this.cineTarget, 1 - Math.exp(-3.4 * dt))
+    if (this.cineTarget) {
+      this.focusPoint.lerp(this.cineTarget, 1 - Math.exp(-3.4 * dt))
+      if (this.cineYaw !== null) {
+        let d = this.cineYaw - this.yaw
+        while (d > Math.PI) d -= Math.PI * 2
+        while (d < -Math.PI) d += Math.PI * 2
+        this.yaw += d * (1 - Math.exp(-2.4 * dt))
+      }
+      if (this.cinePitch !== null) {
+        this.pitch += (this.cinePitch - this.pitch) * (1 - Math.exp(-2.0 * dt))
+      }
+    }
     const k = 1 - Math.exp(-DAMP * dt)
     const lookX = clampAbs(vel.x * LOOKAHEAD, LOOKAHEAD_MAX)
     const lookZ = clampAbs(vel.z * LOOKAHEAD, LOOKAHEAD_MAX)

@@ -68,6 +68,7 @@ import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef
 import {
   availableProjects,
   GREENHOUSE_PLOTS,
+  PROJECTS,
   SHOP_PREMIUM,
   SHOP_QUEUE_MAX,
   type ProjectDef,
@@ -81,6 +82,11 @@ import { buildGreenhouse, buildShop, buildStable } from './world/buildings'
 import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
+import { Homestead } from './world/homestead'
+import { NightSky } from './world/nightsky'
+import { normalizeHeight } from './world/scale'
+import { DELIVERY_RUN_TIME, MILK_COIN_PER_GOAT, WOOL_COIN_PER_SHEEP } from './game/produce'
+import { AnimationMixer } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
 const GOOD_EMOJI: Record<GoodKind, string> = { wheat: '\u{1F33E}', corn: '\u{1F33D}', egg: '\u{1F95A}' }
@@ -107,6 +113,9 @@ declare global {
       grazers: () => Array<[number, number]>
       music: () => Music['debug']
       musicUnlock: () => void
+      sleepStart: () => void
+      sleepSeek: (s: number) => void
+      dusk: () => void
       draws: () => number
       warp: (x: number, z: number) => void
     }
@@ -165,8 +174,11 @@ async function boot(): Promise<void> {
 
   const lights = buildLights(scene)
   const sky = buildSky(scene)
-  // the sun walks the sky: dawn -> noon -> golden hour -> dusk, looping
+  // the sun walks the sky: dawn -> noon -> golden hour, then PARKS at dusk
+  // until the farmer goes to bed (the sleep ritual starts the next day)
   const dayCycle = new DayCycle({ ...lights, dome: sky.dome, sunDisk: sky.sunDisk, scene })
+  const nightSky = new NightSky(scene)
+  const homestead = new Homestead(scene)
   composer.addPass(
     new EffectPass(
       cam.camera,
@@ -282,6 +294,14 @@ async function boot(): Promise<void> {
   game.on('eggReady', () => {
     sfx.chime()
     chicken.showEgg(false)
+  })
+  game.on('deliveryDone', (e) => {
+    sfx.hooves()
+    sfx.kaching()
+    fountainFrom(STABLE_AT.clone().setY(1.0), e.coins, false)
+    const s = cam.screenPos(STABLE_AT.clone().setY(1.8))
+    if (!s.behind) hud.floatText(s, `Hazel's home! +${e.coins} \u{1FA99}`)
+    saveNow()
   })
 
   // ---- ceremonies ----------------------------------------------------------
@@ -550,6 +570,108 @@ async function boot(): Promise<void> {
     })
   }
 
+  // ---- the sleep ritual: supper, stars, sunrise -----------------------------------
+  // Direction notes: this is the emotional centerpiece. Beats — golden porch
+  // light and supper sounds as he walks home; his wife waving at the lit
+  // door; the two step inside; the camera drifts UP into a sky that fills
+  // with stars while crickets sing; held breath; then the dawn washes the
+  // stars away, birdsong, and he steps back out into Day N+1. Skippable.
+  let sleepActive = false
+  let sleepStarted = 0
+  let skyGaze = false
+  let sleepTl: gsap.core.Timeline | null = null
+  let wife: { group: Group; mixer: AnimationMixer } | null = null
+  const nightDial = { k: 0 }
+  const applyNight = (): void => {
+    dayCycle.setNight(nightDial.k)
+    nightSky.set(nightDial.k)
+  }
+  const endSleepScene = (): void => {
+    if (!sleepActive) return
+    sleepActive = false
+    skyGaze = false
+    letterbox.hide()
+    cam.cineFollow(null)
+    player.autoWalkTo(null)
+    nightDial.k = 0
+    applyNight()
+    player.group.scale.setScalar(1)
+    if (wife) {
+      scene.remove(wife.group)
+      wife = null
+    }
+    saveNow()
+  }
+  const sleepScene = (): void => {
+    if (sleepActive || !dayCycle.atDusk) return
+    sleepActive = true
+    sleepStarted = engine.uTime.value
+    touch()
+    dropStick()
+    letterbox.show('goodnight — tap to skip')
+    const door = homestead.doorPos
+    // his wife appears at the lit threshold, waving him in
+    const w = assets.spawnSkinned('customerC')
+    normalizeHeight(w, 1.5)
+    // she holds the door: half a step out, tucked beside the frame
+    const doorN = new Vector3(Math.sin(0.55), 0, Math.cos(0.55))
+    w.position
+      .copy(homestead.thresholdPos)
+      .addScaledVector(doorN, 0.5)
+      .add(new Vector3(doorN.z, 0, -doorN.x).multiplyScalar(0.6))
+    w.rotation.y = Math.atan2(player.pos.x - w.position.x, player.pos.z - w.position.z)
+    scene.add(w)
+    const wMixer = new AnimationMixer(w)
+    const waveClip = assets.clips('customerC').find((c) => c.name.toLowerCase().endsWith('wave'))
+    if (waveClip) wMixer.clipAction(waveClip, w).play()
+    wife = { group: w, mixer: wMixer }
+    player.autoWalkTo(door)
+
+    const tl = gsap.timeline()
+    // supper drifting out of the kitchen window
+    tl.call(() => sfx.clink(), undefined, 1.1)
+    tl.call(() => sfx.clink(), undefined, 2.3)
+    // they step inside together
+    tl.call(() => {
+      player.autoWalkTo(null)
+      sfx.crate() // the old door creaks
+      gsap.to(player.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in' })
+      if (wife) gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in', delay: 0.15 })
+    }, undefined, 3.6)
+    // the camera drifts up; the world breathes out into night
+    tl.call(() => {
+      skyGaze = true
+    }, undefined, 4.4)
+    tl.to(nightDial, { k: 1, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 4.6)
+    for (const at of [6.2, 7.1, 8.3, 9.1, 9.9]) tl.call(() => sfx.cricket(), undefined, at)
+    // deep night: the new day begins where no one can see the seam
+    tl.call(() => {
+      dayCycle.startNewDay()
+      game.sleep()
+    }, undefined, 10.4)
+    // dawn washes the stars away
+    tl.to(nightDial, { k: 0, duration: 3.0, ease: 'sine.inOut', onUpdate: applyNight }, 10.8)
+    tl.call(() => sfx.birds(), undefined, 12.0)
+    tl.call(() => sfx.birds(), undefined, 13.0)
+    // back down to the door: he steps out into the morning
+    tl.call(() => {
+      skyGaze = false
+      player.group.scale.setScalar(1)
+      player.pos.copy(homestead.thresholdPos)
+      player.autoWalkTo(door.clone().add(new Vector3(1.6, 0, 2.2)))
+      if (wife) {
+        wife.group.scale.setScalar(1)
+        gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.6, delay: 1.6, ease: 'power2.in' })
+      }
+    }, undefined, 13.8)
+    tl.call(() => {
+      hud.showBanner(`Day ${state.day} \u{1F305}`, 'A brand-new morning on the farm')
+      music.duck()
+    }, undefined, 14.8)
+    tl.call(() => endSleepScene(), undefined, 16.4)
+    sleepTl = tl
+  }
+
   // ---- construction projects (the build-your-farm spine) -------------------------
   const construction = new Construction({ scene, assets, cam, tickSfx: () => sfx.plant() })
   const grazers = new Grazers(assets, scene, 0xa11ce)
@@ -753,6 +875,8 @@ async function boot(): Promise<void> {
       touch()
       // tap skips the fetch cinema (Rex keeps working off-camera)
       if (fetchCine && engine.uTime.value - cineStarted > 0.9) endFetchCine()
+      // tap skips the goodnight scene (the day still turns over)
+      if (sleepActive && engine.uTime.value - sleepStarted > 0.9) sleepTl?.progress(1, false)
     },
     { capture: true },
   )
@@ -773,14 +897,55 @@ async function boot(): Promise<void> {
     deed: false,
     tractor: false,
     dog: false,
+    home: false,
+    pen: false,
+    stable: false,
     project: null as ProjectId | null,
   }
+  const STABLE_DEF = PROJECTS.find((p) => p.id === 'stable')!
+  const STABLE_AT = new Vector3(STABLE_DEF.site[0], 0, STABLE_DEF.site[1])
+  const PEN_CENTER = new Vector3((PEN.x0 + PEN.x1) / 2, 0, (PEN.z0 + PEN.z1) / 2)
   const onAction = (id: string): void => {
     touch()
     if (id === 'wheat' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'wheat')
     else if (id === 'corn' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'corn')
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
-    else if (id === 'build' && near.project) {
+    else if (id === 'sleep' && near.home) sleepScene()
+    else if (id === 'shear' && near.pen) {
+      const coins = game.shearFlock(flock.sheep.length)
+      if (coins > 0) {
+        sfx.pop()
+        sfx.baa()
+        player.gesture(engine.uTime.value)
+        sparkleBurst(scene, PEN_CENTER.clone().setY(0.8), false, 8)
+        fountainFrom(PEN_CENTER.clone().setY(0.8), coins, false)
+        saveNow()
+      }
+    } else if (id === 'milk' && near.pen) {
+      const coins = game.milkGoats(grazers.count('goat'))
+      if (coins > 0) {
+        sfx.pop()
+        player.gesture(engine.uTime.value)
+        sparkleBurst(scene, PEN_CENTER.clone().setY(0.8), false, 8)
+        fountainFrom(PEN_CENTER.clone().setY(0.8), coins, false)
+        saveNow()
+      }
+    } else if (id === 'deliver' && near.stable) {
+      if (game.sendDelivery()) {
+        hud.setWheat(state.wheat)
+        sfx.hooves()
+        player.gesture(engine.uTime.value)
+        // she gallops out to the road and off east toward town
+        grazers.sendRun(
+          'horse',
+          [new Vector3(13.5, 0, 4.2), new Vector3(16.5, 0, 9.8), new Vector3(21, 0, 11)],
+          DELIVERY_RUN_TIME - 12,
+        )
+        const s = cam.screenPos(STABLE_AT.clone().setY(1.6))
+        if (!s.behind) hud.floatText(s, 'Hazel is off to town! \u{1F434}')
+        saveNow()
+      }
+    } else if (id === 'build' && near.project) {
       const def = game.buildProject(near.project)
       if (def) {
         hud.setCoins(state.coins)
@@ -965,6 +1130,9 @@ async function boot(): Promise<void> {
       near.deed = deedSign !== null && p.distanceTo(deedSign.at) < 2.5
       near.tractor = tractor !== null && p.distanceTo(tractor.position) < 2.9
       near.dog = !flock.missionActive && p.distanceTo(dog.group.position) < 2.6
+      near.home = !sleepActive && dayCycle.atDusk && p.distanceTo(homestead.doorPos) < 3.2
+      near.pen = game.hasProject('sheep') && p.distanceTo(PEN_CENTER) < 4.2
+      near.stable = game.hasProject('stable') && p.distanceTo(STABLE_AT) < 3.4
       near.project = null
       let signD = 2.6
       for (const [id, s] of projectSigns) {
@@ -1071,6 +1239,44 @@ async function boot(): Promise<void> {
           })
         }
       }
+      if (near.home) {
+        actions.push({ id: 'sleep', emoji: '\u{1F319}', label: 'Head in for the night', sub: "supper's ready" })
+      }
+      if (near.pen && state.produce.woolReady && flock.sheep.length > 0) {
+        actions.push({
+          id: 'shear',
+          emoji: '\u{2702}\u{FE0F}',
+          label: 'Shear the flock',
+          sub: `${flock.sheep.length} sheep \u{2192} ${flock.sheep.length * WOOL_COIN_PER_SHEEP}c`,
+        })
+      }
+      if (near.pen && state.produce.milkReady && grazers.count('goat') > 0) {
+        actions.push({
+          id: 'milk',
+          emoji: '\u{1F95B}',
+          label: 'Milk the goats',
+          sub: `${grazers.count('goat')} goats \u{2192} ${grazers.count('goat') * MILK_COIN_PER_GOAT}c`,
+        })
+      }
+      if (near.stable) {
+        const ds = game.deliveryStatus()
+        if (ds !== 'no-stable') {
+          actions.push({
+            id: 'deliver',
+            emoji: '\u{1F434}',
+            label: 'Send Hazel to town',
+            sub:
+              ds === 'ok'
+                ? 'feed 1 \u{1F33E} \u{2192} 26-42c'
+                : ds === 'feed'
+                  ? 'needs 1 wheat to feed her'
+                  : ds === 'out'
+                    ? "she's on the road"
+                    : `resting ${Math.ceil(state.produce.deliveryCd)}s`,
+            locked: ds !== 'ok',
+          })
+        }
+      }
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
       }
@@ -1085,8 +1291,14 @@ async function boot(): Promise<void> {
     if (!hud.modalOpen && !construction.active) {
       if (!movedEver && !state.chipsDone.plant) {
         chipText = 'Drag the joystick to take a walk \u{1F33B}'
+      } else if (dayCycle.atDusk && !sleepActive) {
+        chipText = "\u{1F319} The sun's setting — head home for supper"
       } else if (customerWaiting) {
         chipText = 'A customer is waiting at the stand!'
+      } else if (state.produce.woolReady && game.hasProject('sheep')) {
+        chipText = "\u{2702}\u{FE0F} The flock's wool is ready — shear it at the pen"
+      } else if (state.produce.milkReady && game.hasProject('goats')) {
+        chipText = '\u{1F95B} The goats are ready for milking'
       } else if (flock.missionActive) {
         chipText = `\u{1F411} ${flock.looseCount} loose — herd them back with Rex!`
       } else if (game.deedStatus() === 'ok') {
@@ -1126,7 +1338,9 @@ async function boot(): Promise<void> {
     const idleFor = engine.uTime.value - lastInteract
     if (idleFor > 5 && !hud.modalOpen && !chicken.ceremonyActive) {
       const buildSignAt = buildable ? (projectSigns.get(buildable.def.id)?.at ?? null) : null
-      const pos = chicken.cratePending
+      const pos = dayCycle.atDusk && !sleepActive
+        ? homestead.doorPos
+        : chicken.cratePending
         ? chicken.crateWorldPos
         : customerWaiting
           ? STAND_POS
@@ -1186,6 +1400,22 @@ async function boot(): Promise<void> {
         cineEnding || t - cineStarted > 0.75 ? dog.group.position.clone().setY(0.55) : cineAim,
       )
     }
+    // goodnight scene camera: framed on the lit doorway (yaw 0.55 = straight
+    // down the door's normal), then a long gaze UP into the stars
+    if (sleepActive) {
+      if (skyGaze) {
+        cam.cineFollow(homestead.doorPos.clone().add(new Vector3(0, 34, -10)), 0.55, -0.46)
+      } else {
+        cam.cineFollow(homestead.doorPos.clone().setY(1.2), 0.55, 0.38)
+      }
+    }
+    // homestead windows warm up as the sun sinks (and stay lit all night)
+    const eveK = sleepActive
+      ? Math.max(nightDial.k, Math.min(1, (dayCycle.phase - 0.78) / 0.1))
+      : Math.max(0, Math.min(1, (dayCycle.phase - 0.78) / 0.1))
+    homestead.setEvening(eveK)
+    homestead.update(dt)
+    nightSky.update(t)
     for (const v of customerViews.values()) v.frame(dt)
     for (const p of plots) p.pulse(t)
     clouds.update(dt)
@@ -1333,6 +1563,12 @@ async function boot(): Promise<void> {
     grazers: () => grazers.positions().map((p) => [p.x, p.z] as [number, number]),
     music: () => music.debug,
     musicUnlock: () => music.unlock(),
+    sleepStart: () => {
+      sleepScene()
+      sleepTl?.pause()
+    },
+    sleepSeek: (s: number) => sleepTl?.seek(s, false),
+    dusk: () => dayCycle.setPhase(0.88),
     draws: () => renderer.info.render.calls,
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)

@@ -30,6 +30,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
 import { allFieldRects, fenceFor, gatesFor, inRect, PEN } from '../game/expansion'
+import { PROJECTS } from '../game/projects'
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
@@ -90,6 +91,19 @@ function nearPath(x: number, z: number, r: number): boolean {
 export function groundClear(x: number, z: number): boolean {
   if (Math.abs(z - ROAD_Z) < 2.4) return true
   for (const f of allFieldRects()) if (inRect(x, z, f, 0.35)) return true
+  // every FUTURE building site stays clear from day one — nothing may ever
+  // be built on top of a tree, a bush, or through the lawn (owner's rule:
+  // the ground is ready before the crew arrives)
+  for (const p of PROJECTS) {
+    if (p.kind !== 'building') continue
+    if (
+      x > p.site[0] - p.footprint.w / 2 - 0.4 &&
+      x < p.site[0] + p.footprint.w / 2 + 0.4 &&
+      z > p.site[1] - p.footprint.d / 2 - 0.4 &&
+      z < p.site[1] + p.footprint.d / 2 + 0.4
+    )
+      return true
+  }
   if (x > -2.4 && x < 3.2 && z > 5.3 && z < 9.2) return true // stand + queue
   const bx = BARN_POS.x + 1.5
   const bz = BARN_POS.z + 2.5

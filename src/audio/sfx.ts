@@ -197,4 +197,32 @@ export class Sfx {
     this.tone(1180, { type: 'sine', dur: 0.18, gain: 0.16, glideTo: 1560 })
     this.tone(1560, { at: 0.2, type: 'sine', dur: 0.24, gain: 0.16, glideTo: 1100 })
   }
+
+  /** one cricket chirp-burst (the night scene scatters a few of these) */
+  cricket(): void {
+    for (let i = 0; i < 3; i++) {
+      this.tone(4200 + Math.random() * 600, { at: i * 0.07, type: 'sine', dur: 0.045, gain: 0.045 })
+    }
+  }
+
+  /** dawn birdsong — two cheerful tweets */
+  birds(): void {
+    this.tone(2300, { type: 'sine', dur: 0.09, gain: 0.08, glideTo: 3100 })
+    this.tone(2700, { at: 0.14, type: 'sine', dur: 0.11, gain: 0.07, glideTo: 2200 })
+    this.tone(2500, { at: 0.34, type: 'sine', dur: 0.08, gain: 0.06, glideTo: 3300 })
+  }
+
+  /** supper clink — cutlery on a plate, warmth through the window */
+  clink(): void {
+    const f = 2600 + Math.random() * 500
+    this.tone(f, { type: 'triangle', dur: 0.07, gain: 0.06 })
+    this.tone(f * 1.48, { at: 0.01, type: 'sine', dur: 0.06, gain: 0.03 })
+  }
+
+  /** horse hoofbeats — four quick clops fading out */
+  hooves(): void {
+    for (let i = 0; i < 5; i++) {
+      this.noise({ at: i * 0.16, dur: 0.05, gain: 0.14 - i * 0.02, freq: 900, q: 2.2 })
+    }
+  }
 }

@@ -18,6 +18,17 @@ import {
 } from './economy'
 import { nextTier, plotCount, type TierDef } from './expansion'
 import {
+  canDeliver,
+  collectMilk,
+  DELIVERY_FEED_WHEAT,
+  deliveryPay,
+  MILK_COIN_PER_GOAT,
+  shearWool,
+  startDelivery,
+  tickProduce,
+  WOOL_COIN_PER_SHEEP,
+} from './produce'
+import {
   GREENHOUSE_GROW_MULT,
   GREENHOUSE_PLOTS,
   PROJECTS,
@@ -57,6 +68,9 @@ export interface GameEvents {
   chipDone: { chip: ChipId }
   expanded: { tier: number; def: TierDef }
   built: { def: ProjectDef }
+  woolReady: undefined
+  milkReady: undefined
+  deliveryDone: { coins: number }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -128,6 +142,21 @@ export class Game {
         s.chicken.eggsLaid += 1
         this.emit('eggReady', undefined)
       }
+    }
+    // production: wool grows, milk fills, the delivery horse earns her keep
+    const pev = tickProduce(s.produce, dt, {
+      sheep: this.hasProject('sheep'),
+      goats: this.hasProject('goats'),
+      stable: this.hasProject('stable'),
+    })
+    if (pev.woolBecameReady) this.emit('woolReady', undefined)
+    if (pev.milkBecameReady) this.emit('milkReady', undefined)
+    if (pev.deliveryReturned) {
+      const coins = deliveryPay(this.rng.next())
+      this.syncRng()
+      this.grantCoins(coins)
+      this.grantXp(XP_GAIN.deliver)
+      this.emit('deliveryDone', { coins })
     }
   }
 
@@ -345,6 +374,48 @@ export class Game {
   fetchReturned(treasure: number): void {
     this.grantXp(XP_GAIN.fetch)
     if (treasure > 0) this.grantCoins(treasure)
+  }
+
+  // ---- produce (everything you own EARNS — with a little upkeep) ------------
+
+  /** shear the whole flock: coins per sheep, wool timer restarts */
+  shearFlock(sheepCount: number): number {
+    if (sheepCount <= 0 || !shearWool(this.state.produce)) return 0
+    const coins = WOOL_COIN_PER_SHEEP * sheepCount
+    this.grantCoins(coins)
+    this.grantXp(XP_GAIN.shear)
+    return coins
+  }
+
+  /** milk every goat: coins per goat, milk timer restarts */
+  milkGoats(goatCount: number): number {
+    if (goatCount <= 0 || !collectMilk(this.state.produce)) return 0
+    const coins = MILK_COIN_PER_GOAT * goatCount
+    this.grantCoins(coins)
+    this.grantXp(XP_GAIN.milk)
+    return coins
+  }
+
+  /** the horse runs a paid delivery — after you FEED her (1 wheat upkeep) */
+  deliveryStatus(): ReturnType<typeof canDeliver> {
+    return canDeliver(this.state.produce, {
+      sheep: this.hasProject('sheep'),
+      goats: this.hasProject('goats'),
+      stable: this.hasProject('stable'),
+    }, this.state.wheat)
+  }
+
+  sendDelivery(): boolean {
+    if (this.deliveryStatus() !== 'ok') return false
+    this.state.wheat -= DELIVERY_FEED_WHEAT
+    return startDelivery(this.state.produce)
+  }
+
+  /** the sleep ritual: a new day dawns */
+  sleep(): number {
+    this.state.day += 1
+    this.grantXp(XP_GAIN.sleep)
+    return this.state.day
   }
 
   /** seeded roll: what Rex dug up alongside the stick (0 = just the stick) */

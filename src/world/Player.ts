@@ -127,10 +127,37 @@ export class PlayerView {
     return this.group.position
   }
 
+  /** cutscene escort: while set, the farmer walks himself here (joystick
+   * yields; a skip clears it). Pure presentation — never used for gameplay. */
+  private autoTo: Vector3 | null = null
+
+  autoWalkTo(p: Vector3 | null): void {
+    this.autoTo = p ? p.clone().setY(0) : null
+  }
+
+  get autoWalking(): boolean {
+    return this.autoTo !== null
+  }
+
   /** fixed-step: camera-relative input -> velocity -> clamped position.
    * Deflection <= 70% walks (speed scales with deflection); beyond that the
    * farmer breaks into a run. */
   update(dt: number, input: { x: number; y: number }, camYaw: number): void {
+    // scripted walks override the stick with a synthetic gentle deflection
+    if (this.autoTo) {
+      const to = this.autoTo.clone().sub(this.group.position).setY(0)
+      if (to.length() < 0.22) {
+        this.autoTo = null
+        input = { x: 0, y: 0 }
+      } else {
+        // world dir -> stick space: the input->world matrix [[c,-s],[-s,-c]]
+        // is its own inverse, so one multiply maps us straight back
+        to.normalize()
+        const c = Math.cos(camYaw)
+        const s = Math.sin(camYaw)
+        input = { x: (c * to.x - s * to.z) * 0.55, y: (-s * to.x - c * to.z) * 0.55 }
+      }
+    }
     const mag = Math.min(1, Math.hypot(input.x, input.y))
     this.running = mag > RUN_DEFLECT
     const speed = this.running

@@ -36,6 +36,10 @@ export const XP_GAIN = {
   expand: 25,
   herd: 18,
   fetch: 2,
+  shear: 4,
+  milk: 4,
+  deliver: 8,
+  sleep: 10,
 } as const
 
 // ---- land + missions -------------------------------------------------------
