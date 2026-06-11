@@ -140,6 +140,13 @@ export class Grazers {
     return this.units.filter((u) => u.kind === kind).length
   }
 
+  /** show/hide the first animal of a kind (reload mid-delivery: Hazel is
+   * 'in town', not grazing beside a button that says she's on the road) */
+  setHidden(kind: GrazerKind, hidden: boolean): void {
+    const u = this.units.find((x) => x.kind === kind)
+    if (u && !u.run) u.group.visible = !hidden
+  }
+
   // ---- internals -------------------------------------------------------------
 
   private spawn(kind: GrazerKind, rect: PaddockRect): void {

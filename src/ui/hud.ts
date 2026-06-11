@@ -117,7 +117,7 @@ const CSS = `
     box-shadow:0 3px 10px rgba(60,40,10,.3),0 2px 0 #d8cdb2}
   .act .em{font-size:18px}
   .act .lbl small{font-size:10px}
-  #actions{bottom:calc(96px + env(safe-area-inset-bottom));
+  #actions{bottom:calc(124px + env(safe-area-inset-bottom));
     right:calc(10px + env(safe-area-inset-right));gap:6px}
   .pill{font-size:13px;padding:4px 10px 4px 7px;gap:5px}
   .coin-ico{width:16px;height:16px}
@@ -239,7 +239,8 @@ export class Hud {
     this.banner = el('div', 'banner', this.root)
     this.flash = el('div', 'flash', this.root)
     this.actionsBox = el('div', 'actions', this.root)
-    for (let i = 0; i < 2; i++) {
+    // three bubbles: the Farm Shop raises the queue to 3 browsers
+    for (let i = 0; i < 3; i++) {
       const b = el('div', '', this.root, 'bubble')
       this.bubbles.push(b)
     }

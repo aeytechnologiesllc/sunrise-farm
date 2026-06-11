@@ -37,7 +37,7 @@ describe('timers gate on flags', () => {
     const ev = tickProduce(p, 10000, none)
     expect(p.woolT).toBe(WOOL_TIME)
     expect(p.milkT).toBe(MILK_TIME)
-    expect(ev).toEqual({ woolBecameReady: false, milkBecameReady: false, deliveryReturned: false })
+    expect(ev).toEqual({ woolBecameReady: false, milkBecameReady: false, deliveryReturned: false, eggsBecameReady: false })
   })
 
   it('sheep alone tick wool but never milk', () => {

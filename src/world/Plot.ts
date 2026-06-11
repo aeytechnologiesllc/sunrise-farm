@@ -65,6 +65,13 @@ export class PlotView {
     if (kind === this.kind && stage === this.stage) return
     this.kind = kind
     this.stage = kind ? stage : -1
+    // merged stage geometry is rebuilt per stage — free the old GL buffers
+    // instead of leaking them to the GC (long mobile sessions add up)
+    for (const old of this.plants) {
+      old.geometry.dispose()
+      const mats = Array.isArray(old.material) ? old.material : [old.material]
+      for (const m of mats) m.dispose()
+    }
     this.cropRoot.clear()
     this.plants = []
     this.glow = 'none'

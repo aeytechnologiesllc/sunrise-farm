@@ -14,6 +14,9 @@ export interface Produce {
   deliveryT: number
   /** cooldown after a run before the next one */
   deliveryCd: number
+  /** coop nesting boxes filling with eggs */
+  eggsT: number
+  eggsReady: boolean
 }
 
 /** a beat slower than crops so income moments interleave instead of clumping */
@@ -28,6 +31,10 @@ export const DELIVERY_COOLDOWN = 200
 export const DELIVERY_FEED_WHEAT = 1
 /** payday range, inclusive both ends */
 export const DELIVERY_PAY: [number, number] = [26, 42]
+/** the coop's nesting boxes fill on this cadence */
+export const COOP_TIME = 150
+export const COOP_COIN_PER_HEN = 7
+export const COOP_HENS = 4
 
 export function initialProduce(): Produce {
   return {
@@ -37,6 +44,8 @@ export function initialProduce(): Produce {
     milkReady: false,
     deliveryT: 0,
     deliveryCd: 0,
+    eggsT: COOP_TIME,
+    eggsReady: false,
   }
 }
 
@@ -45,6 +54,7 @@ export interface ProduceFlags {
   sheep: boolean
   goats: boolean
   stable: boolean
+  coop?: boolean
 }
 
 /** one-frame edges for the Game to turn into chimes, banners and coin bursts */
@@ -52,6 +62,7 @@ export interface ProduceEvents {
   woolBecameReady: boolean
   milkBecameReady: boolean
   deliveryReturned: boolean
+  eggsBecameReady: boolean
 }
 
 /** Advance all produce timers by dt seconds. Wool/milk timers run only while
@@ -61,7 +72,19 @@ export interface ProduceEvents {
  * moment she returns the rest cooldown starts at full. The cooldown itself
  * always drains toward 0. */
 export function tickProduce(p: Produce, dt: number, has: ProduceFlags): ProduceEvents {
-  const ev: ProduceEvents = { woolBecameReady: false, milkBecameReady: false, deliveryReturned: false }
+  const ev: ProduceEvents = {
+    woolBecameReady: false,
+    milkBecameReady: false,
+    deliveryReturned: false,
+    eggsBecameReady: false,
+  }
+  if (has.coop && !p.eggsReady) {
+    p.eggsT = Math.max(0, p.eggsT - dt)
+    if (p.eggsT === 0) {
+      p.eggsReady = true
+      ev.eggsBecameReady = true
+    }
+  }
   if (has.sheep && !p.woolReady) {
     p.woolT = Math.max(0, p.woolT - dt)
     if (p.woolT === 0) {
@@ -103,6 +126,14 @@ export function collectMilk(p: Produce): boolean {
   if (!p.milkReady) return false
   p.milkReady = false
   p.milkT = MILK_TIME
+  return true
+}
+
+/** Gather the coop's egg baskets: consumes the batch and restarts the timer. */
+export function collectCoopEggs(p: Produce): boolean {
+  if (!p.eggsReady) return false
+  p.eggsReady = false
+  p.eggsT = COOP_TIME
   return true
 }
 

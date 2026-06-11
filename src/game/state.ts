@@ -56,8 +56,12 @@ export interface GameState {
   ladder: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
+  /** where the sun was when last saved (0..1; reload resumes the same hour) */
+  dayPhase: number
   /** wool/milk/delivery production timers (see game/produce.ts) */
   produce: Produce
+  /** session cooldowns that must survive reload (anti reload-exploit) */
+  timers: { sow: number; fetch: number; herd: number }
   plots: PlotState[]
   /** greenhouse planters — separate array so land expansions never reindex */
   ghPlots: PlotState[]
@@ -85,7 +89,9 @@ export function initialState(seed: number): GameState {
     projects: {},
     ladder: true,
     day: 1,
+    dayPhase: 0.32,
     produce: initialProduce(),
+    timers: { sow: 0, fetch: 0, herd: 45 },
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
     chicken: {
@@ -172,7 +178,14 @@ export function deserialize(json: string | null): GameState | null {
       }
     }
     s.day ??= 1
+    s.dayPhase ??= 0.32
     s.produce ??= initialProduce()
+    // older produce objects predate the coop eggs
+    s.produce.eggsT ??= 150
+    s.produce.eggsReady ??= false
+    // seasoned saves resume mission cadence at the REAL cooldown, not the
+    // friendly first-time delay (reloading must never speed up payouts)
+    s.timers ??= { sow: 0, fetch: 0, herd: s.harvests > 0 ? 150 : 45 }
     while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
     return s
   } catch {

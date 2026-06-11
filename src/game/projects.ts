@@ -5,7 +5,7 @@
  * World code (signs, cutscenes, buildings) and Game actions derive from this
  * single table; unit-tested against src/game/expansion.ts geometry. */
 
-export type ProjectId = 'stand' | 'sheep' | 'goats' | 'stable' | 'shop' | 'greenhouse' | 'farmhand'
+export type ProjectId = 'stand' | 'sheep' | 'goats' | 'coop' | 'stable' | 'shop' | 'greenhouse' | 'farmhand'
 
 export interface ProjectDef {
   id: ProjectId
@@ -67,6 +67,18 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 0,
     footprint: { w: 2, d: 2 },
     kind: 'animals',
+  },
+  {
+    id: 'coop',
+    name: 'The Chicken Coop',
+    flavor: 'A dozen little voices at sunrise — and baskets of eggs.',
+    cost: 550,
+    level: 6,
+    requiresExpansion: 0,
+    site: [-6.4, 8.4],
+    yaw: Math.PI,
+    footprint: { w: 3.4, d: 2.2 },
+    kind: 'building',
   },
   {
     id: 'stable',

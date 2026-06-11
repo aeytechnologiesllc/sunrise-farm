@@ -19,7 +19,9 @@ import {
 import { nextTier, plotCount, type TierDef } from './expansion'
 import {
   canDeliver,
+  collectCoopEggs,
   collectMilk,
+  COOP_COIN_PER_HEN,
   DELIVERY_FEED_WHEAT,
   deliveryPay,
   MILK_COIN_PER_GOAT,
@@ -70,6 +72,7 @@ export interface GameEvents {
   built: { def: ProjectDef }
   woolReady: undefined
   milkReady: undefined
+  coopReady: undefined
   deliveryDone: { coins: number }
 }
 
@@ -84,7 +87,9 @@ export class Game {
   constructor(state: GameState, today?: () => string) {
     this.state = state
     this.rng = mulberry32(state.rng)
-    this.todayFn = today ?? (() => new Date().toLocaleDateString('en-CA'))
+    // "once a day" means the GAME's day — sleeping into Day N+1 re-opens the
+    // daily pet, exactly as the ritual promises
+    this.todayFn = today ?? (() => `day-${this.state.day}`)
   }
 
   on<K extends keyof GameEvents>(type: K, fn: Listener<K>): void {
@@ -148,9 +153,11 @@ export class Game {
       sheep: this.hasProject('sheep'),
       goats: this.hasProject('goats'),
       stable: this.hasProject('stable'),
+      coop: this.hasProject('coop'),
     })
     if (pev.woolBecameReady) this.emit('woolReady', undefined)
     if (pev.milkBecameReady) this.emit('milkReady', undefined)
+    if (pev.eggsBecameReady) this.emit('coopReady', undefined)
     if (pev.deliveryReturned) {
       const coins = deliveryPay(this.rng.next())
       this.syncRng()
@@ -384,6 +391,15 @@ export class Game {
     const coins = WOOL_COIN_PER_SHEEP * sheepCount
     this.grantCoins(coins)
     this.grantXp(XP_GAIN.shear)
+    return coins
+  }
+
+  /** gather the coop's egg baskets: coins per hen, nesting timer restarts */
+  collectCoop(henCount: number): number {
+    if (henCount <= 0 || !collectCoopEggs(this.state.produce)) return 0
+    const coins = COOP_COIN_PER_HEN * henCount
+    this.grantCoins(coins)
+    this.grantXp(XP_GAIN.collectEgg)
     return coins
   }
 

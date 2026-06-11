@@ -13,6 +13,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   PCFShadowMap,
+  Raycaster,
   Scene,
   Vector3,
   WebGLRenderer,
@@ -60,6 +61,7 @@ import {
   DOG_HOME,
   groundClear,
   NEST_POS,
+  OCCLUDERS,
   PLAYER_SPAWN,
   STAND_POS,
   WORLD_BOUNDS,
@@ -85,7 +87,14 @@ import { FarmhandView } from './world/Farmhand'
 import { Homestead } from './world/homestead'
 import { NightSky } from './world/nightsky'
 import { normalizeHeight } from './world/scale'
-import { DELIVERY_RUN_TIME, MILK_COIN_PER_GOAT, WOOL_COIN_PER_SHEEP } from './game/produce'
+import {
+  COOP_COIN_PER_HEN,
+  COOP_HENS,
+  DELIVERY_RUN_TIME,
+  MILK_COIN_PER_GOAT,
+  WOOL_COIN_PER_SHEEP,
+} from './game/produce'
+import { buildCoopHouse, CoopHens } from './world/coop'
 import { AnimationMixer } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
@@ -175,8 +184,12 @@ async function boot(): Promise<void> {
   const lights = buildLights(scene)
   const sky = buildSky(scene)
   // the sun walks the sky: dawn -> noon -> golden hour, then PARKS at dusk
-  // until the farmer goes to bed (the sleep ritual starts the next day)
-  const dayCycle = new DayCycle({ ...lights, dome: sky.dome, sunDisk: sky.sunDisk, scene })
+  // until the farmer goes to bed (the sleep ritual starts the next day).
+  // The hour persists: reload picks up where the sun left off.
+  const dayCycle = new DayCycle(
+    { ...lights, dome: sky.dome, sunDisk: sky.sunDisk, scene },
+    { startPhase: state.dayPhase },
+  )
   const nightSky = new NightSky(scene)
   const homestead = new Homestead(scene)
   composer.addPass(
@@ -199,6 +212,7 @@ async function boot(): Promise<void> {
   // built (and the Farm Shop later replaces it)
   let standGroup: Group | null =
     state.projects.shop || !state.projects.stand ? null : buildStand(scene, assets)
+  if (standGroup) OCCLUDERS.push(standGroup)
   let fenceMesh = buildPicketFence(scene, state.expansion)
   for (let t = 0; t <= state.expansion; t++) {
     const def = TIERS[t]
@@ -211,9 +225,23 @@ async function boot(): Promise<void> {
   const hud = new Hud()
   hud.mountMusicToggle(music.isMuted, (m) => music.setMuted(m))
   hud.mountFullscreenToggle()
-  // dual sticks: LEFT walks the farmer (+WASD), RIGHT orbits the camera
+  // ONE stick: LEFT walks the farmer (+WASD). The camera is direct-drag —
+  // mouse on desktop, the free thumb anywhere on the world on touch.
   const joy = new Joystick({ side: 'left', keyboard: true })
-  const joyCam = new Joystick({ side: 'right', glyph: '\u{1F441}' })
+
+  // the camera refuses to hide behind buildings: raycast focus -> camera
+  // against everything registered in OCCLUDERS and pull in front of hits
+  const occlRay = new Raycaster()
+  const occlDir = new Vector3()
+  cam.occlusionTest = (focus, camPos) => {
+    occlDir.subVectors(camPos, focus)
+    const len = occlDir.length()
+    if (len < 0.6 || OCCLUDERS.length === 0) return null
+    occlRay.set(focus, occlDir.normalize())
+    occlRay.far = len
+    const hits = occlRay.intersectObjects(OCCLUDERS, true)
+    return hits.length > 0 ? hits[0].distance : null
+  }
 
   const mkPlot = (px: number, pz: number, compact = false): PlotView => {
     const v = new PlotView(assets, new Vector3(px, 0, pz), scene, compact)
@@ -226,14 +254,29 @@ async function boot(): Promise<void> {
   if (state.projects.greenhouse) for (const [px, pz] of GREENHOUSE_PLOTS) plots.push(mkPlot(px, pz, true))
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
 
+  /** free GPU resources of a removed object tree (textures included) */
+  const disposeMaterials = (root: Group | Mesh): void => {
+    root.traverse((o) => {
+      if (o instanceof Mesh) {
+        o.geometry.dispose()
+        const mats = Array.isArray(o.material) ? o.material : [o.material]
+        for (const m of mats) {
+          if (m instanceof MeshStandardMaterial && m.map) m.map.dispose()
+          m.dispose()
+        }
+      }
+    })
+  }
+
   // ---- land deeds + tractor -------------------------------------------------
   const TRACTOR_SPOT = { pos: new Vector3(-7.2, 0, -6.6), yaw: -0.35 }
   let tractor: TractorView | null = state.expansion >= 2 ? new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw) : null
-  let sowCooldown = 0
+  let sowCooldown = state.timers.sow
   let deedSign: { group: ReturnType<typeof buildDeedSign>; at: Vector3 } | null = null
   const placeDeedSign = (): void => {
     if (deedSign) {
       scene.remove(deedSign.group)
+      disposeMaterials(deedSign.group)
       deedSign = null
     }
     const def = game.nextDeed()
@@ -296,6 +339,7 @@ async function boot(): Promise<void> {
     chicken.showEgg(false)
   })
   game.on('deliveryDone', (e) => {
+    grazers.setHidden('horse', false) // back from town, whatever the path
     sfx.hooves()
     sfx.kaching()
     fountainFrom(STABLE_AT.clone().setY(1.0), e.coins, false)
@@ -318,6 +362,7 @@ async function boot(): Promise<void> {
   }
   // first harvest: the crate thuds down and WAITS — walking up opens it
   game.on('chickenArrive', () => {
+    endFetchCine() // the crate ceremony outranks a stick chase
     sfx.crate()
     chicken.dropCrate()
     cam.focusOn(CRATE_POS, 0.9)
@@ -421,7 +466,10 @@ async function boot(): Promise<void> {
 
   // ---- herding missions --------------------------------------------------------
   const PEN_GATE = new Vector3(PEN.x1 + 0.4, 0, (PEN.gate.z0 + PEN.gate.z1) / 2)
-  let herdTimer = HERD_FIRST_DELAY[0] + Math.random() * (HERD_FIRST_DELAY[1] - HERD_FIRST_DELAY[0])
+  // mission cadence survives reload (no more refresh-to-farm-sheep)
+  let herdTimer = state.timers.herd > 0
+    ? state.timers.herd
+    : HERD_FIRST_DELAY[0] + Math.random() * (HERD_FIRST_DELAY[1] - HERD_FIRST_DELAY[0])
   let flankTick = 0
   let lastBaa = -10
   flock.onBaa = (at) => {
@@ -450,7 +498,7 @@ async function boot(): Promise<void> {
 
   // ---- stick fetch: a little CINEMA (the waiting game's best friend) -------------
   let stick: Mesh | null = null
-  let fetchCool = 0
+  let fetchCool = state.timers.fetch
   const letterbox = new Letterbox()
   let fetchCine = false
   let cineEnding = false
@@ -586,6 +634,7 @@ async function boot(): Promise<void> {
     dayCycle.setNight(nightDial.k)
     nightSky.set(nightDial.k)
   }
+  let sleepSkipped = false
   const endSleepScene = (): void => {
     if (!sleepActive) return
     sleepActive = false
@@ -595,15 +644,19 @@ async function boot(): Promise<void> {
     player.autoWalkTo(null)
     nightDial.k = 0
     applyNight()
+    // QA blocker: an early skip used to leave the shrink tween alive — it
+    // would re-capture scale 1 and quietly erase the farmer. Kill it dead.
+    gsap.killTweensOf(player.group.scale)
     player.group.scale.setScalar(1)
     if (wife) {
+      gsap.killTweensOf(wife.group.scale)
       scene.remove(wife.group)
       wife = null
     }
     saveNow()
   }
   const sleepScene = (): void => {
-    if (sleepActive || !dayCycle.atDusk) return
+    if (sleepActive || construction.active || fetchCine || !dayCycle.atDusk) return
     sleepActive = true
     sleepStarted = engine.uTime.value
     touch()
@@ -627,14 +680,17 @@ async function boot(): Promise<void> {
     wife = { group: w, mixer: wMixer }
     player.autoWalkTo(door)
 
+    const quiet = (fn: () => void) => () => {
+      if (!sleepSkipped) fn()
+    }
     const tl = gsap.timeline()
     // supper drifting out of the kitchen window
-    tl.call(() => sfx.clink(), undefined, 1.1)
-    tl.call(() => sfx.clink(), undefined, 2.3)
+    tl.call(quiet(() => sfx.clink()), undefined, 1.1)
+    tl.call(quiet(() => sfx.clink()), undefined, 2.3)
     // they step inside together
     tl.call(() => {
       player.autoWalkTo(null)
-      sfx.crate() // the old door creaks
+      if (!sleepSkipped) sfx.crate() // the old door creaks
       gsap.to(player.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in' })
       if (wife) gsap.to(wife.group.scale, { x: 0.01, y: 0.01, z: 0.01, duration: 0.5, ease: 'power2.in', delay: 0.15 })
     }, undefined, 3.6)
@@ -643,7 +699,7 @@ async function boot(): Promise<void> {
       skyGaze = true
     }, undefined, 4.4)
     tl.to(nightDial, { k: 1, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 4.6)
-    for (const at of [6.2, 7.1, 8.3, 9.1, 9.9]) tl.call(() => sfx.cricket(), undefined, at)
+    for (const at of [6.2, 7.1, 8.3, 9.1, 9.9]) tl.call(quiet(() => sfx.cricket()), undefined, at)
     // deep night: the new day begins where no one can see the seam
     tl.call(() => {
       dayCycle.startNewDay()
@@ -651,8 +707,8 @@ async function boot(): Promise<void> {
     }, undefined, 10.4)
     // dawn washes the stars away
     tl.to(nightDial, { k: 0, duration: 3.0, ease: 'sine.inOut', onUpdate: applyNight }, 10.8)
-    tl.call(() => sfx.birds(), undefined, 12.0)
-    tl.call(() => sfx.birds(), undefined, 13.0)
+    tl.call(quiet(() => sfx.birds()), undefined, 12.0)
+    tl.call(quiet(() => sfx.birds()), undefined, 13.0)
     // back down to the door: he steps out into the morning
     tl.call(() => {
       skyGaze = false
@@ -679,12 +735,16 @@ async function boot(): Promise<void> {
   const HORSE_RECT = { x0: 9.0, z0: -3.0, x1: 14.6, z1: -0.9 }
   const GOAT_RECT = { x0: PEN.x0 + 0.7, z0: PEN.z0 + 0.7, x1: PEN.x1 - 0.7, z1: PEN.z1 - 0.7 }
   let farmhand: FarmhandView | null = null
+  let coopHens: CoopHens | null = null
+  const COOP_DEF = PROJECTS.find((p) => p.id === 'coop')!
+  const COOP_AT = new Vector3(COOP_DEF.site[0], 0, COOP_DEF.site[1])
 
   const addBuilding = (builder: (seed: number) => Group, def: ProjectDef, pop: boolean): Group => {
     const b = builder(0xb1d + def.cost)
     b.position.set(def.site[0], 0, def.site[1])
     b.rotation.y = def.yaw
     scene.add(b)
+    OCCLUDERS.push(b)
     if (pop) {
       b.scale.setScalar(0.01)
       gsap.to(b.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
@@ -697,6 +757,7 @@ async function boot(): Promise<void> {
     if (def.id === 'stand') {
       if (!state.projects.shop && !standGroup) {
         standGroup = buildStand(scene, assets)
+        OCCLUDERS.push(standGroup)
         if (fresh) {
           standGroup.scale.setScalar(0.01)
           gsap.to(standGroup.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
@@ -705,8 +766,10 @@ async function boot(): Promise<void> {
       customers.active = state.harvests >= 1
     } else if (def.id === 'sheep') {
       buildPen(scene)
-      // at boot the Flock constructor already spawned the saved flock
-      if (fresh) for (let i = 0; i < 3; i++) flock.addSheep()
+      // at boot the Flock constructor already spawned the saved flock; a
+      // fresh build spawns the full state-derived headcount (incl. any
+      // pasture-deed bonus bought first) so reloads never change income
+      if (fresh) for (let i = 0; i < sheepCount(state.expansion); i++) flock.addSheep()
     } else if (def.id === 'stable') {
       addBuilding(buildStable, def, fresh)
       grazers.add('horse', HORSE_RECT, 1)
@@ -715,11 +778,16 @@ async function boot(): Promise<void> {
     } else if (def.id === 'shop') {
       if (standGroup) {
         scene.remove(standGroup)
+        const i = OCCLUDERS.indexOf(standGroup)
+        if (i >= 0) OCCLUDERS.splice(i, 1)
         standGroup = null
       }
       addBuilding(buildShop, def, fresh)
       customers.premium = SHOP_PREMIUM
       customers.queueMax = SHOP_QUEUE_MAX
+    } else if (def.id === 'coop') {
+      addBuilding(buildCoopHouse, def, fresh)
+      coopHens = new CoopHens(scene, COOP_AT, def.yaw, COOP_HENS, 0xc00b)
     } else if (def.id === 'greenhouse') {
       addBuilding(buildGreenhouse, def, fresh)
       if (fresh)
@@ -733,6 +801,8 @@ async function boot(): Promise<void> {
     }
   }
   for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
+  // reloaded mid-delivery? Hazel is still in town, not grazing at the stable
+  if (state.produce.deliveryT > 0) grazers.setHidden('horse', true)
 
   // build-site signs for every project whose land exists
   const projectSigns = new Map<ProjectId, { group: Group; at: Vector3 }>()
@@ -749,6 +819,7 @@ async function boot(): Promise<void> {
     for (const [id, s] of projectSigns) {
       if (!avail.some((d) => d.id === id)) {
         scene.remove(s.group)
+        disposeMaterials(s.group)
         projectSigns.delete(id)
       }
     }
@@ -778,6 +849,23 @@ async function boot(): Promise<void> {
     const center = def.field
       ? new Vector3((def.field.x0 + def.field.x1) / 2, 0, (def.field.z0 + def.field.z1) / 2)
       : player.pos.clone()
+    // views are created NOW (hidden tiny) so plot indices match game state
+    // throughout the dig — the reveal only pops them to full size
+    const newViews: PlotView[] = []
+    let fg: Group | null = null
+    if (def.field) {
+      fg = buildField(def.field, def.plots, 0x6011 + state.expansion * 97)
+      fg.scale.setScalar(0.001)
+      scene.add(fg)
+      const insertAt = state.plots.length - def.plots.length
+      def.plots.forEach(([px, pz], k) => {
+        const v = mkPlot(px, pz)
+        v.group.scale.setScalar(0.001)
+        newViews.push(v)
+        plots.splice(insertAt + k, 0, v)
+        lastGlow.splice(insertAt + k, 0, 'none')
+      })
+    }
     construction.play({
       site: center,
       yaw: 0,
@@ -789,21 +877,11 @@ async function boot(): Promise<void> {
         if (fenceMesh) {
           scene.remove(fenceMesh)
           fenceMesh.geometry.dispose()
+          disposeMaterials(fenceMesh)
         }
         fenceMesh = buildPicketFence(scene, state.expansion)
-        if (def.field) {
-          const fg = buildField(def.field, def.plots, 0x6011 + state.expansion * 97)
-          fg.scale.setScalar(0.01)
-          scene.add(fg)
-          gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
-          // insert BEFORE any greenhouse planters so view order keeps
-          // matching Game's combined plot index space
-          const insertAt = state.plots.length - def.plots.length
-          def.plots.forEach(([px, pz], k) => {
-            plots.splice(insertAt + k, 0, mkPlot(px, pz))
-            lastGlow.splice(insertAt + k, 0, 'none')
-          })
-        }
+        if (fg) gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
+        for (const v of newViews) gsap.to(v.group.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(1.6)' })
         if (def.tractor && !tractor) tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
         if (def.sheep && game.hasProject('sheep')) for (let i = 0; i < def.sheep; i++) flock.addSheep()
         refreshProjectSigns()
@@ -875,8 +953,13 @@ async function boot(): Promise<void> {
       touch()
       // tap skips the fetch cinema (Rex keeps working off-camera)
       if (fetchCine && engine.uTime.value - cineStarted > 0.9) endFetchCine()
-      // tap skips the goodnight scene (the day still turns over)
-      if (sleepActive && engine.uTime.value - sleepStarted > 0.9) sleepTl?.progress(1, false)
+      // tap skips the goodnight scene (the day still turns over). Sounds are
+      // muted for the fast-forward so 9 callbacks don't chord in one frame.
+      if (sleepActive && engine.uTime.value - sleepStarted > 0.9) {
+        sleepSkipped = true
+        sleepTl?.progress(1, false)
+        sleepSkipped = false
+      }
     },
     { capture: true },
   )
@@ -900,6 +983,7 @@ async function boot(): Promise<void> {
     home: false,
     pen: false,
     stable: false,
+    coop: false,
     project: null as ProjectId | null,
   }
   const STABLE_DEF = PROJECTS.find((p) => p.id === 'stable')!
@@ -907,6 +991,8 @@ async function boot(): Promise<void> {
   const PEN_CENTER = new Vector3((PEN.x0 + PEN.x1) / 2, 0, (PEN.z0 + PEN.z1) / 2)
   const onAction = (id: string): void => {
     touch()
+    // belt-and-braces: a stale button can never start a second scene
+    if (sleepActive || construction.active) return
     if (id === 'wheat' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'wheat')
     else if (id === 'corn' && near.emptyPlot >= 0) plantAt(near.emptyPlot, 'corn')
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
@@ -919,6 +1005,16 @@ async function boot(): Promise<void> {
         player.gesture(engine.uTime.value)
         sparkleBurst(scene, PEN_CENTER.clone().setY(0.8), false, 8)
         fountainFrom(PEN_CENTER.clone().setY(0.8), coins, false)
+        saveNow()
+      }
+    } else if (id === 'eggs' && near.coop) {
+      const coins = game.collectCoop(COOP_HENS)
+      if (coins > 0) {
+        sfx.cluck()
+        sfx.pop()
+        player.gesture(engine.uTime.value)
+        sparkleBurst(scene, COOP_AT.clone().setY(0.8), false, 8)
+        fountainFrom(COOP_AT.clone().setY(0.8), coins, false)
         saveNow()
       }
     } else if (id === 'milk' && near.pen) {
@@ -1044,7 +1140,10 @@ async function boot(): Promise<void> {
     // fetch cinema safety: if the mission system yanked Rex off the job,
     // close the scene (the normal ending is scripted in onFetchDone)
     if (fetchCine && !cineEnding && !dog.fetching) endFetchCine()
-    if (farmhand) {
+    coopHens?.update(dt)
+    // the farmhand clocks off during cinematics (his coin fountains were
+    // landing on top of the goodnight scene)
+    if (farmhand && !sleepActive && !construction.active) {
       const info = plots.map((v, i) => {
         const c = game.plotAt(i)?.crop
         return { center: v.center, ready: !!c && c.remaining <= 0 }
@@ -1053,7 +1152,14 @@ async function boot(): Promise<void> {
     }
 
     // sheep slip out while you wait on crops (post-FTUE, one mission at a time)
-    if (!flock.missionActive && flock.sheep.length > 0 && state.harvests >= 2 && !hud.modalOpen) {
+    if (
+      !flock.missionActive &&
+      flock.sheep.length > 0 &&
+      state.harvests >= 2 &&
+      !hud.modalOpen &&
+      !sleepActive &&
+      !construction.active
+    ) {
       herdTimer -= dt
       if (herdTimer <= 0) {
         const n = flock.startEscape(state.level >= 6 ? 3 : 2, state.expansion)
@@ -1099,7 +1205,7 @@ async function boot(): Promise<void> {
     serveCooldown = Math.max(0, serveCooldown - dt)
     sowCooldown = Math.max(0, sowCooldown - dt)
     fetchCool = Math.max(0, fetchCool - dt)
-    if (joy.active || joyCam.active) {
+    if (joy.active) {
       touch()
       if (joy.active) movedEver = true
     }
@@ -1118,7 +1224,8 @@ async function boot(): Promise<void> {
     near.emptyPlot = -1
     near.growingPlot = -1
     const p = player.pos
-    if (!hud.modalOpen) {
+    // the goodnight walk passes the fields — no auto-harvests mid-cinematic
+    if (!hud.modalOpen && !sleepActive) {
       for (let i = 0; i < plots.length; i++) {
         if (p.distanceTo(plots[i].center) > PLOT_R) continue
         const crop = game.plotAt(i)?.crop
@@ -1133,6 +1240,7 @@ async function boot(): Promise<void> {
       near.home = !sleepActive && dayCycle.atDusk && p.distanceTo(homestead.doorPos) < 3.2
       near.pen = game.hasProject('sheep') && p.distanceTo(PEN_CENTER) < 4.2
       near.stable = game.hasProject('stable') && p.distanceTo(STABLE_AT) < 3.4
+      near.coop = game.hasProject('coop') && p.distanceTo(COOP_AT) < 3.6
       near.project = null
       let signD = 2.6
       for (const [id, s] of projectSigns) {
@@ -1169,8 +1277,9 @@ async function boot(): Promise<void> {
     }
 
     // ---- context action buttons (big, above the right thumb) ----
+    // one scene at a time: no buttons exist while ANY cinematic is rolling
     const actions: ActionDef[] = []
-    if (!hud.modalOpen) {
+    if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine) {
       if (near.emptyPlot >= 0) {
         actions.push({ id: 'wheat', emoji: '\u{1F33E}', label: 'Plant Wheat', sub: '90s · 2c' })
         const cornOk = game.cropUnlocked('corn')
@@ -1250,6 +1359,14 @@ async function boot(): Promise<void> {
           sub: `${flock.sheep.length} sheep \u{2192} ${flock.sheep.length * WOOL_COIN_PER_SHEEP}c`,
         })
       }
+      if (near.coop && state.produce.eggsReady) {
+        actions.push({
+          id: 'eggs',
+          emoji: '\u{1F95A}',
+          label: 'Gather the eggs',
+          sub: `${COOP_HENS} hens \u{2192} ${COOP_HENS * COOP_COIN_PER_HEN}c`,
+        })
+      }
       if (near.pen && state.produce.milkReady && grazers.count('goat') > 0) {
         actions.push({
           id: 'milk',
@@ -1288,7 +1405,7 @@ async function boot(): Promise<void> {
     const customerWaiting = customers.frontServiceable(game.stock())
     const buildable = game.projectBoard().find((e) => e.status === 'ok') ?? null
     let chipText: string | null = null
-    if (!hud.modalOpen && !construction.active) {
+    if (!hud.modalOpen && !construction.active && !sleepActive) {
       if (!movedEver && !state.chipsDone.plant) {
         chipText = 'Drag the joystick to take a walk \u{1F33B}'
       } else if (dayCycle.atDusk && !sleepActive) {
@@ -1299,6 +1416,8 @@ async function boot(): Promise<void> {
         chipText = "\u{2702}\u{FE0F} The flock's wool is ready — shear it at the pen"
       } else if (state.produce.milkReady && game.hasProject('goats')) {
         chipText = '\u{1F95B} The goats are ready for milking'
+      } else if (state.produce.eggsReady && game.hasProject('coop')) {
+        chipText = '\u{1F95A} The coop is full of eggs — go gather them'
       } else if (flock.missionActive) {
         chipText = `\u{1F411} ${flock.looseCount} loose — herd them back with Rex!`
       } else if (game.deedStatus() === 'ok') {
@@ -1371,6 +1490,10 @@ async function boot(): Promise<void> {
       coinMismatchFor = 0
     }
 
+    state.dayPhase = dayCycle.phase
+    state.timers.sow = sowCooldown
+    state.timers.fetch = fetchCool
+    state.timers.herd = Number.isFinite(herdTimer) ? herdTimer : 240
     saveAccum += dt
     if (saveAccum >= 3) {
       saveAccum = 0
@@ -1381,7 +1504,6 @@ async function boot(): Promise<void> {
   // ---- per-frame presentation ---------------------------------------------------
   engine.onFrame((dt) => {
     const t = engine.uTime.value
-    cam.orbit(joyCam.value.x, joyCam.value.y, dt)
     cam.setRunning(player.running)
     if (cam.moved) touch()
     cam.follow(player.pos, player.vel, dt)
@@ -1392,6 +1514,7 @@ async function boot(): Promise<void> {
     flock.frame(dt)
     grazers.frame(dt)
     farmhand?.frame(dt)
+    coopHens?.frame(dt, t)
     construction.frame(dt)
     dayCycle.update(dt)
     // fetch cinema camera: stick flight first, then smooth-pursuit on Rex
@@ -1434,7 +1557,7 @@ async function boot(): Promise<void> {
 
     // nest pip while an egg is cooking / ready
     const eggT = state.chicken.eggTimer
-    if (eggT || state.chicken.eggReady) {
+    if ((eggT || state.chicken.eggReady) && !sleepActive) {
       const s = cam.screenPos(NEST_POS.clone().setY(0.6))
       const frac = state.chicken.eggReady ? 1 : 1 - (eggT ? eggT.remaining / eggT.total : 0)
       hud.setPip(!s.behind, s.x, s.y, frac, state.chicken.eggReady)
@@ -1443,7 +1566,7 @@ async function boot(): Promise<void> {
     }
 
     // floating name tag with hearts
-    if (state.chicken.name && chicken.visible) {
+    if (state.chicken.name && chicken.visible && !sleepActive) {
       const s = cam.screenPos(chicken.tagWorldPos())
       hud.setNameTag(!s.behind, s.x, s.y, state.chicken.name, state.chicken.hearts)
     } else {
@@ -1453,16 +1576,16 @@ async function boot(): Promise<void> {
     // customer want bubbles
     let slot = 0
     for (const c of customers.queue) {
-      if (c.phase === 'leaving') continue
+      if (c.phase === 'leaving' || sleepActive) continue
       const v = customerViews.get(c.id)
       if (!v?.active) continue
       const s = cam.screenPos(v.bubbleAnchor())
       const html = `${GOOD_EMOJI[c.want.kind]}×${c.want.count} → <span class="coin-mini"></span> ${c.want.offer}`
       hud.setBubble(slot, !s.behind, s.x, s.y, html)
       slot += 1
-      if (slot >= 2) break
+      if (slot >= 3) break
     }
-    for (; slot < 2; slot += 1) hud.setBubble(slot, false)
+    for (; slot < 3; slot += 1) hud.setBubble(slot, false)
   })
 
   // ---- frame driver with rare-event slow-mo (presentation only) -------------------

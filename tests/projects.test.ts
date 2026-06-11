@@ -109,13 +109,13 @@ describe('project ladder', () => {
 
   it('availableProjects respects the land gate and omits owned projects', () => {
     const atTier0 = availableProjects(gate({ expansion: 0 }))
-    expect(atTier0.map((p) => p.id)).toEqual(['stand', 'sheep', 'goats', 'shop'])
+    expect(atTier0.map((p) => p.id)).toEqual(['stand', 'sheep', 'goats', 'coop', 'shop'])
 
     const atTier2 = availableProjects(gate({ expansion: 2 }))
     expect(atTier2.map((p) => p.id)).toEqual(PROJECTS.map((p) => p.id))
 
     const owned = availableProjects(
-      gate({ expansion: 3, projects: { stand: true, sheep: true, goats: true, shop: true } }),
+      gate({ expansion: 3, projects: { stand: true, sheep: true, goats: true, coop: true, shop: true } }),
     )
     expect(owned.map((p) => p.id)).toEqual(['stable', 'greenhouse', 'farmhand'])
   })

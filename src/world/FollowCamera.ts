@@ -44,6 +44,14 @@ export class FollowCamera {
   /** true while any input touched the camera this frame (idle-timer reset) */
   moved = false
 
+  /** wired by main: given the focus point and a desired camera position,
+   * return the unobstructed distance along that ray (null = clear). The
+   * camera then pulls IN just in front of whatever building was about to
+   * swallow it — the farmer never disappears behind the shop again. */
+  occlusionTest: ((focus: Vector3, camPos: Vector3) => number | null) | null = null
+  private occlClamp = Number.POSITIVE_INFINITY
+  private lastDt = 0.016
+
   constructor(dom: HTMLElement, start: Vector3) {
     this.camera = new PerspectiveCamera(FOV_BASE, innerWidth / innerHeight, 0.5, 400)
     this.anchor.copy(start)
@@ -51,8 +59,10 @@ export class FollowCamera {
     dom.addEventListener('wheel', this.wheel, { passive: false })
     dom.addEventListener('pointerdown', this.pDown)
     dom.addEventListener('pointermove', this.pMove)
-    dom.addEventListener('pointerup', this.pEnd)
-    dom.addEventListener('pointercancel', this.pEnd)
+    // releases land on WINDOW: a mouse-up over a HUD element must still end
+    // the drag, or a phantom pointer turns every later drag into a pinch
+    addEventListener('pointerup', this.pEnd)
+    addEventListener('pointercancel', this.pEnd)
     // right-drag must orbit, not open the context menu
     dom.addEventListener('contextmenu', (e) => e.preventDefault())
     addEventListener('blur', () => this.pointers.clear())
@@ -103,8 +113,10 @@ export class FollowCamera {
       if (this.pinchDist > 0 && d > 0) this.dist = clampDist((this.dist * this.pinchDist) / d)
       this.pinchDist = d
       this.moved = true
-    } else if (this.pointers.size === 1 && p.type === 'mouse') {
-      // desktop: any mouse drag on the canvas orbits (left or right button)
+    } else if (this.pointers.size === 1) {
+      // ONE pointer on the world looks around — mouse on desktop, the free
+      // thumb on mobile (the left stick + HUD capture their own pointers, so
+      // anything that reaches the canvas is camera intent)
       this.yaw -= dx * DRAG_RATE
       this.pitch = clampPitch(this.pitch + dy * DRAG_RATE)
       this.moved = true
@@ -173,8 +185,14 @@ export class FollowCamera {
 
   /** smooth-damp toward the farmer (+ look-ahead), then place the camera */
   follow(playerPos: Vector3, vel: Vector3, dt: number): void {
+    this.lastDt = dt
     if (this.cineTarget) {
       this.focusPoint.lerp(this.cineTarget, 1 - Math.exp(-3.4 * dt))
+      // a ceremony's release() may fight a running cinematic for focusW —
+      // the cinematic owns the channel while it lives, so re-assert
+      if (this.focusW.value < 0.999 && !gsap.isTweening(this.focusW)) {
+        gsap.to(this.focusW, { value: 1, duration: 0.5, ease: 'power2.out' })
+      }
       if (this.cineYaw !== null) {
         let d = this.cineYaw - this.yaw
         while (d > Math.PI) d -= Math.PI * 2
@@ -203,19 +221,32 @@ export class FollowCamera {
 
   private tmp = new Vector3()
 
+  private desired = new Vector3()
+
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
     // landscape phones: the short viewport makes the farmer read tiny at the
     // portrait distance — pull the whole orbit ~25% closer when wide
     const k = this.camera.aspect > 1.2 ? 0.74 : 1
-    const dist = this.smoothDist * k
-    const horiz = Math.cos(this.pitch) * dist
-    this.camera.position.set(
-      t.x + Math.sin(this.yaw) * horiz,
-      t.y + Math.sin(this.pitch) * dist,
-      t.z + Math.cos(this.yaw) * horiz,
-    )
+    let dist = this.smoothDist * k
+    const place = (d: number, into: Vector3): Vector3 => {
+      const horiz = Math.cos(this.pitch) * d
+      return into.set(
+        t.x + Math.sin(this.yaw) * horiz,
+        t.y + Math.sin(this.pitch) * d,
+        t.z + Math.cos(this.yaw) * horiz,
+      )
+    }
+    // building occlusion: snap IN fast (never clip inside a wall), ease OUT
+    if (this.occlusionTest) {
+      const blocked = this.occlusionTest(t, place(dist, this.desired))
+      const want = blocked !== null ? Math.max(2.4, blocked - 0.5) : dist
+      if (want < this.occlClamp) this.occlClamp = want
+      else this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
+      dist = Math.min(dist, this.occlClamp)
+    }
+    this.camera.position.copy(place(dist, this.desired))
     this.camera.lookAt(t)
   }
 

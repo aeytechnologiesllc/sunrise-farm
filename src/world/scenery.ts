@@ -26,6 +26,7 @@ import {
   Vector3,
   BoxGeometry,
   CylinderGeometry,
+  type Object3D,
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
@@ -52,6 +53,10 @@ export const WORLD_BOUNDS = { minX: -19, maxX: 19, minZ: -13, maxZ: 14.5 }
 
 const GROUND_SIZE = 96
 const GROUND_BASE = '#6f9e4a'
+
+/** meshes the follow-camera must never hide behind (barn pushes itself in;
+ * main adds bought buildings). The camera raycasts this list every frame. */
+export const OCCLUDERS: Object3D[] = []
 
 // ---- exclusion zones (shared by grass + forest placement) --------------------
 
@@ -709,6 +714,7 @@ function buildBarn(scene: Scene): void {
     m.position.copy(BARN_POS)
     m.rotation.y = groupRot
     scene.add(m)
+    OCCLUDERS.push(m)
   }
   placeMerged(redGeos, red)
   placeMerged(roofGeos, roof)
