@@ -268,8 +268,10 @@ export class FollowCamera {
     this.camera.lookAt(t)
   }
 
-  resize(): void {
-    this.camera.aspect = innerWidth / innerHeight
+  /** pass the measured viewport when available — iOS can report stale
+   * innerWidth/innerHeight right after a rotation */
+  resize(w = innerWidth, h = innerHeight): void {
+    this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }
 

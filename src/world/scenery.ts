@@ -49,7 +49,31 @@ export const ROAD_Z = 11
 export const GATE_SOUTH_X = STAND_POS.x + 0.4
 /** customers queue beside the stand's east edge — visible from the follow cam */
 export const QUEUE_SPOTS = [new Vector3(3.1, 0, 7.7), new Vector3(4.4, 0, 8.6)]
-export const WORLD_BOUNDS = { minX: -19, maxX: 19, minZ: -13, maxZ: 14.5 }
+/** Where selling happens RIGHT NOW. Customer.ts and main.ts read MARKET
+ * every frame (queue targets + serve range), so mutating it live-moves the
+ * market with no rewiring. Boots at the roadside stand; the Farm Shop
+ * completion calls marketToShop() to flip it across the road. STAND_POS and
+ * QUEUE_SPOTS above stay frozen for legacy consumers. */
+export const MARKET = {
+  pos: STAND_POS.clone(),
+  spots: QUEUE_SPOTS.map((s) => s.clone()),
+  atShop: false,
+}
+/** Farm Shop built: serving crosses the road. The counter point sits between
+ * the shop's north face and the road (site z − 1.9), and three queue spots
+ * line up on the road's south shoulder (site z − 2.4) so customers wait
+ * facing the shop while the player walks over to serve them. */
+export function marketToShop(site: [number, number]): void {
+  MARKET.atShop = true
+  MARKET.pos.set(site[0], 0, site[1] - 1.9)
+  MARKET.spots = [
+    new Vector3(site[0] - 1.3, 0, site[1] - 2.4),
+    new Vector3(site[0], 0, site[1] - 2.4),
+    new Vector3(site[0] + 1.3, 0, site[1] - 2.4),
+  ]
+}
+// east fields run to the x=20.6 fence and the shop now sits ACROSS the road at z 15.6 — the player must reach both
+export const WORLD_BOUNDS = { minX: -19, maxX: 22, minZ: -13, maxZ: 18.5 }
 
 const GROUND_SIZE = 96
 const GROUND_BASE = '#6f9e4a'
@@ -306,6 +330,55 @@ function paintGround(rng: Rng): HTMLCanvasElement {
   for (const w of [1.5, 1.0, 0.55]) {
     const a = w === 0.55 ? 0.32 : 0.16
     for (let pi = 0; pi < PATHS.length; pi++) path(PATHS[pi], w, '#b3bd7c', pi === 0 ? a : a * 0.85)
+  }
+
+  // worn-dirt apron at the farm-shop lot + a short trodden stub to the road
+  // edge — same layered irregular language as the stand path above, but in
+  // road browns (bare churned dirt, not trodden grass). Derived from PROJECTS
+  // so the art tracks the shop site; painted only once the lot sits SOUTH of
+  // the road (the across-the-road layout) so the old site never gets a smear
+  const shop = PROJECTS.find((pr) => pr.id === 'shop')
+  if (shop && shop.site[1] > ROAD_Z) {
+    const [sx, sz] = shop.site
+    const frontZ = sz - shop.footprint.d / 2
+    g.fillStyle = '#b69465'
+    for (let i = 0; i < 9; i++) {
+      g.globalAlpha = 0.09 + rng.next() * 0.1
+      const r = p.s(1.0 + rng.next() * 1.3)
+      g.beginPath()
+      g.ellipse(
+        p.px(sx + (rng.next() - 0.5) * 2.8),
+        p.pz(sz - 0.6 + (rng.next() - 0.5) * 2.2),
+        r,
+        r * (0.5 + rng.next() * 0.4),
+        rng.next() * Math.PI,
+        0,
+        Math.PI * 2,
+      )
+      g.fill()
+    }
+    g.globalAlpha = 1
+    const stub: Array<[number, number]> = [
+      [sx + 0.2, ROAD_Z + 1.3],
+      [sx - 0.15, (ROAD_Z + 1.45 + frontZ) / 2],
+      [sx + 0.1, frontZ + 0.3],
+    ]
+    for (const w of [1.4, 0.9, 0.5]) path(stub, w, '#b08a55', w === 0.5 ? 0.3 : 0.14)
+    // scuffed specks keep the apron edge ragged, like the road shoulder
+    for (let i = 0; i < 26; i++) {
+      g.fillStyle = rng.next() > 0.5 ? '#bd965e' : '#a98e5e'
+      g.globalAlpha = 0.25 + rng.next() * 0.3
+      g.beginPath()
+      g.arc(
+        p.px(sx + (rng.next() - 0.5) * 3.4),
+        p.pz(sz - 0.7 + (rng.next() - 0.5) * 2.6),
+        1.2 + rng.next() * 2.4,
+        0,
+        Math.PI * 2,
+      )
+      g.fill()
+    }
+    g.globalAlpha = 1
   }
 
   // fallow beds where fields live (soil meshes cover the bought ones)

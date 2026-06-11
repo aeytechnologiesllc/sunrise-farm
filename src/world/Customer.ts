@@ -24,7 +24,7 @@ import {
 import { mulberry32, type Rng } from '../game/rng'
 import { type Assets, type ModelKey } from './assets'
 import { assertSpawnScale, customerHeightFor, normalizeHeight, SCALE } from './scale'
-import { GATE_SOUTH_X, QUEUE_SPOTS, ROAD_Z, STAND_POS } from './scenery'
+import { GATE_SOUTH_X, MARKET, ROAD_Z } from './scenery'
 
 const SPEED = 2.1
 const EDGE_X = 26
@@ -107,7 +107,9 @@ export class CustomerView {
     const key = LOOKS[Math.floor(rng.next() * LOOKS.length)]
     const enterX = rng.next() > 0.5 ? -EDGE_X : EDGE_X
     this.exitX = -enterX
-    this.spot = QUEUE_SPOTS[Math.min(spotIndex, QUEUE_SPOTS.length - 1)].clone()
+    // MARKET routes the visit: the roadside stand inside the gate early on,
+    // the farm shop across the road once it opens (read fresh, never cached)
+    this.spot = MARKET.spots[Math.min(spotIndex, MARKET.spots.length - 1)].clone()
     this.browseSwapIn = 4 + rng.next() * 5
 
     let model: Group
@@ -138,12 +140,15 @@ export class CustomerView {
     this.group.position.set(enterX, 0, ROAD_Z + (rng.next() - 0.5) * 0.8)
     this.heading = this.group.rotation.y = enterX > 0 ? -Math.PI / 2 : Math.PI / 2
     scene.add(this.group)
-    // walk the road, turn in at the picket gate, take a queue spot
-    this.waypoints = [
-      new Vector3(GATE_SOUTH_X, 0, ROAD_Z),
-      new Vector3(GATE_SOUTH_X, 0, 9.4),
-      new Vector3(this.spot.x, 0, this.spot.z),
-    ]
+    // walk the road, then turn IN through the picket gate (stand) or step
+    // OFF the south shoulder to the shop front (shop) — no gate to cross
+    this.waypoints = MARKET.atShop
+      ? [new Vector3(this.spot.x, 0, ROAD_Z), new Vector3(this.spot.x, 0, this.spot.z)]
+      : [
+          new Vector3(GATE_SOUTH_X, 0, ROAD_Z),
+          new Vector3(GATE_SOUTH_X, 0, 9.4),
+          new Vector3(this.spot.x, 0, this.spot.z),
+        ]
   }
 
   /** foot-lock: clip ground coverage scales with body height */
@@ -154,7 +159,7 @@ export class CustomerView {
 
   /** queue shuffles forward when the front customer leaves */
   moveToSpot(spotIndex: number): void {
-    const next = QUEUE_SPOTS[Math.min(spotIndex, QUEUE_SPOTS.length - 1)].clone()
+    const next = MARKET.spots[Math.min(spotIndex, MARKET.spots.length - 1)].clone()
     if (next.distanceTo(this.spot) < 0.1) return
     this.spot = next
     if (this.mode === 'waiting') {
@@ -193,12 +198,14 @@ export class CustomerView {
       if (this.leaveDelay > 0) {
         this.leaveDelay -= dt
         if (this.leaveDelay <= 0) {
-          // back out through the gate, then off down the road
-          this.waypoints = [
-            new Vector3(GATE_SOUTH_X, 0, 9.4),
-            new Vector3(GATE_SOUTH_X, 0, ROAD_Z),
-            new Vector3(this.exitX, 0, ROAD_Z + 0.4),
-          ]
+          // back out the way they came in, then off down the road
+          this.waypoints = MARKET.atShop
+            ? [new Vector3(this.group.position.x, 0, ROAD_Z + 0.3), new Vector3(this.exitX, 0, ROAD_Z + 0.4)]
+            : [
+                new Vector3(GATE_SOUTH_X, 0, 9.4),
+                new Vector3(GATE_SOUTH_X, 0, ROAD_Z),
+                new Vector3(this.exitX, 0, ROAD_Z + 0.4),
+              ]
           this.swap(this.walk, this.walkTimeScale())
         }
         return
@@ -215,7 +222,7 @@ export class CustomerView {
         this.mode = 'waiting'
         this.swap(this.idle)
         this.browseT = 0
-        this.turnTo(Math.atan2(STAND_POS.x - this.group.position.x, STAND_POS.z - this.group.position.z), 1)
+        this.turnTo(Math.atan2(MARKET.pos.x - this.group.position.x, MARKET.pos.z - this.group.position.z), 1)
         this.onArrive?.()
       }
       return

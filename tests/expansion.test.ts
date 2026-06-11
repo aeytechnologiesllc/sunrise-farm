@@ -15,14 +15,52 @@ import {
 } from '../src/game/expansion'
 
 describe('expansion tiers', () => {
-  it('plot positions accumulate monotonically', () => {
+  it('plot positions accumulate (the crossroad lot adds land, not plots)', () => {
     let prev = 0
     for (let t = 0; t <= MAX_TIER; t++) {
       const n = plotCount(t)
-      expect(n).toBeGreaterThan(prev)
+      expect(n).toBeGreaterThanOrEqual(prev)
       expect(plotPositions(t)).toHaveLength(n)
       prev = n
     }
+  })
+
+  it('cumulative plot counts are exact and cover legacy saves', () => {
+    expect([0, 1, 2, 3, 4].map(plotCount)).toEqual([4, 8, 12, 14, 14])
+    // SAVE-COMPAT GUARD: old saves sized their plots array from the legacy
+    // table (cumulative 4/8/11/13). Every tier must unlock AT LEAST that
+    // many plots, or a reloaded save would hold crop state for plot indices
+    // the new table never creates.
+    const legacy = [4, 8, 11, 13]
+    for (let t = 0; t < legacy.length; t++) {
+      expect(plotCount(t)).toBeGreaterThanOrEqual(legacy[t])
+    }
+  })
+
+  it('fields grow contiguously east — each deed touches the previous field', () => {
+    for (let t = 0; t < 3; t++) {
+      const a = TIERS[t].field
+      const b = TIERS[t + 1].field
+      expect(a).not.toBeNull()
+      expect(b).not.toBeNull()
+      // edge-to-edge: the new field starts exactly where the last one ends
+      expect(b!.x0).toBe(a!.x1)
+      expect(b!.z0).toBe(a!.z0)
+      expect(b!.z1).toBe(a!.z1)
+    }
+    // the final deed is a bare lot across the road, not a field
+    expect(TIERS[4].field).toBeNull()
+    expect(TIERS[4].lot).toBeDefined()
+    expect(TIERS[4].plots).toHaveLength(0)
+  })
+
+  it('the crossroad lot sits across the road, outside the fence ring', () => {
+    const lot = TIERS[4].lot!
+    // road runs east-west at z=11 (half-width ~1.45); across means z >= 13
+    expect(lot[1]).toBeGreaterThanOrEqual(13)
+    expect(lot[1]).toBeGreaterThan(TIERS[4].fence.maxZ)
+    // buying the lot does not move the farm fence
+    expect(TIERS[4].fence).toEqual(TIERS[3].fence)
   })
 
   it('fence only ever grows (each tier contains the previous ring)', () => {
@@ -58,10 +96,19 @@ describe('expansion tiers', () => {
       }
   })
 
-  it('costs and level gates escalate', () => {
+  it('level gates escalate; the cheaper pass never raised a deed price', () => {
     for (let t = 2; t <= MAX_TIER; t++) {
-      expect(TIERS[t].cost).toBeGreaterThan(TIERS[t - 1].cost)
       expect(TIERS[t].level).toBeGreaterThan(TIERS[t - 1].level)
+    }
+    // field deeds (T1..T3) still ascend in price; the crossroad lot (T4)
+    // is a bare plot with no field, deliberately priced below the pasture
+    for (let t = 2; t <= 3; t++) {
+      expect(TIERS[t].cost).toBeGreaterThan(TIERS[t - 1].cost)
+    }
+    // CHEAPER PASS: no deed may cost more than it did in the legacy table
+    const legacyCosts = [0, 150, 400, 900]
+    for (let t = 0; t < legacyCosts.length; t++) {
+      expect(TIERS[t].cost).toBeLessThanOrEqual(legacyCosts[t])
     }
   })
 

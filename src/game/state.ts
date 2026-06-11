@@ -54,6 +54,9 @@ export interface GameState {
   /** save knows the start-from-scratch ladder (pre-ladder saves get
    * grandfathered exactly once) */
   ladder: boolean
+  /** save knows Hazel is a SEPARATE purchase from the stable (pre-split
+   * saves get her grandfathered exactly once — their stable included her) */
+  horseSplit: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
   /** totals at dawn — the goodnight scene shows today's tally against these */
@@ -90,6 +93,7 @@ export function initialState(seed: number): GameState {
     herdsDone: 0,
     projects: {},
     ladder: true,
+    horseSplit: true,
     day: 1,
     dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
@@ -148,7 +152,9 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
     const ev = tickProduce(s.produce, el, {
       sheep: s.projects?.sheep === true,
       goats: s.projects?.goats === true,
-      stable: s.projects?.stable === true,
+      // the produce gate keeps its historical key name, but deliveries need
+      // HAZEL, not the building — the stable and the horse are separate buys
+      stable: s.projects?.horse === true,
     })
     if (ev.deliveryReturned) s.coins += 34
   }
@@ -179,6 +185,15 @@ export function deserialize(json: string | null): GameState | null {
         s.projects.stand ??= true
         s.projects.sheep ??= true
       }
+    }
+    // grandfather PRE-SPLIT saves exactly once: their stable project shipped
+    // WITH the horse, so owning it means Hazel is already home — grant the
+    // new separate horse project for free. The flag (true from birth on new
+    // saves) is what guards fresh saves: a NEW player who built the stable
+    // but has not bought Hazel yet must NOT be gifted her on reload.
+    if (!s.horseSplit) {
+      s.horseSplit = true
+      if (s.projects.stable) s.projects.horse = true
     }
     s.day ??= 1
     // older saves never tracked a dawn ledger — start counting from "now"

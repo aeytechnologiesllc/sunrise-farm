@@ -39,6 +39,9 @@ export interface TierDef {
   gates: GateDef[]
   /** where the FOR-SALE sign for buying THIS tier stands (null = base tier) */
   sign: [number, number] | null
+  /** dig-ceremony site for deeds whose land is NOT a crop field (e.g. the
+   * crossroad lot) — world code stakes the ceremony here instead of a field */
+  lot?: [number, number]
   /** true when this deed unlocks the tractor */
   tractor?: boolean
   /** sheep ADDED to the flock by this tier */
@@ -47,7 +50,13 @@ export interface TierDef {
 
 const SOUTH_GATE: GateDef = { wall: 'S', center: 0.9, half: 1.7 }
 const WEST_GATE: GateDef = { wall: 'W', center: 3.2, half: 1.5 }
+/** wider west opening once the pasture deed frees the west lot (tier 3+) */
+const PASTURE_WEST_GATE: GateDef = { wall: 'W', center: 5.2, half: 1.6 }
 
+/** The farm grows ONE direction: each field deed joins the previous field
+ * edge-to-edge heading east (field.x1 of a tier === field.x0 of the next).
+ * Structures live on the WEST side; the final deed is a bare lot ACROSS the
+ * road (south, z >= 13) for the farm shop. */
 export const TIERS: TierDef[] = [
   {
     name: 'Sunrise Farm',
@@ -67,50 +76,63 @@ export const TIERS: TierDef[] = [
   },
   {
     name: 'The East Meadow',
-    flavor: "Grandpa's old wheat meadow is yours again.",
-    cost: 150,
+    flavor: "Grandpa's meadow joins the home field — four more plots in one long run of soil.",
+    cost: 100,
     level: 3,
-    field: { x0: 9.2, z0: -0.5, x1: 14.5, z1: 4.9 },
+    field: { x0: 5.8, z0: -0.8, x1: 11.4, z1: 4.8 },
     plots: [
-      [10.3, 0.7],
-      [13.0, 0.7],
-      [10.3, 3.5],
-      [13.0, 3.5],
+      [7.2, 0.6],
+      [10.0, 0.6],
+      [7.2, 3.4],
+      [10.0, 3.4],
     ],
-    fence: { minX: -8.4, maxX: 15.0, minZ: -3.4, maxZ: 10.2 },
+    fence: { minX: -8.4, maxX: 12.2, minZ: -3.4, maxZ: 10.2 },
     gates: [SOUTH_GATE, WEST_GATE],
-    sign: [7.4, 2.2],
+    sign: [7.0, 2.2],
   },
   {
-    name: 'The North Acres',
-    flavor: 'Real acreage — and the old tractor still runs!',
-    cost: 400,
+    name: 'The Far East Field',
+    flavor: 'Four more plots east — and the old tractor still runs!',
+    cost: 280,
     level: 5,
-    field: { x0: -1.4, z0: -8.3, x1: 7.0, z1: -4.5 },
+    field: { x0: 11.4, z0: -0.8, x1: 17.0, z1: 4.8 },
     plots: [
-      [0.2, -6.4],
-      [2.9, -6.4],
-      [5.6, -6.4],
+      [12.8, 0.6],
+      [15.6, 0.6],
+      [12.8, 3.4],
+      [15.6, 3.4],
     ],
-    fence: { minX: -8.4, maxX: 15.0, minZ: -9.0, maxZ: 10.2 },
+    fence: { minX: -8.4, maxX: 17.8, minZ: -3.4, maxZ: 10.2 },
     gates: [SOUTH_GATE, WEST_GATE],
-    sign: [1.2, -2.5],
+    sign: [13.0, 2.2],
     tractor: true,
   },
   {
     name: 'The Old Pasture',
-    flavor: 'The flock doubles — Rex has never been prouder.',
-    cost: 900,
-    level: 7,
-    field: { x0: -14.0, z0: -2.9, x1: -10.6, z1: 2.2 },
+    flavor: 'The flock grows by two — and out west there is room for a stable now.',
+    cost: 480,
+    level: 6,
+    field: { x0: 17.0, z0: -0.8, x1: 19.8, z1: 4.8 },
     plots: [
-      [-12.3, -1.55],
-      [-12.3, 0.95],
+      [18.4, 0.6],
+      [18.4, 3.4],
     ],
-    fence: { minX: -15.2, maxX: 15.0, minZ: -9.0, maxZ: 10.2 },
-    gates: [SOUTH_GATE, { wall: 'W', center: 5.2, half: 1.6 }],
+    fence: { minX: -15.2, maxX: 20.6, minZ: -9.0, maxZ: 10.2 },
+    gates: [SOUTH_GATE, PASTURE_WEST_GATE],
     sign: [-7.4, 5.6],
     sheep: 2,
+  },
+  {
+    name: 'The Crossroad Lot',
+    flavor: 'A bare lot across the road — and you have big plans for it.',
+    cost: 400,
+    level: 8,
+    field: null,
+    lot: [2.5, 15.6],
+    plots: [],
+    fence: { minX: -15.2, maxX: 20.6, minZ: -9.0, maxZ: 10.2 },
+    gates: [SOUTH_GATE, PASTURE_WEST_GATE],
+    sign: [3.8, 12.9],
   },
 ]
 

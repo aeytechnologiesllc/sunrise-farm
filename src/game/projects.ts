@@ -5,7 +5,16 @@
  * World code (signs, cutscenes, buildings) and Game actions derive from this
  * single table; unit-tested against src/game/expansion.ts geometry. */
 
-export type ProjectId = 'stand' | 'sheep' | 'goats' | 'coop' | 'stable' | 'shop' | 'greenhouse' | 'farmhand'
+export type ProjectId =
+  | 'stand'
+  | 'sheep'
+  | 'goats'
+  | 'coop'
+  | 'stable'
+  | 'horse'
+  | 'shop'
+  | 'greenhouse'
+  | 'farmhand'
 
 export interface ProjectDef {
   id: ProjectId
@@ -15,7 +24,8 @@ export interface ProjectDef {
   cost: number
   /** player level gate */
   level: number
-  /** land tier gate (0..3), see src/game/expansion.ts */
+  /** land tier gate (0..4), see src/game/expansion.ts — the deed is always
+   * bought BEFORE the building it hosts (storytelling: deed, then build) */
   requiresExpansion: number
   /** another project that must exist first */
   requires?: ProjectId
@@ -25,9 +35,13 @@ export interface ProjectDef {
   yaw: number
   footprint: { w: number; d: number }
   kind: 'building' | 'animals' | 'staff'
+  /** one plain-spoken line: what this purchase DOES for the player — shown
+   * on build-site signs and completion banners */
+  earns: string
 }
 
-/** the ladder, in build order — costs strictly ascend, level gates never dip.
+/** the ladder, in build order — costs ascend (Hazel, a follow-on companion
+ * to the stable, is the one priced add-on), level gates never dip.
  * The first level starts from SCRATCH: no stand, no flock — the player earns
  * each piece of the farm. */
 export const PROJECTS: ProjectDef[] = [
@@ -42,24 +56,26 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 0,
     footprint: { w: 3.8, d: 2.4 },
     kind: 'building',
+    earns: 'Passers-by stop and buy your goods for coins.',
   },
   {
     id: 'sheep',
     name: 'The Sheep Pen',
     flavor: 'Three woolly tenants — and Rex finally has a job.',
-    cost: 140,
+    cost: 100,
     level: 3,
     requiresExpansion: 0,
     site: [-12.3, 5.3],
     yaw: 0,
     footprint: { w: 2, d: 2 },
     kind: 'animals',
+    earns: 'Wool to shear every few minutes.',
   },
   {
     id: 'goats',
     name: 'Goat Friends',
     flavor: 'Two goats join the pasture — double trouble.',
-    cost: 450,
+    cost: 300,
     level: 5,
     requiresExpansion: 0,
     requires: 'sheep',
@@ -67,72 +83,93 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 0,
     footprint: { w: 2, d: 2 },
     kind: 'animals',
+    earns: 'Milk money beside the wool.',
   },
   {
     id: 'coop',
     name: 'The Chicken Coop',
-    flavor: 'A dozen little voices at sunrise — and baskets of eggs.',
-    cost: 550,
+    flavor: 'A dozen little voices at sunrise.',
+    cost: 380,
     level: 6,
     requiresExpansion: 0,
     site: [-6.4, 8.4],
     yaw: Math.PI,
     footprint: { w: 3.4, d: 2.2 },
     kind: 'building',
+    earns: 'Four hens laying baskets of eggs.',
   },
   {
     id: 'stable',
     name: 'The Stable',
-    flavor: 'Hoofbeats at sunrise — the farm has a horse now.',
-    cost: 650,
+    flavor: 'Fresh straw, oiled hinges — an empty stall, waiting.',
+    cost: 450,
     level: 6,
-    requiresExpansion: 1,
-    site: [11.6, 7.3],
-    yaw: 3.14,
+    requiresExpansion: 3,
+    site: [-12.3, -0.6],
+    yaw: 1.35,
     footprint: { w: 5.4, d: 4.0 },
     kind: 'building',
+    earns: 'A home for a horse — kept ready.',
+  },
+  {
+    id: 'horse',
+    name: 'Hazel the Horse',
+    flavor: 'Hoofbeats at sunrise — Hazel is home.',
+    cost: 250,
+    level: 6,
+    requiresExpansion: 3,
+    requires: 'stable',
+    site: [-12.3, -0.6],
+    yaw: 0,
+    footprint: { w: 1.4, d: 1.4 },
+    kind: 'animals',
+    earns: 'Town deliveries — feed her wheat and she brings back coins.',
   },
   {
     id: 'shop',
     name: 'The Farm Shop',
     flavor: 'No more roadside table. Real shelves, real prices.',
-    cost: 800,
+    cost: 550,
     level: 8,
-    requiresExpansion: 0,
+    requiresExpansion: 4,
     requires: 'stand',
-    site: [0.5, 7.0],
-    yaw: 0,
+    site: [2.5, 15.6],
+    yaw: 3.14159,
     footprint: { w: 4.6, d: 3.4 },
     kind: 'building',
+    earns: 'One more customer at a time — and city prices across the road.',
   },
   {
     id: 'greenhouse',
     name: 'The Greenhouse',
     flavor: 'Glass and warmth — crops that never wait for weather.',
-    cost: 1200,
+    cost: 800,
     level: 9,
     requiresExpansion: 2,
     site: [-5.2, -2.0],
     yaw: 0.1,
     footprint: { w: 4.8, d: 3.4 },
     kind: 'building',
+    earns: 'Indoor plots that grow 40 percent faster.',
   },
   {
     id: 'farmhand',
     name: 'Hire a Farmhand',
     flavor: 'You are not farming alone anymore.',
-    cost: 1500,
+    cost: 1000,
     level: 10,
     requiresExpansion: 2,
     site: [-0.5, 5.2],
     yaw: 0,
     footprint: { w: 1.2, d: 1.2 },
     kind: 'staff',
+    earns: 'A helper who harvests ripe crops for you.',
   },
 ]
 
-/** horse paddock by the stable (rails + gate live in world code) */
-export const PADDOCK = { x0: 9.0, z0: 5.6, x1: 14.6, z1: 9.6 }
+/** horse paddock on the WEST pasture lot, wrapping the stable (rails + gate
+ * live in world code) */
+export const PADDOCK = { x0: -14.4, z0: -2.9, x1: -10.4, z1: 2.2 }
 
 /** 4 plot centers inside the greenhouse footprint at site [-5.2, -2.0] */
 export const GREENHOUSE_PLOTS: Array<[number, number]> = [

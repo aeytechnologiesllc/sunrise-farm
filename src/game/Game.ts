@@ -148,11 +148,13 @@ export class Game {
         this.emit('eggReady', undefined)
       }
     }
-    // production: wool grows, milk fills, the delivery horse earns her keep
+    // production: wool grows, milk fills, the delivery horse earns her keep.
+    // The produce gate keeps its historical 'stable' key, but deliveries need
+    // HAZEL — the stable and the horse are separate purchases now
     const pev = tickProduce(s.produce, dt, {
       sheep: this.hasProject('sheep'),
       goats: this.hasProject('goats'),
-      stable: this.hasProject('stable'),
+      stable: this.hasProject('horse'),
       coop: this.hasProject('coop'),
     })
     if (pev.woolBecameReady) this.emit('woolReady', undefined)
@@ -412,12 +414,13 @@ export class Game {
     return coins
   }
 
-  /** the horse runs a paid delivery — after you FEED her (1 wheat upkeep) */
+  /** the horse runs a paid delivery — after you FEED her (1 wheat upkeep).
+   * Keyed on the HORSE project: an empty stable can't deliver anything */
   deliveryStatus(): ReturnType<typeof canDeliver> {
     return canDeliver(this.state.produce, {
       sheep: this.hasProject('sheep'),
       goats: this.hasProject('goats'),
-      stable: this.hasProject('stable'),
+      stable: this.hasProject('horse'),
     }, this.state.wheat)
   }
 

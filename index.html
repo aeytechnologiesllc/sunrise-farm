@@ -29,7 +29,18 @@
         font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       }
       canvas {
+        /* pinned to the visual viewport: even if a resize event is missed
+           (iOS standalone settles late), the canvas can never fall short and
+           show the page background as a bar */
         display: block;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        /* dynamic-viewport units track iOS rotation/toolbar changes even when
+           the layout viewport lags (older browsers ignore these two lines) */
+        width: 100dvw;
+        height: 100dvh;
       }
     </style>
   </head>

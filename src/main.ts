@@ -62,16 +62,18 @@ import {
   CRATE_POS,
   DOG_HOME,
   groundClear,
+  MARKET,
+  marketToShop,
   NEST_POS,
   OCCLUDERS,
   PLAYER_SPAWN,
-  STAND_POS,
   WORLD_BOUNDS,
 } from './world/scenery'
 import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
 import {
   availableProjects,
   GREENHOUSE_PLOTS,
+  PADDOCK,
   PROJECTS,
   SHOP_PREMIUM,
   SHOP_QUEUE_MAX,
@@ -325,12 +327,10 @@ async function boot(): Promise<void> {
   // that the fanfare means nothing)
   const LEVEL_NEWS: Record<number, string> = {
     2: 'The roadside stand is on sale! \u{1F3D5}',
-    3: 'Sheep! The flock pen unlocks \u{1F411}',
-    4: 'The East Meadow deed is within reach \u{1F4DC}',
-    5: 'Goats join the ladder \u{1F410}',
-    6: 'The Chicken Coop AND The Stable unlock \u{1F414}',
-    7: 'North Acres — and Grandpa’s tractor \u{1F69C}',
-    8: 'The Farm Shop is buildable \u{1F3EA}',
+    3: 'Sheep — and the East Meadow deed \u{1F411}',
+    5: 'Goat friends, and the Far East Field with Grandpa’s tractor \u{1F69C}',
+    6: 'Big day: the Coop, the Old Pasture deed, a Stable — and Hazel \u{1F434}',
+    8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
     10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
   }
@@ -943,8 +943,8 @@ async function boot(): Promise<void> {
   // ---- construction projects (the build-your-farm spine) -------------------------
   const construction = new Construction({ scene, assets, cam, tickSfx: () => sfx.plant() })
   const grazers = new Grazers(assets, scene, 0xa11ce)
-  /** the horse grazes the strip north of the east field; goats join the pen */
-  const HORSE_RECT = { x0: 9.0, z0: -3.0, x1: 14.6, z1: -0.9 }
+  /** the horse grazes her west paddock by the stable; goats join the pen */
+  const HORSE_RECT = { x0: PADDOCK.x0 + 0.3, z0: PADDOCK.z0 + 0.3, x1: PADDOCK.x1 - 0.3, z1: PADDOCK.z1 - 0.3 }
   const GOAT_RECT = { x0: PEN.x0 + 0.7, z0: PEN.z0 + 0.7, x1: PEN.x1 - 0.7, z1: PEN.z1 - 0.7 }
   let farmhand: FarmhandView | null = null
   let coopHens: CoopHens | null = null
@@ -983,8 +983,14 @@ async function boot(): Promise<void> {
       // pasture-deed bonus bought first) so reloads never change income
       if (fresh) for (let i = 0; i < sheepCount(state.expansion); i++) flock.addSheep()
     } else if (def.id === 'stable') {
+      // the stable is just the building — Hazel is her own purchase now
       addBuilding(buildStable, def, fresh)
+    } else if (def.id === 'horse') {
       grazers.add('horse', HORSE_RECT, 1)
+      if (fresh) {
+        sfx.hooves()
+        sparkleBurst(scene, new Vector3(def.site[0], 1.0, def.site[1]), false, 10)
+      }
     } else if (def.id === 'goats') {
       grazers.add('goat', GOAT_RECT, 2)
     } else if (def.id === 'shop') {
@@ -997,6 +1003,10 @@ async function boot(): Promise<void> {
       addBuilding(buildShop, def, fresh)
       customers.premium = SHOP_PREMIUM
       customers.queueMax = SHOP_QUEUE_MAX
+      // the serving counter moves across the road — customers reroute to the
+      // shop front, and anyone mid-queue walks over (a nice opening-day beat)
+      marketToShop(def.site)
+      if (fresh) reflowQueue()
     } else if (def.id === 'coop') {
       addBuilding(buildCoopHouse, def, fresh)
       coopHens = new CoopHens(scene, COOP_AT, def.yaw, COOP_HENS, 0xc00b)
@@ -1037,8 +1047,10 @@ async function boot(): Promise<void> {
     }
     // upgrade signs can't stand inside the building they replace
     const SIGN_OFFSET: Partial<Record<ProjectId, [number, number]>> = {
-      shop: [-3.0, 0.6],
+      shop: [-2.8, -1.6], // beside the lot, clear of the queue spots at z-2.4
       goats: [1.6, -3.4],
+      stable: [3.4, 0.8], // east of the paddock, on the walking line
+      horse: [3.4, -1.8], // her own sign beside the stable's
     }
     for (const def of avail) {
       if (projectSigns.has(def.id)) continue
@@ -1060,7 +1072,9 @@ async function boot(): Promise<void> {
     placeDeedSign()
     const center = def.field
       ? new Vector3((def.field.x0 + def.field.x1) / 2, 0, (def.field.z0 + def.field.z1) / 2)
-      : player.pos.clone()
+      : def.lot
+        ? new Vector3(def.lot[0], 0, def.lot[1])
+        : player.pos.clone()
     // views are created NOW (hidden tiny) so plot indices match game state
     // throughout the dig — the reveal only pops them to full size
     const newViews: PlotView[] = []
@@ -1247,10 +1261,12 @@ async function boot(): Promise<void> {
         hud.setWheat(state.wheat)
         sfx.hooves()
         player.gesture(engine.uTime.value)
-        // she gallops out to the road and off east toward town
+        // she gallops from her west paddock across the farm, out the south
+        // gate, and off east down the road toward town — the whole farm
+        // watches her go (that run IS the delivery story)
         grazers.sendRun(
           'horse',
-          [new Vector3(13.5, 0, 4.2), new Vector3(16.5, 0, 9.8), new Vector3(21, 0, 11)],
+          [new Vector3(-8.2, 0, 0.6), new Vector3(0.9, 0, 9.4), new Vector3(0.9, 0, 11), new Vector3(21, 0, 11.2)],
           DELIVERY_RUN_TIME - 12,
         )
         const s = cam.screenPos(STABLE_AT.clone().setY(1.6))
@@ -1271,7 +1287,8 @@ async function boot(): Promise<void> {
           dig: def.kind !== 'building',
           reveal: () => applyProject(def, true),
           done: () => {
-            hud.showBanner(`${def.name}!`, def.flavor)
+            // the banner answers "what does this DO for me" — purpose first
+            hud.showBanner(`${def.name}!`, def.earns)
             music.duck()
             sfx.fanfare()
             rareSlowMo()
@@ -1484,7 +1501,7 @@ async function boot(): Promise<void> {
           },
         )
       }
-      if (p.distanceTo(STAND_POS) < STAND_R) tryServe()
+      if (p.distanceTo(MARKET.pos) < STAND_R) tryServe()
 
       // stand still on an empty plot for a moment -> wheat plants itself.
       // Only after the player has planted once BY CHOICE (an action the game
@@ -1702,7 +1719,7 @@ async function boot(): Promise<void> {
         : chicken.cratePending
         ? chicken.crateWorldPos
         : customerWaiting
-          ? STAND_POS
+          ? MARKET.pos
           : game.deedStatus() === 'ok' && deedSign
             ? deedSign.at
             : buildSignAt
@@ -1842,18 +1859,40 @@ async function boot(): Promise<void> {
   let last = performance.now()
   const loop = (now: number): void => {
     requestAnimationFrame(loop)
+    // self-healing viewport: iOS standalone misses resize events — if the
+    // window drifted from what we sized for, fix it before drawing
+    if (viewW() !== sizedW || viewH() !== sizedH) resize()
     const dt = Math.min((now - last) / 1000, 0.1)
     last = now
     engine.advance(dt * (now < slowUntilReal ? 0.2 : 1))
   }
   requestAnimationFrame(loop)
 
+  // updateStyle=false: the canvas is CSS-pinned to fill the viewport
+  // (index.html), so a missed resize event can never leave a background bar —
+  // iOS standalone (Add to Home Screen) settles its viewport AFTER boot and
+  // doesn't reliably fire window resize for it. Size from visualViewport when
+  // present: after a rotation iOS can keep reporting STALE innerWidth/Height
+  // for a while, but the visual viewport is already correct.
+  const viewW = (): number => Math.round(visualViewport?.width ?? innerWidth)
+  const viewH = (): number => Math.round(visualViewport?.height ?? innerHeight)
+  let sizedW = 0
+  let sizedH = 0
   const resize = (): void => {
-    cam.resize()
-    renderer.setSize(innerWidth, innerHeight)
-    composer.setSize(innerWidth, innerHeight)
+    sizedW = viewW()
+    sizedH = viewH()
+    cam.resize(sizedW, sizedH)
+    renderer.setSize(sizedW, sizedH, false)
+    composer.setSize(sizedW, sizedH)
   }
   addEventListener('resize', resize)
+  visualViewport?.addEventListener('resize', resize)
+  addEventListener('orientationchange', () => {
+    resize()
+    // iOS reports stale innerHeight for a beat after rotating — re-measure
+    // on the next frames (the per-frame drift check below also catches it)
+    requestAnimationFrame(resize)
+  })
   resize()
   addEventListener('pagehide', saveNow)
   // crops keep growing while the tab/app is in the background: the engine's
