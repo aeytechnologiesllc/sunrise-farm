@@ -115,6 +115,27 @@ export class FollowCamera {
 
   // ---- ceremony focus (visual only; never locks input) --------------------
 
+  private cineTarget: Vector3 | null = null
+
+  /** CINEMATIC follow: focus glides toward a moving target every frame —
+   * smooth pursuit with zero tween restarts (the old per-tick re-tweening
+   * read as stutter). Pass null to hand attention back to the farmer. */
+  cineFollow(target: Vector3 | null): void {
+    if (target) {
+      if (!this.cineTarget) {
+        this.cineTarget = target.clone()
+        if (this.focusW.value === 0) this.focusPoint.copy(this.anchor)
+        gsap.killTweensOf(this.focusW)
+        gsap.to(this.focusW, { value: 1, duration: 0.8, ease: 'power2.inOut' })
+      } else {
+        this.cineTarget.copy(target)
+      }
+    } else if (this.cineTarget) {
+      this.cineTarget = null
+      this.release(0.9)
+    }
+  }
+
   /** glide attention to a world point; returns the tween for sequencing */
   focusOn(p: Vector3, dur = 0.9): gsap.core.Tween {
     gsap.killTweensOf(this.focusW)
@@ -138,6 +159,7 @@ export class FollowCamera {
 
   /** smooth-damp toward the farmer (+ look-ahead), then place the camera */
   follow(playerPos: Vector3, vel: Vector3, dt: number): void {
+    if (this.cineTarget) this.focusPoint.lerp(this.cineTarget, 1 - Math.exp(-3.4 * dt))
     const k = 1 - Math.exp(-DAMP * dt)
     const lookX = clampAbs(vel.x * LOOKAHEAD, LOOKAHEAD_MAX)
     const lookZ = clampAbs(vel.z * LOOKAHEAD, LOOKAHEAD_MAX)

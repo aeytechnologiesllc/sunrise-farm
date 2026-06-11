@@ -19,6 +19,7 @@ import {
 import { mulberry32, type Rng } from '../game/rng'
 import { tint, type Assets, type ModelKey } from './assets'
 import { assertSpawnScale, measuredHeight } from './scale'
+import { applyWool, setCoatHSL } from './wool'
 
 export type GrazerKind = 'horse' | 'cow' | 'goat'
 
@@ -50,11 +51,16 @@ const BAND: Record<GrazerKind, { target: number; spread: number }> = {
 
 /** per-kind tint half-ranges (hueShift, lightness) so a herd reads as
  * individuals — cows get the widest lightness swing (patchy hides), horses
- * lean on hue (bay/chestnut drift), goats a little of both */
-const VARIETY: Record<GrazerKind, { hue: number; light: number }> = {
+ * lean on hue (bay/chestnut drift). Goats additionally SET a warm tan `base`
+ * coat first: they reuse the sheep GLB whose material is pure white, and
+ * offsetting the hue of white is a no-op — without a saturated base a goat
+ * can only ever read as a dirty gray sheep. The tan multiplies the atlas, so
+ * fleece turns tan, face/legs turn dark brown, and the hue/light variety
+ * finally becomes visible (tan-to-brown drift per animal). */
+const VARIETY: Record<GrazerKind, { hue: number; light: number; base?: { h: number; s: number; l: number } }> = {
   horse: { hue: 0.03, light: 0.08 },
   cow: { hue: 0.015, light: 0.12 },
-  goat: { hue: 0.04, light: 0.08 },
+  goat: { hue: 0.04, light: 0.08, base: { h: 0.08, s: 0.55, l: 0.72 } },
 }
 
 /** grazer kinds double as their asset-registry keys ('horse' / 'cow' / 'goat'
@@ -133,7 +139,11 @@ export class Grazers {
     g.scale.setScalar(s)
     assertSpawnScale(kind, rawH * s, min, max)
     const v = VARIETY[kind]
+    if (v.base) setCoatHSL(g, v.base.h, v.base.s, v.base.l)
     tint(g, (this.rng.next() - 0.5) * v.hue, (this.rng.next() - 0.5) * v.light)
+    // goats ride the box-bodied sheep rig — seeded fleece displacement
+    // de-blobs the silhouette (after sizing, so the scale band still holds)
+    if (kind === 'goat') applyWool(g, Math.floor(this.rng.next() * 0xffffffff))
     g.position.copy(this.spotIn(rect))
     const heading = this.rng.next() * Math.PI * 2
     g.rotation.y = heading

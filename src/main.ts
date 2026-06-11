@@ -122,11 +122,14 @@ async function boot(): Promise<void> {
   veil.innerHTML = '<div>🌻 Sunrise Farm</div><div id="ldp" style="font-size:15px;font-weight:700">loading…</div>'
   document.body.appendChild(veil)
 
+  // phones get a lighter pipeline: lower DPR cap, no MSAA, cheaper god rays —
+  // the owner's device reported lag and post-processing is the big lever
+  const isCoarse = matchMedia('(pointer: coarse)').matches
   const renderer = new WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' })
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = PCFShadowMap
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarse ? 1.7 : 2))
   document.body.appendChild(renderer.domElement)
 
   const scene = new Scene()
@@ -134,7 +137,7 @@ async function boot(): Promise<void> {
 
   // warm ACES grade; the effect pass (god rays + bloom + vignette) is added
   // after the sky exists — god rays need the sun disk as a light source
-  const composer = new EffectComposer(renderer, { multisampling: 4 })
+  const composer = new EffectComposer(renderer, { multisampling: isCoarse ? 0 : 4 })
   composer.addPass(new RenderPass(scene, cam.camera))
   // manual info reset: the composer runs multiple passes per frame and
   // autoReset would hide the real draw-call total from the dev driver
@@ -170,8 +173,8 @@ async function boot(): Promise<void> {
         density: 0.96,
         decay: 0.93,
         weight: 0.25,
-        samples: 32,
-        resolutionScale: 0.5,
+        samples: isCoarse ? 16 : 32,
+        resolutionScale: isCoarse ? 0.35 : 0.5,
       }),
       new BloomEffect({ intensity: 0.42, luminanceThreshold: 0.82, mipmapBlur: true }),
       new VignetteEffect({ darkness: 0.3, offset: 0.26 }),
@@ -413,13 +416,15 @@ async function boot(): Promise<void> {
   let fetchCool = 0
   const letterbox = new Letterbox()
   let fetchCine = false
+  let cineEnding = false
   let cineStarted = 0
-  let cineTick = 0
+  const cineAim = new Vector3()
   const endFetchCine = (): void => {
     if (!fetchCine) return
     fetchCine = false
+    cineEnding = false
     letterbox.hide()
-    cam.release(0.9)
+    cam.cineFollow(null)
   }
   const dropStick = (): void => {
     if (stick) {
@@ -438,24 +443,42 @@ async function boot(): Promise<void> {
     stick.rotation.set(0, 0, Math.PI / 2)
   }
   dog.onFetchDone = () => {
-    endFetchCine()
+    // THE PAYOFF — the part that was missing. Rex drops the stick at the
+    // farmer's feet, the farmer kneels for the good-dog pat, hearts pop,
+    // the reward lands... and only THEN do the bars lift. A complete scene.
+    cineEnding = true
     if (stick) {
       dog.group.remove(stick)
       scene.add(stick)
       stick.position.copy(dog.group.position).setY(0.04)
-      stick.rotation.set(Math.PI / 2, 0, Math.random() * 3)
+      stick.rotation.set(Math.PI / 2, 0, 1.2)
     }
-    const treasure = game.rollFetchTreasure()
-    game.fetchReturned(treasure)
     sfx.bark()
-    heartBurst(scene, dog.group.position.clone().setY(0.6))
-    if (treasure > 0) {
-      fountainFrom(dog.group.position.clone().setY(0.5), treasure, false)
-      const s = cam.screenPos(dog.group.position.clone().setY(1.1))
-      if (!s.behind) hud.floatText(s, 'Rex dug something up! \u{1F9B4}')
-    }
-    fetchCool = 16
-    saveNow()
+    const tl = gsap.timeline()
+    tl.call(() => {
+      player.gesture(engine.uTime.value) // the pat
+      sfx.heart()
+      heartBurst(scene, dog.group.position.clone().setY(0.6))
+    }, undefined, 0.45)
+    tl.call(() => {
+      const treasure = game.rollFetchTreasure()
+      game.fetchReturned(treasure)
+      const at = dog.group.position.clone().setY(0.5)
+      if (treasure > 0) {
+        sfx.kaching()
+        fountainFrom(at, treasure, false)
+        const s = cam.screenPos(at.clone().setY(1.1))
+        if (!s.behind) hud.floatText(s, 'Rex dug something up! \u{1F9B4}')
+      } else {
+        const s = cam.screenPos(at.clone().setY(1.1))
+        if (!s.behind) hud.floatText(s, 'good boy \u{2764}\u{FE0F}')
+      }
+    }, undefined, 1.15)
+    tl.call(() => {
+      endFetchCine()
+      fetchCool = 16
+      saveNow()
+    }, undefined, 2.1)
   }
   const throwStick = (): void => {
     dropStick()
@@ -477,13 +500,13 @@ async function boot(): Promise<void> {
     if (!dog.fetch(target)) return
     sfx.whistle()
     player.gesture(engine.uTime.value)
-    // roll camera: letterbox in, eye on the flight line, then ride alongside
-    // Rex out and back until the handoff
+    // roll camera: letterbox in, eye on the flight line, then the per-frame
+    // smooth follow rides alongside Rex out and back until the handoff
     fetchCine = true
+    cineEnding = false
     cineStarted = engine.uTime.value
-    cineTick = 0
+    cineAim.copy(player.pos).lerp(target, 0.62).setY(0.9)
     letterbox.show('rex is on it — tap to skip')
-    cam.focusOn(player.pos.clone().lerp(target, 0.6).setY(0.9), 1.1)
     const s = new Mesh(
       new CylinderGeometry(0.035, 0.05, 0.6, 6),
       new MeshStandardMaterial({ color: '#7a5a36', roughness: 1 }),
@@ -808,15 +831,9 @@ async function boot(): Promise<void> {
     flock.update(dt, player.pos, dog.group.position, state.expansion)
     construction.update(dt)
     grazers.update(dt, player.pos)
-    // fetch cinema: the camera rides Rex; the scene ends at the handoff
-    if (fetchCine) {
-      cineTick -= dt
-      if (cineTick <= 0) {
-        cineTick = 0.45
-        cam.moveFocus(dog.group.position.clone().setY(0.55), 0.5)
-      }
-      if (!dog.fetching) endFetchCine()
-    }
+    // fetch cinema safety: if the mission system yanked Rex off the job,
+    // close the scene (the normal ending is scripted in onFetchDone)
+    if (fetchCine && !cineEnding && !dog.fetching) endFetchCine()
     if (farmhand) {
       const info = plots.map((v, i) => {
         const c = game.plotAt(i)?.crop
@@ -1108,6 +1125,12 @@ async function boot(): Promise<void> {
     farmhand?.frame(dt)
     construction.frame(dt)
     dayCycle.update(dt)
+    // fetch cinema camera: stick flight first, then smooth-pursuit on Rex
+    if (fetchCine) {
+      cam.cineFollow(
+        cineEnding || t - cineStarted > 0.75 ? dog.group.position.clone().setY(0.55) : cineAim,
+      )
+    }
     for (const v of customerViews.values()) v.frame(dt)
     for (const p of plots) p.pulse(t)
     clouds.update(dt)

@@ -19,6 +19,7 @@ import { mulberry32, type Rng } from '../game/rng'
 import { tint, type Assets } from './assets'
 import { WORLD_BOUNDS } from './scenery'
 import { assertSpawnScale, measuredHeight, SCALE, sheepScaleFor } from './scale'
+import { applyWool, setCoatHSL } from './wool'
 
 const GRAZE_SPEED = 0.7
 const ESCAPE_SPEED = 1.6
@@ -111,7 +112,11 @@ export class Flock {
     const s = sheepScaleFor(this.rng, rawH)
     g.scale.setScalar(s)
     assertSpawnScale('sheep', rawH * s, SCALE.sheep.min, SCALE.sheep.max)
+    // warm cream fleece (the raw atlas renders concrete-gray) + per-sheep drift
+    setCoatHSL(g, 0.09, 0.14, 0.82 + (this.rng.next() - 0.5) * 0.08)
     tint(g, (this.rng.next() - 0.5) * 0.02, (this.rng.next() - 0.5) * 0.06)
+    // seeded fleece displacement (after sizing, so the scale band still holds)
+    applyWool(g, Math.floor(this.rng.next() * 0xffffffff))
     const x = PEN.x0 + 0.9 + this.rng.next() * (PEN.x1 - PEN.x0 - 1.8)
     const z = PEN.z0 + 0.9 + this.rng.next() * (PEN.z1 - PEN.z0 - 1.8)
     g.position.set(x, 0, z)
