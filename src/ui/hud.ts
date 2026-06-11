@@ -339,6 +339,13 @@ export class Hud {
     return this.coinValue
   }
 
+  /** screen center of the coin pill — fallback fountain origin when the
+   * paying world point is behind the camera (mirrored projections lied) */
+  coinPillPos(): { x: number; y: number } {
+    const r = this.coinPill.getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  }
+
   get coinsInFlight(): boolean {
     return this.flights > 0
   }

@@ -23,6 +23,7 @@ import {
   Scene,
   SphereGeometry,
   SRGBColorSpace,
+  TorusGeometry,
   Vector3,
   BoxGeometry,
   CylinderGeometry,
@@ -35,7 +36,7 @@ import { PROJECTS } from '../game/projects'
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
-import { groundDetailCanvas, toTexture, woodCanvas } from './textures'
+import { groundDetailCanvas, makeCanvas, toTexture, woodCanvas } from './textures'
 
 export const STAND_POS = new Vector3(0.5, 0, 7)
 export const NEST_POS = new Vector3(-4.5, 0, 1.5)
@@ -45,6 +46,10 @@ export const BARN_POS = new Vector3(-11.5, 0, -3.5)
 export const PLAYER_SPAWN = new Vector3(-0.6, 0, 4.2)
 /** the customer road runs east-west across the south of the farm */
 export const ROAD_Z = 11
+/** the Millbrook gate — where the road leaves the farm for town. Past the
+ * player bound (maxX 22) but inside the tree ring; the delivery horse gallops
+ * east THROUGH the gate and must only despawn beyond this x. */
+export const TOWN_GATE_X = 23.6
 /** south gate in the picket fence (stand path + customer route) */
 export const GATE_SOUTH_X = STAND_POS.x + 0.4
 /** customers queue beside the stand's east edge — visible from the follow cam */
@@ -548,6 +553,7 @@ export function buildMeadow(scene: Scene, assets: Assets): GrassField {
   batch.flush(scene)
 
   buildBarn(scene)
+  buildTownGate(scene)
   return grass
 }
 
@@ -805,6 +811,135 @@ function prismGeometry(w: number, h: number, d: number): BufferGeometry {
   geo.setAttribute('position', new BufferAttribute(new Float32Array(v), 3))
   geo.computeVertexNormals()
   return geo
+}
+
+// ---- the Millbrook gate (east road exit) ----------------------------------------------
+
+/** Weathered plank sign: dark wood grain, warm cream 'MILLBROOK' lettering
+ * with a painted right-arrow pointing on toward town, wear speckle so it
+ * reads as years-old roadside carpentry — same canvas quality bar as the
+ * deed signs, never a flat-color slab. */
+function millbrookSignCanvas(rng: Rng): HTMLCanvasElement {
+  const W = 320
+  const H = 100
+  const { c, g } = makeCanvas(W, H)
+  g.fillStyle = '#43321f'
+  g.fillRect(0, 0, W, H)
+  // three planks with seams + grain streaks
+  for (const seam of [33, 66]) {
+    g.strokeStyle = 'rgba(24,16,8,0.6)'
+    g.lineWidth = 2
+    g.beginPath()
+    g.moveTo(0, seam + 0.5)
+    g.lineTo(W, seam + 0.5)
+    g.stroke()
+  }
+  for (let i = 0; i < 70; i++) {
+    const y = rng.next() * H
+    const x = rng.next() * W
+    const len = 20 + rng.next() * 70
+    g.strokeStyle = rng.next() > 0.5 ? 'rgba(96,72,42,0.4)' : 'rgba(40,28,14,0.45)'
+    g.lineWidth = 0.8 + rng.next() * 1.2
+    g.beginPath()
+    g.moveTo(x, y)
+    g.quadraticCurveTo(x + len / 2, y + (rng.next() - 0.5) * 4, x + len, y)
+    g.stroke()
+  }
+  // thin cream border, slightly worn
+  g.strokeStyle = 'rgba(238,222,180,0.8)'
+  g.lineWidth = 3
+  g.strokeRect(7, 7, W - 14, H - 14)
+  // lettering + right-arrow to town
+  g.fillStyle = '#f2e3bd'
+  g.font = '800 38px Trebuchet MS, sans-serif'
+  g.textAlign = 'center'
+  g.fillText('MILLBROOK', 132, 64)
+  g.strokeStyle = '#f2e3bd'
+  g.lineWidth = 7
+  g.beginPath()
+  g.moveTo(248, 50)
+  g.lineTo(288, 50)
+  g.stroke()
+  g.beginPath()
+  g.moveTo(284, 36)
+  g.lineTo(304, 50)
+  g.lineTo(284, 64)
+  g.closePath()
+  g.fill()
+  // wear speckle: paint flecks gone dark + sun-bleached chips
+  for (let i = 0; i < 90; i++) {
+    g.fillStyle = rng.next() > 0.5 ? '#2c2013' : '#caa86a'
+    g.globalAlpha = 0.08 + rng.next() * 0.14
+    g.beginPath()
+    g.arc(rng.next() * W, rng.next() * H, 0.8 + rng.next() * 2.2, 0, Math.PI * 2)
+    g.fill()
+  }
+  g.globalAlpha = 1
+  return c
+}
+
+/** Rustic wooden gate marking where the road hands the horse off to town —
+ * the road's permanent east landmark, so the delivery horse exits THROUGH
+ * something instead of vanishing in plain sight. Two capped posts flank the
+ * road at z = ROAD_Z ± 2.1, a crossbeam spans them at 2.7 (the road passes
+ * UNDER it) and the painted MILLBROOK board hangs beneath on short hangers.
+ * It stands at TOWN_GATE_X = 23.6: past the player bound (maxX 22), inside
+ * the tree ring (radius 23.5+), and safe from trunks because forestClear
+ * voids the whole |z − ROAD_Z| < 3 band. All structural wood merges into ONE
+ * static mesh; the sign board is its own small mesh for its painted face.
+ * Deliberately NOT an occluder — thin posts must never yank the camera in. */
+function buildTownGate(scene: Scene): void {
+  const rng = mulberry32(23611)
+  const woodTex = toTexture(woodCanvas(rng, '#6f5234'), true)
+  const wood = new MeshStandardMaterial({ map: woodTex, roughness: 0.95 })
+  const geos: BufferGeometry[] = []
+
+  // posts + caps flanking the road, with knee braces tucking into the beam
+  for (const dz of [-2.1, 2.1]) {
+    const post = new BoxGeometry(0.28, 3.1, 0.28)
+    post.translate(TOWN_GATE_X, 1.55, ROAD_Z + dz)
+    geos.push(post)
+    const cap = new BoxGeometry(0.42, 0.12, 0.42)
+    cap.translate(TOWN_GATE_X, 3.16, ROAD_Z + dz)
+    geos.push(cap)
+    const brace = new BoxGeometry(0.09, 0.78, 0.09)
+    brace.rotateX(dz < 0 ? Math.PI / 4 : -Math.PI / 4)
+    brace.translate(TOWN_GATE_X, 2.34, ROAD_Z + dz - Math.sign(dz) * 0.36)
+    geos.push(brace)
+  }
+  // crossbeam overhead — 4.9 long so it overhangs each post by ~0.35
+  const beam = new BoxGeometry(0.2, 0.26, 4.9)
+  beam.translate(TOWN_GATE_X, 2.7, ROAD_Z)
+  geos.push(beam)
+  // short hangers dropping from beam underside to the sign board's top edge
+  for (const hz of [-0.6, 0.6]) {
+    const hang = new BoxGeometry(0.05, 0.18, 0.05)
+    hang.translate(TOWN_GATE_X, 2.51, ROAD_Z + hz)
+    geos.push(hang)
+  }
+  const merged = mergeGeometries(geos)
+  if (merged) {
+    const frame = new Mesh(merged, wood)
+    frame.castShadow = true
+    frame.receiveShadow = true
+    scene.add(frame)
+  }
+
+  // hanging sign board — painted faces read along the road (±x), wood edges
+  const paint = new MeshStandardMaterial({ map: toTexture(millbrookSignCanvas(rng)), roughness: 0.85 })
+  const board = new Mesh(new BoxGeometry(0.07, 0.55, 1.7), [paint, paint, wood, wood, wood, wood])
+  board.position.set(TOWN_GATE_X, 2.18, ROAD_Z)
+  board.castShadow = true
+  scene.add(board)
+
+  // lucky horseshoe nailed to the north post's farm-facing side, gap up
+  const shoeGeo = new TorusGeometry(0.085, 0.022, 8, 18, Math.PI * 1.5)
+  shoeGeo.rotateZ(Math.PI * 0.75)
+  shoeGeo.rotateY(-Math.PI / 2)
+  const shoe = new Mesh(shoeGeo, new MeshStandardMaterial({ color: '#3d3b38', roughness: 0.6, metalness: 0.55 }))
+  shoe.position.set(TOWN_GATE_X - 0.16, 1.62, ROAD_Z - 2.1)
+  shoe.castShadow = true
+  scene.add(shoe)
 }
 
 // ---- roadside stand -----------------------------------------------------------------

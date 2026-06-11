@@ -67,9 +67,11 @@ import {
   NEST_POS,
   OCCLUDERS,
   PLAYER_SPAWN,
+  TOWN_GATE_X,
   WORLD_BOUNDS,
 } from './world/scenery'
 import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
+import { orderFor } from './game/orders'
 import {
   availableProjects,
   GREENHOUSE_PLOTS,
@@ -137,6 +139,7 @@ declare global {
       ray: (nx: number, ny: number) => Array<{ d: number; n: number | undefined; name: string }>
       draws: () => number
       warp: (x: number, z: number) => void
+      lookYaw: (y: number) => void
     }
     __step: (s: number) => void
   }
@@ -369,11 +372,16 @@ async function boot(): Promise<void> {
   })
   game.on('deliveryDone', (e) => {
     grazers.setHidden('horse', false) // back from town, whatever the path
-    sfx.hooves()
-    sfx.kaching()
-    fountainFrom(STABLE_AT.clone().setY(1.0), e.coins, false)
-    const s = cam.screenPos(STABLE_AT.clone().setY(1.8))
-    if (!s.behind) hud.floatText(s, `Hazel's home! +${e.coins} \u{1FA99}`)
+    // never let the payday fanfare fire over a cutscene — bank quietly
+    if (!sleepActive && !construction.active) {
+      sfx.hooves()
+      sfx.kaching()
+      fountainFrom(STABLE_AT.clone().setY(1.0), e.coins, false)
+      const s = cam.screenPos(STABLE_AT.clone().setY(1.8))
+      // the itemized receipt: WHO bought the load makes the trip a story
+      const o = orderFor(state.day, Math.max(0, state.deliveriesSent - 1))
+      if (!s.behind) hud.floatText(s, `Hazel's home! ${o.buyer} paid ${e.coins} \u{1FA99}`)
+    }
     saveNow()
   })
 
@@ -411,6 +419,13 @@ async function boot(): Promise<void> {
 
   // comeback pan: glide across everything that got ready while away
   if (offline) {
+    // away-progress is a reward list, not a silent ledger: Hazel's offline
+    // payday used to bank 34c without a word
+    if (offline.offlineDelivery) {
+      gsap.delayedCall(1.2, () =>
+        hud.showBanner('While you were away \u{1F305}', 'Hazel came home from Millbrook — 34 coins in the saddlebag'),
+      )
+    }
     const readySpots: Vector3[] = []
     for (let i = 0; i < plots.length; i++) {
       const crop = game.plotAt(i)?.crop
@@ -437,6 +452,9 @@ async function boot(): Promise<void> {
 
   const fountainFrom = (world: Vector3, coins: number, golden: boolean): void => {
     const from = cam.screenPos(world)
+    // behind-camera projections mirror across the screen — coins would fly in
+    // from a phantom corner (audit finding); land them on the HUD coin pill
+    if (from.behind) return hud.coinFountain(hud.coinPillPos(), splitCoins(coins, fountainCount(coins)), golden, () => sfx.tink())
     hud.coinFountain(from, splitCoins(coins, fountainCount(coins)), golden, () => sfx.tink())
   }
 
@@ -1293,20 +1311,30 @@ async function boot(): Promise<void> {
         saveNow()
       }
     } else if (id === 'deliver' && near.stable) {
+      // the order is named BEFORE the send so the toast and the receipt agree
+      const order = orderFor(state.day, state.deliveriesSent)
       if (game.sendDelivery()) {
         hud.setWheat(state.wheat)
         sfx.hooves()
         player.gesture(engine.uTime.value)
         // she gallops from her west paddock across the farm, out the south
-        // gate, and off east down the road toward town — the whole farm
-        // watches her go (that run IS the delivery story)
+        // gate, and off east down the road THROUGH the Millbrook gate — the
+        // whole farm watches her go (that run IS the delivery story)
         grazers.sendRun(
           'horse',
-          [new Vector3(-8.2, 0, 0.6), new Vector3(0.9, 0, 9.4), new Vector3(0.9, 0, 11), new Vector3(21, 0, 11.2)],
+          [
+            new Vector3(-8.2, 0, 0.6),
+            new Vector3(0.9, 0, 9.4),
+            new Vector3(0.9, 0, 11),
+            new Vector3(TOWN_GATE_X + 1.8, 0, 11.2),
+          ],
           DELIVERY_RUN_TIME - 12,
         )
         const s = cam.screenPos(STABLE_AT.clone().setY(1.6))
-        if (!s.behind) hud.floatText(s, 'Hazel is off to town! \u{1F434}')
+        if (!s.behind) {
+          hud.floatText(s, `Off to Millbrook — ${order.buyer}'s order \u{1F434}`)
+          hud.floatText({ x: s.x, y: s.y + 26 }, '-1 \u{1F33E}')
+        }
         saveNow()
       }
     } else if (id === 'build' && near.project) {
@@ -1662,7 +1690,7 @@ async function boot(): Promise<void> {
             label: 'Send Hazel to town',
             sub:
               ds === 'ok'
-                ? 'feed 1 \u{1F33E} \u{2192} 26-42c'
+                ? `feed 1 \u{1F33E} \u{2192} 26-42c \u{B7} ${Math.round(DELIVERY_RUN_TIME)}s trip`
                 : ds === 'feed'
                   ? 'needs 1 wheat to feed her'
                   : ds === 'out'
@@ -1700,7 +1728,10 @@ async function boot(): Promise<void> {
           ? '\u{1F319} Plant before bed — crops grow overnight'
           : "\u{1F319} The sun's setting — head home for supper"
       } else if (customerWaiting) {
-        chipText = 'A customer is waiting at the stand!'
+        chipText = MARKET.atShop ? 'A customer is waiting at the shop!' : 'A customer is waiting at the stand!'
+      } else if (state.produce.deliveryT > 0 && game.hasProject('horse')) {
+        // the trip is trackable: rounded so the chip doesn't churn per frame
+        chipText = `\u{1F434} Hazel's in Millbrook — back in ~${Math.max(5, Math.ceil(state.produce.deliveryT / 5) * 5)}s`
       } else if (state.produce.woolReady && game.hasProject('sheep')) {
         chipText = "\u{2702}\u{FE0F} The flock's wool is ready — shear it at the pen"
       } else if (state.produce.milkReady && game.hasProject('goats')) {
@@ -1955,12 +1986,17 @@ async function boot(): Promise<void> {
       const away = (Date.now() - hiddenAt) / 1000
       hiddenAt = 0
       if (away > 3) {
-        catchUp(state, away)
+        const res = catchUp(state, away)
         for (let i = 0; i < plots.length; i++) {
           const c = game.plotAt(i)?.crop ?? null
           plots[i].setCrop(c ? c.kind : null, c ? Game.stageOf(c.total, c.remaining) : 0, false)
         }
         if (state.chicken.eggReady && chicken.settled) chicken.showEgg(false)
+        // only after a REAL absence (not a tab flick) — and never mid-scene
+        if (res.offlineDelivery && away > 120 && !sleepActive && !construction.active) {
+          grazers.setHidden('horse', false)
+          hud.showBanner('While you were away \u{1F305}', 'Hazel came home from Millbrook — 34 coins in the saddlebag')
+        }
         hud.setWheat(state.wheat)
         hud.setCoins(state.coins)
         saveNow()
@@ -2089,6 +2125,9 @@ async function boot(): Promise<void> {
       return n * stepS
     },
     sheetOff: () => document.getElementById('qa-sheet')?.remove(),
+    lookYaw: (y: number) => {
+      ;(cam as unknown as { yaw: number }).yaw = y
+    },
     camProbe: () => {
       const c = cam as unknown as Record<string, unknown>
       return {

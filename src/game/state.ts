@@ -65,6 +65,8 @@ export interface GameState {
   dayPhase: number
   /** wool/milk/delivery production timers (see game/produce.ts) */
   produce: Produce
+  /** lifetime deliveries — seeds WHO in Millbrook buys each load */
+  deliveriesSent: number
   /** session cooldowns that must survive reload (anti reload-exploit) */
   timers: { sow: number; fetch: number; herd: number }
   plots: PlotState[]
@@ -98,6 +100,7 @@ export function initialState(seed: number): GameState {
     dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
     produce: initialProduce(),
+    deliveriesSent: 0,
     timers: { sow: 0, fetch: 0, herd: 45 },
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
@@ -120,6 +123,9 @@ export function initialState(seed: number): GameState {
 export interface CatchUpResult {
   readyPlots: number[]
   eggBecameReady: boolean
+  /** Hazel finished her run while the app was closed (flat 34c was banked) —
+   * the welcome-back banner should SAY so instead of paying silently */
+  offlineDelivery: boolean
 }
 
 /** Advance timers by elapsed real seconds. Each timer completes at most
@@ -136,6 +142,7 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
     if (crop.remaining <= 0) readyPlots.push(i)
   }
   let eggBecameReady = false
+  let offlineDelivery = false
   const t = s.chicken.eggTimer
   if (t && t.remaining > 0) {
     t.remaining = Math.max(0, t.remaining - el)
@@ -156,9 +163,12 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       // HAZEL, not the building — the stable and the horse are separate buys
       stable: s.projects?.horse === true,
     })
-    if (ev.deliveryReturned) s.coins += 34
+    if (ev.deliveryReturned) {
+      s.coins += 34
+      offlineDelivery = true
+    }
   }
-  return { readyPlots, eggBecameReady }
+  return { readyPlots, eggBecameReady, offlineDelivery }
 }
 
 export function serialize(s: GameState): string {
@@ -203,6 +213,7 @@ export function deserialize(json: string | null): GameState | null {
     // older produce objects predate the coop eggs
     s.produce.eggsT ??= 150
     s.produce.eggsReady ??= false
+    s.deliveriesSent ??= 0
     // seasoned saves resume mission cadence at the REAL cooldown, not the
     // friendly first-time delay (reloading must never speed up payouts)
     s.timers ??= { sow: 0, fetch: 0, herd: s.harvests > 0 ? 150 : 45 }

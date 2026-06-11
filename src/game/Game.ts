@@ -427,7 +427,9 @@ export class Game {
   sendDelivery(): boolean {
     if (this.deliveryStatus() !== 'ok') return false
     this.state.wheat -= DELIVERY_FEED_WHEAT
-    return startDelivery(this.state.produce)
+    const ok = startDelivery(this.state.produce)
+    if (ok) this.state.deliveriesSent += 1
+    return ok
   }
 
   /** what today was worth — read BEFORE sleep() resets the ledger (the
