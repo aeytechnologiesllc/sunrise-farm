@@ -129,6 +129,10 @@ import { buildCoopAnnex, buildCoopHouse, CoopHens } from './world/coop'
 import { AnimationMixer, type AnimationAction } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
+
+/** every walk-in room (the registry in boot() holds each room's door,
+ * bounds, camera volume and occluder shell) */
+type RoomId = 'gh' | 'coop'
 const PLACE_NAMES: Record<PlaceId, string> = {
   stand: 'the Stand',
   shop: 'the Shop',
@@ -307,10 +311,10 @@ async function boot(): Promise<void> {
   // (the door swap handles both): idle off-world sets must never tax the
   // camera's per-frame occlusion raycast.
   const coopInterior = new CoopInterior(scene)
-  /** true while the player is inside the glasshouse set */
-  let inGreenhouse = false
-  /** true while the player is inside the henhouse set */
-  let inCoop = false
+  /** which walk-in room the player is inside (null = out on the farm).
+   * ANY-room gates read `room !== null`, room-specific verbs read
+   * `room === 'coop'` — a new room inherits every gate for free. */
+  let room: RoomId | null = null
   composer.addPass(
     new EffectPass(
       cam.camera,
@@ -460,7 +464,7 @@ async function boot(): Promise<void> {
       sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
     },
     canOpen: () =>
-      !sleepActive && !construction.active && !fetchCine && !roomBusy && !inGreenhouse && !inCoop && !carry.carrying && !hud.modalOpen,
+      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen,
   })
   const rebuildFenceMesh = (): void => {
     if (fenceMesh) {
@@ -515,13 +519,13 @@ async function boot(): Promise<void> {
       sfx.chime()
     }
     // glasshouse beds sparkle only while the player is actually in there
-    if (!game.isGreenhouse(e.plot) || inGreenhouse) {
+    if (!game.isGreenhouse(e.plot) || room === 'gh') {
       sparkleBurst(scene, plots[e.plot].center.clone().setY(0.8), false, 5)
     }
   })
   game.on('coopReady', () => {
     // an egg settles into its box — in the room you see it land
-    if (inCoop) {
+    if (room === 'coop') {
       coopInterior.sync(state.coopFlock)
       sfx.cluck()
     }
@@ -932,7 +936,7 @@ async function boot(): Promise<void> {
     // inGreenhouse can't happen via the button (near.home needs the real
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
-    if (sleepActive || construction.active || fetchCine || inGreenhouse || inCoop || carry.carrying || !dayCycle.atDusk) return
+    if (sleepActive || construction.active || fetchCine || room !== null || roomBusy || carry.carrying || !dayCycle.atDusk) return
     fenceEditor.close() // the day's fencing is done at dusk
     sleepActive = true
     sleepStarted = engine.uTime.value
@@ -1534,32 +1538,71 @@ async function boot(): Promise<void> {
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
   const PEN_CENTER = new Vector3((penNow.x0 + penNow.x1) / 2, 0, (penNow.z0 + penNow.z1) / 2)
 
-  // ---- the glasshouse door: walk up to it and the set fades up around you ----
+  // ---- the walk-in rooms: ONE registry drives doors, occluders, camera ----
   // (diner grammar — no button; the dip-to-black hides the off-world teleport)
-  const ghDoorDir = new Vector3()
-  /** just outside the shed door (its +z face sits 1.7u from the site center) */
-  const ghDoorOut = new Vector3()
-  /** where leaving drops you — beyond the enter trigger so it can't re-fire */
-  const ghExitSpot = new Vector3()
-  /** door triggers follow the shed wherever the layout puts it */
-  const recomputeGhDoor = (): void => {
-    const gp = placeOf(state, 'greenhouse')
-    ghDoorDir.set(Math.sin(gp.yaw), 0, Math.cos(gp.yaw))
-    ghDoorOut.set(gp.x, 0, gp.z).addScaledVector(ghDoorDir, 1.95)
-    ghExitSpot.set(gp.x, 0, gp.z).addScaledVector(ghDoorDir, 3.2)
+  interface RoomDef {
+    interior: {
+      setActive(on: boolean): void
+      spawnPos: Vector3
+      exitPos: Vector3
+      shell: Mesh[]
+    }
+    /** opaque rooms hide the farm's heavy roots + pull both camera planes in */
+    opaque: boolean
+    /** may this door fire at all? (project ownership) */
+    gate(): boolean
+    placeId: PlaceId
+    /** enter trigger sits this far out from the building center... */
+    doorGap: number
+    /** ...and walking out lands here — beyond the 0.95 radius, can't re-fire */
+    exitGap: number
+    bounds(): { minX: number; maxX: number; minZ: number; maxZ: number }
+    /** camera volume relative to the walk bounds (+shrink / −grow) + ceiling */
+    camInset: number
+    camMaxY: number
+    zoom: { min: number; max: number }
+    door: { dir: Vector3; out: Vector3; exitSpot: Vector3 }
+    onEnter?(): void
   }
-  recomputeGhDoor()
-  // ---- the henhouse door: same grammar at the coop's little shed ----
-  const coopDoorDir = new Vector3()
-  const coopDoorOut = new Vector3()
-  const coopExitSpot = new Vector3()
-  const recomputeCoopDoor = (): void => {
-    const cp = placeOf(state, 'coop')
-    coopDoorDir.set(Math.sin(cp.yaw), 0, Math.cos(cp.yaw))
-    coopDoorOut.set(cp.x, 0, cp.z).addScaledVector(coopDoorDir, 1.4)
-    coopExitSpot.set(cp.x, 0, cp.z).addScaledVector(coopDoorDir, 2.6)
+  const ROOMS: Record<RoomId, RoomDef> = {
+    gh: {
+      interior: ghInterior,
+      opaque: false, // glass: the farm stays visible, near plane stays 0.5
+      gate: () => game.hasProject('greenhouse'),
+      placeId: 'greenhouse',
+      doorGap: 1.95,
+      exitGap: 3.2,
+      bounds: () => ghInterior.bounds,
+      camInset: 0.4, // near 0.5 ⇒ near-safe radius ~0.85 off the glass
+      camMaxY: 5.7,
+      zoom: { min: 5, max: 11 },
+      door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
+    },
+    coop: {
+      interior: coopInterior,
+      opaque: true,
+      gate: () => game.hasProject('coop'),
+      placeId: 'coop',
+      doorGap: 1.4,
+      exitGap: 2.6,
+      bounds: () => coopInterior.boundsForTier(state.coopFlock.tier),
+      camInset: -0.1, // the lens may hug walls a touch closer than feet do
+      camMaxY: 3.9,
+      zoom: { min: 4.5, max: 9 },
+      door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
+      onEnter: () => coopInterior.sync(state.coopFlock),
+    },
   }
-  recomputeCoopDoor()
+  const ROOM_IDS = Object.keys(ROOMS) as RoomId[]
+  /** door triggers follow their building wherever the layout puts it */
+  const recomputeDoor = (id: RoomId): void => {
+    const def = ROOMS[id]
+    const at = placeOf(state, def.placeId)
+    def.door.dir.set(Math.sin(at.yaw), 0, Math.cos(at.yaw))
+    def.door.out.set(at.x, 0, at.z).addScaledVector(def.door.dir, def.doorGap)
+    def.door.exitSpot.set(at.x, 0, at.z).addScaledVector(def.door.dir, def.exitGap)
+  }
+  for (const id of ROOM_IDS) recomputeDoor(id)
 
   /** a building LANDED somewhere new: write the layout, then walk every
    * system that captured its position at boot (the Phase-0 review's land-
@@ -1573,7 +1616,7 @@ async function boot(): Promise<void> {
     } else if (id === 'coop') {
       COOP_AT.set(p.x, 0, p.z)
       coopHens?.moveTo(COOP_AT, p.yaw)
-      recomputeCoopDoor()
+      recomputeDoor('coop')
     } else if (id === 'stable') {
       STABLE_AT.set(p.x, 0, p.z)
       // the paddock (and the horse's grazing world) ride along — Grazers
@@ -1584,7 +1627,7 @@ async function boot(): Promise<void> {
       HORSE_RECT.x1 = pr.x1 - 0.3
       HORSE_RECT.z1 = pr.z1 - 0.3
     } else if (id === 'greenhouse') {
-      recomputeGhDoor()
+      recomputeDoor('gh')
     } else if (id === 'stand') {
       marketToStand(p)
       reflowQueue()
@@ -1636,7 +1679,7 @@ async function boot(): Promise<void> {
   /** may the player pick this up right now? (one scene at a time) */
   const canLift = (id: PlaceId): boolean => {
     if (carry.carrying || carry.settling || fenceEditor.active) return false
-    if (sleepActive || construction.active || fetchCine || roomBusy || inGreenhouse || inCoop || hud.modalOpen) return false
+    if (sleepActive || construction.active || fetchCine || roomBusy || room !== null || hud.modalOpen) return false
     if (id === 'farmhand') return false // he's a PERSON — he walks himself
     const ft = fieldTierOf(id)
     const owned =
@@ -1705,7 +1748,7 @@ async function boot(): Promise<void> {
    * dip-to-black hides the off-world teleport). Only the ACTIVE room's
    * shell joins OCCLUDERS, and OPAQUE rooms hide the farm's heavy roots
    * (grass chunks, the forest) — no window in there looks back anyway. */
-  const throughDoor = (which: 'gh' | 'coop', enter: boolean): void => {
+  const throughDoor = (which: RoomId, enter: boolean): void => {
     if (roomBusy) return
     roomBusy = true
     fenceEditor.close() // editing ends at any interior door
@@ -1713,51 +1756,43 @@ async function boot(): Promise<void> {
     sfx.crate() // the old hinge
     letterbox.fade(true, 0.22)
     gsap.delayedCall(0.26, () => {
-      inGreenhouse = which === 'gh' && enter
-      inCoop = which === 'coop' && enter
-      ghInterior.setActive(inGreenhouse)
-      coopInterior.setActive(inCoop)
-      for (const r of [ghInterior, coopInterior]) {
-        for (const m of r.shell) {
+      const def = ROOMS[which]
+      room = enter ? which : null
+      for (const id of ROOM_IDS) {
+        const r = ROOMS[id]
+        r.interior.setActive(id === room)
+        for (const m of r.interior.shell) {
           const i = OCCLUDERS.indexOf(m)
           if (i >= 0) OCCLUDERS.splice(i, 1)
         }
       }
-      const room = which === 'gh' ? ghInterior : coopInterior
-      if (enter) OCCLUDERS.push(...room.shell)
-      grass.setVisible(!inCoop)
-      forest.visible = !inCoop
-      // opaque rooms see nothing past their own walls: pull the far plane
-      // in and the WHOLE outside world frustum-culls itself (farm, dome,
-      // clouds — no per-system bookkeeping, mobile keeps its 60fps). The
-      // near plane pulls in too: at 0.5 a wall-tight lens slices the wall
-      // out of the frustum and shows the void behind it.
-      cam.camera.far = inCoop ? 64 : FAR_OUTSIDE
-      cam.camera.near = inCoop ? 0.15 : 0.5
+      if (enter) OCCLUDERS.push(...def.interior.shell)
+      // opaque rooms see nothing past their own walls: hide the farm's
+      // heavy roots and pull BOTH camera planes in — the whole outside
+      // world frustum-culls itself (mobile keeps its 60fps), and a
+      // wall-tight lens can't slice the wall out of the near frustum
+      const opaque = enter && def.opaque
+      grass.setVisible(!opaque)
+      forest.visible = !opaque
+      cam.camera.far = opaque ? 64 : FAR_OUTSIDE
+      cam.camera.near = opaque ? 0.15 : 0.5
       cam.camera.updateProjectionMatrix()
-      if (inCoop) coopInterior.sync(state.coopFlock)
-      const to = enter ? room.spawnPos : which === 'gh' ? ghExitSpot : coopExitSpot
+      if (enter) def.onEnter?.()
+      const to = enter ? def.interior.spawnPos : def.door.exitSpot
       player.pos.copy(to)
       prevPos.x = to.x
       prevPos.z = to.z
       lastCamPos.copy(to)
-      const bounds = !enter
-        ? WORLD_BOUNDS
-        : which === 'gh'
-          ? ghInterior.bounds
-          : coopInterior.boundsForTier(state.coopFlock.tier)
+      const bounds = enter ? def.bounds() : WORLD_BOUNDS
       player.setBounds(bounds)
-      // the camera lives in a slightly different volume than the player:
-      // the coop's lens may hug walls a touch closer (0.45 from the wall vs
-      // the 0.55 walk margin, near plane 0.15); the glasshouse keeps near
-      // 0.5, so its lens stays a full near-safe radius off the glass
+      // the camera lives in its own per-room volume (aim box = the walk
+      // bounds exactly, so the focus keeps a near-safe radius off walls)
       if (enter) {
-        const grow = which === 'gh' ? 0.4 : -0.1
-        const maxY = which === 'gh' ? 5.7 : 3.9
-        // aim box = the walk bounds exactly: the focus then always sits a
-        // full near-safe radius off the walls (0.43 > margin 0.26)
-        cam.setConfine(camBoxFromRect(bounds, grow, 1.0, maxY), camBoxFromRect(bounds, 0, 0.6, maxY))
-        cam.zoomRange(which === 'gh' ? 5 : 4.5, which === 'gh' ? 11 : 9)
+        cam.setConfine(
+          camBoxFromRect(bounds, def.camInset, 1.0, def.camMaxY),
+          camBoxFromRect(bounds, 0, 0.6, def.camMaxY),
+        )
+        cam.zoomRange(def.zoom.min, def.zoom.max)
       } else {
         cam.setConfine(null, null)
         cam.zoomRange(7, 17)
@@ -1765,14 +1800,13 @@ async function boot(): Promise<void> {
       // CUT the camera through the black — never fly it 170u across the map.
       // Walking in it faces up the aisle; walking out, back toward the farm.
       cam.snapTo(player.pos)
-      cam.yaw = enter ? 0 : Math.PI + placeOf(state, which === 'gh' ? 'greenhouse' : 'coop').yaw
+      cam.yaw = enter ? 0 : Math.PI + placeOf(state, def.placeId).yaw
       letterbox.fade(false, 0.45)
       gsap.delayedCall(0.5, () => {
         roomBusy = false
       })
     })
   }
-  const throughGhDoor = (enter: boolean): void => throughDoor('gh', enter)
   const onAction = (id: string): void => {
     touch()
     // belt-and-braces: a stale button can never start a second scene
@@ -1805,7 +1839,7 @@ async function boot(): Promise<void> {
         fountainFrom(COOP_AT.clone().setY(0.8), coins, false)
         saveNow()
       }
-    } else if (id === 'buyhen' && inCoop && near.crate) {
+    } else if (id === 'buyhen' && room === 'coop' && near.crate) {
       // the FIRST bought hen gets the full naming ceremony; after that the
       // plaque over her box does the talking (naming fatigue is real)
       const firstBought = state.coopFlock.hens.length === 4
@@ -1827,7 +1861,7 @@ async function boot(): Promise<void> {
           saveNow()
         }
       }
-    } else if (id === 'wing' && inCoop && near.wing) {
+    } else if (id === 'wing' && room === 'coop' && near.wing) {
       const tier = state.coopFlock.tier
       if (game.openWing()) {
         sfx.crate()
@@ -1845,7 +1879,7 @@ async function boot(): Promise<void> {
         if (coopGroup) buildCoopAnnex(coopGroup, state.coopFlock.tier)
         saveNow()
       }
-    } else if (id === 'feedhens' && inCoop) {
+    } else if (id === 'feedhens' && room === 'coop') {
       if (game.scatterFeed()) {
         hud.setWheat(state.wheat)
         feedCool = 24
@@ -2035,8 +2069,7 @@ async function boot(): Promise<void> {
       // no wanderers while the player is under glass (or mid-door-cut) —
       // an invitation you can't see is a nag waiting at the exit. Nor with
       // a building overhead: one job at a time.
-      !inGreenhouse &&
-      !inCoop &&
+      room === null &&
       !roomBusy &&
       !carry.carrying
     ) {
@@ -2131,28 +2164,33 @@ async function boot(): Promise<void> {
           near.project = id
         }
       }
-      // glasshouse door, both directions (the swap itself is a blink in black).
-      // Gated on WALKING INTO the doorway — brushing past the doorstep
-      // sideways or backing across it must never teleport anyone. Carrying
-      // a building through the door would teleport IT off-world: inert.
-      if (game.hasProject('greenhouse') && !construction.active && !fetchCine && !carry.carrying) {
-        const inward = player.vel.x * ghDoorDir.x + player.vel.z * ghDoorDir.z
-        if (!inGreenhouse && p.distanceTo(ghDoorOut) < 0.95 && inward < -0.4) throughGhDoor(true)
-        // exit is the forgiving side: any unhurried step into the doorway
-        // leaves — a room you can't get out of would break the cozy contract
-        else if (inGreenhouse && p.distanceTo(ghInterior.exitPos) < 0.7 && player.vel.z > 0.2) throughGhDoor(false)
-      }
-      // henhouse door, same contract as the glasshouse
-      if (game.hasProject('coop') && !construction.active && !fetchCine && !carry.carrying) {
-        const inward = player.vel.x * coopDoorDir.x + player.vel.z * coopDoorDir.z
-        if (!inCoop && !inGreenhouse && p.distanceTo(coopDoorOut) < 0.95 && inward < -0.4) throughDoor('coop', true)
-        else if (inCoop && p.distanceTo(coopInterior.exitPos) < 0.7 && player.vel.z > 0.2) throughDoor('coop', false)
+      // walk-in doors, ONE grammar for every room (the swap is a blink in
+      // black). Enter is gated on WALKING INTO the doorway — brushing past
+      // sideways or backing across must never teleport anyone; carrying a
+      // building through would teleport IT off-world: inert. Exit is the
+      // forgiving side: any unhurried step into the doorway leaves — a room
+      // you can't get out of would break the cozy contract.
+      if (!construction.active && !fetchCine && !carry.carrying) {
+        for (const id of ROOM_IDS) {
+          const def = ROOMS[id]
+          if (!def.gate()) continue
+          if (room === null) {
+            const inward = player.vel.x * def.door.dir.x + player.vel.z * def.door.dir.z
+            if (p.distanceTo(def.door.out) < 0.95 && inward < -0.4) {
+              throughDoor(id, true)
+              break
+            }
+          } else if (room === id && p.distanceTo(def.interior.exitPos) < 0.7 && player.vel.z > 0.2) {
+            throughDoor(id, false)
+            break
+          }
+        }
       }
       // inside the henhouse: walking the box row collects as you pass, and
       // every inside egg rolls for GOLD (the reason to visit in person)
       near.crate = false
       near.wing = false
-      if (inCoop && !roomBusy && !carry.carrying) {
+      if (room === 'coop' && !roomBusy && !carry.carrying) {
         for (let i = 0; i < state.coopFlock.boxes.length; i++) {
           if (!state.coopFlock.boxes[i].ready) continue
           const bp = coopInterior.boxPositions[i]
@@ -2244,7 +2282,7 @@ async function boot(): Promise<void> {
     } else if (fenceEditor.active) {
       // the editor panel owns the screen — no contextual buttons under it
     } else if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !roomBusy && !carry.settling) {
-      if (inCoop) {
+      if (room === 'coop') {
         // the henhouse's own verbs — the farm's buttons stay outside
         if (near.crate) {
           const st = game.henBuyStatus()
@@ -2658,7 +2696,7 @@ async function boot(): Promise<void> {
     // nest pip while an egg is cooking / ready (the farm's widgets stay
     // outside — projected from the glasshouse they'd float over the glass)
     const eggT = state.chicken.eggTimer
-    if ((eggT || state.chicken.eggReady) && !sleepActive && !inGreenhouse && !inCoop) {
+    if ((eggT || state.chicken.eggReady) && !sleepActive && room === null) {
       const s = cam.screenPos(NEST_POS.clone().setY(0.6))
       const frac = state.chicken.eggReady ? 1 : 1 - (eggT ? eggT.remaining / eggT.total : 0)
       hud.setPip(!s.behind, s.x, s.y, frac, state.chicken.eggReady)
@@ -2667,7 +2705,7 @@ async function boot(): Promise<void> {
     }
 
     // floating name tag with hearts
-    if (state.chicken.name && chicken.visible && !sleepActive && !inGreenhouse && !inCoop) {
+    if (state.chicken.name && chicken.visible && !sleepActive && room === null) {
       const s = cam.screenPos(chicken.tagWorldPos())
       hud.setNameTag(!s.behind, s.x, s.y, state.chicken.name, state.chicken.hearts)
     } else {
@@ -2677,7 +2715,7 @@ async function boot(): Promise<void> {
     // customer want bubbles
     let slot = 0
     for (const c of customers.queue) {
-      if (c.phase === 'leaving' || sleepActive || inGreenhouse || inCoop) continue
+      if (c.phase === 'leaving' || sleepActive || room !== null) continue
       const v = customerViews.get(c.id)
       if (!v?.active) continue
       const s = cam.screenPos(v.bubbleAnchor())
@@ -3043,7 +3081,7 @@ async function boot(): Promise<void> {
     room: {
       enter: (which: 'gh' | 'coop') => throughDoor(which, true),
       exit: (which: 'gh' | 'coop') => throughDoor(which, false),
-      which: () => (inGreenhouse ? 'gh' : inCoop ? 'coop' : null),
+      which: () => room,
     },
     flock: () => JSON.parse(JSON.stringify(state.coopFlock)) as CoopFlock,
     cam: () => cam.probe(),
