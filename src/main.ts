@@ -67,6 +67,7 @@ import { ChickenView } from './world/Chicken'
 import { CustomerView } from './world/Customer'
 import { DogView } from './world/Dog'
 import { FollowCamera } from './world/FollowCamera'
+import { camBoxFromRect } from './world/cameraMath'
 import { heartBurst, sparkleBurst } from './world/fx'
 import { AmbientLife } from './world/fxAmbient'
 import { PlayerView } from './world/Player'
@@ -205,6 +206,7 @@ declare global {
       act: (id: string) => void
       room: { enter: (which: 'gh' | 'coop') => void; exit: (which: 'gh' | 'coop') => void; which: () => 'gh' | 'coop' | null }
       flock: () => CoopFlock
+      cam: () => ReturnType<FollowCamera['probe']>
     }
     __step: (s: number) => void
   }
@@ -241,6 +243,13 @@ async function boot(): Promise<void> {
 
   const scene = new Scene()
   const cam = new FollowCamera(renderer.domElement, PLAYER_SPAWN)
+  // displacement-based camera look-ahead (see the onFrame block): reset
+  // alongside every player teleport or the first frame computes a huge jump
+  const lastCamPos = PLAYER_SPAWN.clone()
+  const camDispVel = new Vector3()
+  /** first-person collapse: lens pressed into the farmer = he fades out */
+  let playerGhost = false
+  const camHead = new Vector3()
 
   // warm ACES grade; the effect pass (god rays + bloom + vignette) is added
   // after the sky exists — god rays need the sun disk as a light source
@@ -1720,17 +1729,39 @@ async function boot(): Promise<void> {
       forest.visible = !inCoop
       // opaque rooms see nothing past their own walls: pull the far plane
       // in and the WHOLE outside world frustum-culls itself (farm, dome,
-      // clouds — no per-system bookkeeping, mobile keeps its 60fps)
+      // clouds — no per-system bookkeeping, mobile keeps its 60fps). The
+      // near plane pulls in too: at 0.5 a wall-tight lens slices the wall
+      // out of the frustum and shows the void behind it.
       cam.camera.far = inCoop ? 64 : FAR_OUTSIDE
+      cam.camera.near = inCoop ? 0.15 : 0.5
       cam.camera.updateProjectionMatrix()
       if (inCoop) coopInterior.sync(state.coopFlock)
       const to = enter ? room.spawnPos : which === 'gh' ? ghExitSpot : coopExitSpot
       player.pos.copy(to)
       prevPos.x = to.x
       prevPos.z = to.z
-      player.setBounds(
-        !enter ? WORLD_BOUNDS : which === 'gh' ? ghInterior.bounds : coopInterior.boundsForTier(state.coopFlock.tier),
-      )
+      lastCamPos.copy(to)
+      const bounds = !enter
+        ? WORLD_BOUNDS
+        : which === 'gh'
+          ? ghInterior.bounds
+          : coopInterior.boundsForTier(state.coopFlock.tier)
+      player.setBounds(bounds)
+      // the camera lives in a slightly different volume than the player:
+      // the coop's lens may hug walls a touch closer (0.45 from the wall vs
+      // the 0.55 walk margin, near plane 0.15); the glasshouse keeps near
+      // 0.5, so its lens stays a full near-safe radius off the glass
+      if (enter) {
+        const grow = which === 'gh' ? 0.4 : -0.1
+        const maxY = which === 'gh' ? 5.7 : 3.9
+        // aim box = the walk bounds exactly: the focus then always sits a
+        // full near-safe radius off the walls (0.43 > margin 0.26)
+        cam.setConfine(camBoxFromRect(bounds, grow, 1.0, maxY), camBoxFromRect(bounds, 0, 0.6, maxY))
+        cam.zoomRange(which === 'gh' ? 5 : 4.5, which === 'gh' ? 11 : 9)
+      } else {
+        cam.setConfine(null, null)
+        cam.zoomRange(7, 17)
+      }
       // CUT the camera through the black — never fly it 170u across the map.
       // Walking in it faces up the aisle; walking out, back toward the farm.
       cam.snapTo(player.pos)
@@ -1805,7 +1836,10 @@ async function boot(): Promise<void> {
         // boards fly, THEN the room syncs (sync would hide them mid-flight)
         coopInterior.blowBoards(tier)
         coopInterior.sync(state.coopFlock)
-        player.setBounds(coopInterior.boundsForTier(state.coopFlock.tier))
+        const wb = coopInterior.boundsForTier(state.coopFlock.tier)
+        player.setBounds(wb)
+        // the camera volume widens with the wing — same numbers as the door
+        cam.setConfine(camBoxFromRect(wb, -0.1, 1.0, 3.9), camBoxFromRect(wb, 0, 0.6, 3.9))
         sparkleBurst(scene, coopInterior.wingBoardPos[tier].clone().setY(1.4), true, 14)
         hud.showBanner('The wing is open! \u{1F528}', `the henhouse holds ${HEN_CAPACITY[state.coopFlock.tier]} hens now`)
         if (coopGroup) buildCoopAnnex(coopGroup, state.coopFlock.tier)
@@ -2540,7 +2574,25 @@ async function boot(): Promise<void> {
     const t = engine.uTime.value
     cam.setRunning(player.running)
     if (cam.moved) touch()
-    cam.follow(player.pos, player.vel, dt)
+    // the camera's look-ahead reads DISPLACEMENT, not intent: a player
+    // pushing into a wall has full velocity but zero displacement, and
+    // velocity-fed look-ahead used to shove the ray origin through the wall
+    const camDt = Math.max(1e-4, dt)
+    camDispVel.set((player.pos.x - lastCamPos.x) / camDt, 0, (player.pos.z - lastCamPos.z) / camDt)
+    cam.follow(player.pos, camDispVel, dt)
+    lastCamPos.copy(player.pos)
+    // pressed flat against a wall the farmer's own body fills the lens —
+    // fade him out (first-person collapse, with hysteresis so the doorway
+    // never flickers him). Cutscenes always show him.
+    const ghostable = !sleepActive && !construction.active && !fetchCine
+    const wantGhost =
+      ghostable &&
+      cam.camera.position.distanceTo(camHead.set(player.pos.x, player.pos.y + 1.1, player.pos.z)) <
+        (playerGhost ? 1.05 : 0.85)
+    if (wantGhost !== playerGhost) {
+      playerGhost = wantGhost
+      player.root.visible = !wantGhost
+    }
     music.tick()
     player.frame(dt, t)
     chicken.frame(dt, t)
@@ -2994,6 +3046,7 @@ async function boot(): Promise<void> {
       which: () => (inGreenhouse ? 'gh' : inCoop ? 'coop' : null),
     },
     flock: () => JSON.parse(JSON.stringify(state.coopFlock)) as CoopFlock,
+    cam: () => cam.probe(),
   }
   window.__step = window.__farm.step
 

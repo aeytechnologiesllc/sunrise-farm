@@ -6,6 +6,7 @@
  * back — the player never loses control. */
 import gsap from 'gsap'
 import { PerspectiveCamera, Vector3 } from 'three'
+import { type CamBox, clampToBox, nearSafeRadius, occlusionWant } from './cameraMath'
 
 /** boot pose: camera sits NNE of the farmer looking SSW so the field reads
  * in the foreground and the stand + road sit up-screen */
@@ -72,6 +73,33 @@ export class FollowCamera {
   private lastDt = 0.016
   /** seconds since the player last touched the camera (drag/orbit/zoom) */
   private sinceManual = 99
+  /** room confinement: the lens may never leave this volume (gameplay only —
+   * authored cine shots bypass it like they bypass the occlusion pull-in) */
+  private confine: CamBox | null = null
+  /** the look/ray target stays inside this slightly larger volume, so a
+   * wall-clamped player's look-ahead can't push the ray origin THROUGH a
+   * wall and let the camera ease out after it */
+  private aimBox: CamBox | null = null
+  /** how occluded the shot currently is, 0 = free .. 1 = pinned to the
+   * player. Drives the close-quarters composition: pitch raise, head-height
+   * focus, slight FOV widen — tight never means a screen full of torso. */
+  private kTight = 0
+  /** 0..1 as the shot collapses below ~1.2u: the over-shoulder grammar
+   * stops working at point-blank — level out to an eye-height view across
+   * the room instead of staring down at the (ghosted) farmer's feet */
+  private kCollapse = 0
+  /** occlusion-release hysteresis: seconds the ray has read clear. The
+   * pull-in eases back out only after a clear beat — pacing a doorway must
+   * not pump the distance. */
+  private clearT = 0
+  /** keep the lens at least this far from any hit (near-plane safe radius) */
+  private margin = 0.86
+  /** last gameplay-ray reading (QA probe only) */
+  private lastBlocked: number | null = null
+  /** zoom clamp — rooms tighten it so pinch can't pull the lens through a
+   * 4.5u-deep hall ceiling or wall */
+  private minDist = MIN_DIST
+  private maxDist = MAX_DIST
 
   constructor(dom: HTMLElement, start: Vector3) {
     this.camera = new PerspectiveCamera(FOV_BASE, innerWidth / innerHeight, 0.5, 400)
@@ -109,7 +137,7 @@ export class FollowCamera {
 
   private wheel = (e: WheelEvent): void => {
     e.preventDefault()
-    this.dist = clampDist(this.dist * (1 + Math.sign(e.deltaY) * 0.08))
+    this.dist = this.clampD(this.dist * (1 + Math.sign(e.deltaY) * 0.08))
     this.moved = true
   }
 
@@ -132,7 +160,7 @@ export class FollowCamera {
       // two fingers on the canvas (sticks capture their own pointers) = pinch
       const [a, b] = [...this.pointers.values()]
       const d = Math.hypot(a.x - b.x, a.y - b.y)
-      if (this.pinchDist > 0 && d > 0) this.dist = clampDist((this.dist * this.pinchDist) / d)
+      if (this.pinchDist > 0 && d > 0) this.dist = this.clampD((this.dist * this.pinchDist) / d)
       this.pinchDist = d
       this.moved = true
     } else if (this.pointers.size === 1) {
@@ -188,9 +216,10 @@ export class FollowCamera {
       this.cineDist = null
       this.fovTarget = FOV_BASE
       this.pitch = clampPitch(this.pitch)
-      this.smoothDist = clampDist(this.smoothDist)
+      this.smoothDist = this.clampD(this.smoothDist)
       // drop any occlusion clamp from before the scene — re-measured next frame
       this.occlClamp = Number.POSITIVE_INFINITY
+      this.clearT = 0
       this.release(0.9)
     }
   }
@@ -217,6 +246,51 @@ export class FollowCamera {
     this.anchor.set(p.x, p.y + 0.9, p.z)
     this.focusPoint.copy(this.anchor)
     this.occlClamp = Number.POSITIVE_INFINITY
+    this.clearT = 0
+    this.kTight = 0
+    this.kCollapse = 0
+  }
+
+  /** room confinement on door transit: pass the camera volume + the aim
+   * volume (null/null outdoors). Set behind the dip-to-black, beside
+   * snapTo, or the first post-teleport frame films from the old room. */
+  setConfine(box: CamBox | null, aim: CamBox | null): void {
+    this.confine = box
+    this.aimBox = aim
+  }
+
+  /** per-room zoom clamp (outdoors restores 7..17). Applied immediately so
+   * a pinch from outside can't carry an illegal distance into a small hall. */
+  zoomRange(min: number, max: number): void {
+    this.minDist = min
+    this.maxDist = max
+    this.dist = this.clampD(this.dist)
+    if (!this.cineTarget) this.smoothDist = this.clampD(this.smoothDist)
+  }
+
+  private clampD(d: number): number {
+    return Math.min(this.maxDist, Math.max(this.minDist, d))
+  }
+
+  /** dev/QA window into the clamp state (read-only snapshot) */
+  probe(): {
+    occlClamp: number
+    kTight: number
+    confined: boolean
+    near: number
+    dist: number
+    blocked: number | null
+    margin: number
+  } {
+    return {
+      occlClamp: this.occlClamp,
+      kTight: this.kTight,
+      confined: this.confine !== null,
+      near: this.camera.near,
+      dist: this.smoothDist,
+      blocked: this.lastBlocked,
+      margin: this.margin,
+    }
   }
 
   /** glide attention to a world point; returns the tween for sequencing */
@@ -303,7 +377,15 @@ export class FollowCamera {
     this.anchor.y += (playerPos.y + 0.9 - this.anchor.y) * k
     this.anchor.z += (playerPos.z + lookZ - this.anchor.z) * k
     if (this.cineDist === null) this.smoothDist += (this.dist - this.smoothDist) * k
-    const f = this.camera.fov + (this.fovTarget - this.camera.fov) * Math.min(1, 4 * dt)
+    // near-plane safe radius tracks the live near/fov/aspect (rooms pull the
+    // near plane in; rotation changes aspect) — one tan+sqrt, cheap. Guard
+    // the aspect: a zero-sized viewport (hidden tab during boot) reads NaN
+    // and NaN here would disarm the whole occlusion clamp.
+    const aspect = Number.isFinite(this.camera.aspect) && this.camera.aspect > 0 ? this.camera.aspect : 16 / 9
+    this.margin = nearSafeRadius(this.camera.near, this.camera.fov, aspect)
+    // tight shots widen the lens a touch (rides the same ease; cines own it)
+    const fovWant = this.fovTarget + (this.cineTarget ? 0 : this.kTight * 6)
+    const f = this.camera.fov + (fovWant - this.camera.fov) * Math.min(1, 4 * dt)
     if (Math.abs(f - this.camera.fov) > 1e-4) {
       this.camera.fov = f
       this.camera.updateProjectionMatrix()
@@ -319,17 +401,29 @@ export class FollowCamera {
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
+    // gameplay only: the aim (= occlusion-ray origin AND look target) stays
+    // inside the room, so a wall-clamped player's look-ahead can never push
+    // the ray origin through a wall and let the lens ease out after it
+    if (this.aimBox && !this.cineTarget) clampToBox(t, this.aimBox)
+    // close-quarters composition: as the shot tightens, lift the gaze toward
+    // the head — over-the-shoulder reads face, never a screen of torso
+    if (!this.cineTarget) t.y += this.kTight * 0.25
     // landscape phones: the short viewport makes the farmer read tiny at the
     // portrait distance — pull the whole orbit ~25% closer when wide
-    const k = this.camera.aspect > 1.2 ? 0.74 : 1
-    let dist = this.smoothDist * k
+    const kAspect = this.camera.aspect > 1.2 ? 0.74 : 1
+    let dist = this.smoothDist * kAspect
+    // ...and look slightly down from above when pinned (output-stage only:
+    // the player's pitch state is untouched, manual feel rules hold). At
+    // full collapse the raise fades back out and the lens levels to ~eye
+    // height — first-person view across the room, not down at the floor.
+    let ep = this.pitch
+    if (!this.cineTarget) {
+      const raised = Math.min(0.95, Math.max(MIN_PITCH, this.pitch + this.kTight * 0.35 * (1 - this.kCollapse)))
+      ep = raised * (1 - this.kCollapse) + 0.12 * this.kCollapse
+    }
     const place = (d: number, into: Vector3): Vector3 => {
-      const horiz = Math.cos(this.pitch) * d
-      return into.set(
-        t.x + Math.sin(this.yaw) * horiz,
-        t.y + Math.sin(this.pitch) * d,
-        t.z + Math.cos(this.yaw) * horiz,
-      )
+      const horiz = Math.cos(ep) * d
+      return into.set(t.x + Math.sin(this.yaw) * horiz, t.y + Math.sin(ep) * d, t.z + Math.cos(this.yaw) * horiz)
     }
     // building occlusion: snap IN fast (never clip inside a wall), ease OUT.
     // During cinematics the rule is softer: if the hit is in the NEAR third
@@ -344,18 +438,42 @@ export class FollowCamera {
       }
     } else if (this.occlusionTest) {
       const blocked = this.occlusionTest(t, place(dist, this.desired))
-      // the comfortable floor is 2.4 — but a wall CLOSER than that (small
-      // interiors, hugging a barn) drops the shot to over-the-shoulder
-      // rather than parking the lens beyond an opaque wall. Always land
-      // at least 0.15 in FRONT of the hit; never closer than 0.4 to the
-      // focus (degenerate shot)
-      const want = blocked !== null ? Math.max(1.0, Math.min(2.4, blocked - 0.15), blocked - 0.5) : dist
-      if (want < this.occlClamp) this.occlClamp = want
-      else this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
+      this.lastBlocked = blocked
+      // the lens always lands at least the near-plane margin in FRONT of a
+      // hit (occlusionWant's invariant — a floor must never push the camera
+      // past the wall it was fleeing). Snap IN instantly; ease back OUT only
+      // after a clear beat, so pacing a doorway doesn't pump the distance.
+      const want = occlusionWant(blocked, dist, this.margin)
+      if (want < this.occlClamp) {
+        this.occlClamp = want
+        this.clearT = 0
+      } else if (want > this.occlClamp + 0.3) {
+        this.clearT += this.lastDt
+        if (this.clearT >= 0.35) this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
+      } else {
+        this.clearT = 0
+      }
       dist = Math.min(dist, this.occlClamp)
     }
-    this.camera.position.copy(place(dist, this.desired))
+    place(dist, this.desired)
+    // room confinement LAST, on the placed POSITION (not the distance): a
+    // pull-in becomes a lateral slide along the wall, and lookAt keeps the
+    // farmer framed from wherever the lens ended up
+    if (this.confine && !this.cineTarget) clampToBox(this.desired, this.confine)
+    this.camera.position.copy(this.desired)
     this.camera.lookAt(t)
+    // how tight did the final shot land vs what the player asked for?
+    // Smoothed: rises fast (the wall is here NOW), relaxes slow (no pops).
+    if (!this.cineTarget) {
+      const asked = Math.max(0.001, this.smoothDist * kAspect)
+      const got = Math.min(dist, this.desired.distanceTo(t))
+      const kRaw = Math.max(0, 1 - got / asked)
+      const rate = kRaw > this.kTight ? 8 : 3
+      this.kTight += (kRaw - this.kTight) * Math.min(1, rate * this.lastDt)
+      const cRaw = Math.max(0, Math.min(1, (1.2 - got) / 0.6))
+      const cRate = cRaw > this.kCollapse ? 8 : 3
+      this.kCollapse += (cRaw - this.kCollapse) * Math.min(1, cRate * this.lastDt)
+    }
   }
 
   /** pass the measured viewport when available — iOS can report stale
@@ -373,10 +491,6 @@ export class FollowCamera {
     const v = this.spTmp.copy(world).project(this.camera)
     return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight, behind: v.z > 1 }
   }
-}
-
-function clampDist(d: number): number {
-  return Math.min(MAX_DIST, Math.max(MIN_DIST, d))
 }
 
 function clampPitch(p: number): number {
