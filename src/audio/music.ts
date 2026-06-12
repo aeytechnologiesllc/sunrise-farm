@@ -85,12 +85,25 @@ export class Music {
     })
   }
 
+  /** seconds until the next steady-state poll (media-element property reads
+   * cross into WebKit's media engine — they are NOT cheap field reads) */
+  private restUntil = 0
+
   /** per-frame: drive crossfades + the playlist hand-off on wall time */
   tick(): void {
     if (!this.primed || this.current < 0) return
     const now = performance.now() / 1000
     const dt = this.lastTick === 0 ? 0.016 : Math.min(0.1, now - this.lastTick)
     this.lastTick = now
+
+    // steady state (no fade easing, no duck recovering) polls at 4Hz —
+    // the crossfade window is 2s+, a 250ms-late hand-off is inaudible
+    let busy = this.duckK < 1
+    for (let i = 0; i < this.els.length && !busy; i++) busy = this.have[i] !== this.want[i]
+    if (!busy) {
+      if (now < this.restUntil) return
+      this.restUntil = now + 0.25
+    }
 
     // duck recovery
     if (this.duckK < 1 && now >= this.duckRecoverAt) {

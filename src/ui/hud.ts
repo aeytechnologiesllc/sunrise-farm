@@ -502,11 +502,29 @@ export class Hud {
 
   // ---- customer want bubbles (projected) ----------------------------------
 
+  /** set opacity only when it changes — a same-value style write still
+   * costs a style pass on mobile Safari, and these run every frame */
+  private fadeTo(el: HTMLElement | SVGElement, on: boolean): boolean {
+    const want = on ? '1' : '0'
+    if ((el as HTMLElement).dataset.op !== want) {
+      ;(el as HTMLElement).dataset.op = want
+      ;(el as HTMLElement).style.opacity = want
+    }
+    return on
+  }
+
+  /** compositor-only positioning: translate3d never triggers layout, while
+   * left/top did — these widgets reposition EVERY frame from world space */
+  private moveTo(el: HTMLElement, x: number, y: number): void {
+    el.style.transform = `translate3d(${x}px, ${y}px, 0)`
+  }
+
   setBubble(slot: number, visible: boolean, x = 0, y = 0, html = ''): void {
     const b = this.bubbles[slot]
     if (!b) return
-    b.style.opacity = visible ? '1' : '0'
-    if (!visible) return
+    if (!this.fadeTo(b, visible)) return
+    // bubbles keep left/top: their CSS anchor AND the gsap scale pop both
+    // own the transform channel — fighting it costs more than layout does
     b.style.left = `${x}px`
     b.style.top = `${y}px`
     if (b.dataset.html !== html) {
@@ -569,30 +587,53 @@ export class Hud {
 
   // ---- projected widgets (positioned every frame from world space) -------
 
+  private ringLastText = ''
+  private ringLastDash = ''
+  private pipLastDash = ''
+  private pipLastStroke = ''
+  private tagLastKey = ''
+
   setRing(visible: boolean, x = 0, y = 0, frac = 0, secLeft = 0): void {
-    this.ring.style.opacity = visible ? '1' : '0'
-    if (!visible) return
-    this.ring.style.left = `${x}px`
-    this.ring.style.top = `${y}px`
-    this.ringArc.setAttribute('stroke-dashoffset', String(100 - frac * 100))
-    this.ringSec.textContent = secLeft >= 60 ? `${Math.ceil(secLeft / 60)}m` : `${Math.ceil(secLeft)}`
+    if (!this.fadeTo(this.ring, visible)) return
+    this.moveTo(this.ring, x, y)
+    const dash = String(Math.round(100 - frac * 100))
+    if (dash !== this.ringLastDash) {
+      this.ringLastDash = dash
+      this.ringArc.setAttribute('stroke-dashoffset', dash)
+    }
+    const txt = secLeft >= 60 ? `${Math.ceil(secLeft / 60)}m` : `${Math.ceil(secLeft)}`
+    if (txt !== this.ringLastText) {
+      this.ringLastText = txt
+      this.ringSec.textContent = txt
+    }
   }
 
   setPip(visible: boolean, x = 0, y = 0, frac = 0, ready = false): void {
-    this.pip.style.opacity = visible ? '1' : '0'
-    if (!visible) return
-    this.pip.style.left = `${x}px`
-    this.pip.style.top = `${y}px`
-    this.pipArc.setAttribute('stroke-dashoffset', String(100 - frac * 100))
-    this.pipArc.setAttribute('stroke', ready ? '#ffd700' : '#fff3b0')
+    if (!this.fadeTo(this.pip, visible)) return
+    this.moveTo(this.pip, x, y)
+    const dash = String(Math.round(100 - frac * 100))
+    if (dash !== this.pipLastDash) {
+      this.pipLastDash = dash
+      this.pipArc.setAttribute('stroke-dashoffset', dash)
+    }
+    const stroke = ready ? '#ffd700' : '#fff3b0'
+    if (stroke !== this.pipLastStroke) {
+      this.pipLastStroke = stroke
+      this.pipArc.setAttribute('stroke', stroke)
+    }
   }
 
   setNameTag(visible: boolean, x = 0, y = 0, name = '', hearts = 0): void {
-    this.nametag.style.opacity = visible ? '1' : '0'
-    if (!visible) return
-    this.nametag.style.left = `${x}px`
-    this.nametag.style.top = `${y}px`
-    const h = hearts > 0 ? ` <span class="hearts">${'♥'.repeat(Math.min(hearts, 8))}${hearts > 8 ? `x${hearts}` : ''}</span>` : ''
-    this.nametag.innerHTML = `${name}${h}`
+    if (!this.fadeTo(this.nametag, visible)) return
+    // compose the CSS anchor into the same transform (no gsap touches this)
+    this.nametag.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -100%)`
+    // rebuild the HTML only when the CONTENT changes — this used to parse
+    // fresh markup every frame the tag was on screen (most of normal play)
+    const key = `${name}|${hearts}`
+    if (key !== this.tagLastKey) {
+      this.tagLastKey = key
+      const h = hearts > 0 ? ` <span class="hearts">${'♥'.repeat(Math.min(hearts, 8))}${hearts > 8 ? `x${hearts}` : ''}</span>` : ''
+      this.nametag.innerHTML = `${name}${h}`
+    }
   }
 }

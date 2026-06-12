@@ -24,7 +24,10 @@ import { tint, type Assets } from './assets'
 import { assertSpawnScale, measuredHeight, SCALE } from './scale'
 
 const WALK_SPEED = 3.2
-const RUN_SPEED = 4.15
+/** re-tuned 2026-06-12: the closer landscape camera makes the same world
+ * speed READ faster — the owner felt the run "too fast" only after the
+ * zoom-in, so the run eases off rather than the camera backing out */
+const RUN_SPEED = 3.8
 /** stick deflection above which the farmer breaks into a run */
 const RUN_DEFLECT = 0.7
 const TURN_RATE = 11

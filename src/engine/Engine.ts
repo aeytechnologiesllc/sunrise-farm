@@ -33,7 +33,6 @@ export class Engine {
       this.raf = requestAnimationFrame(tick)
       const dt = Math.min((now - this.last) / 1000, 0.1)
       this.last = now
-      this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05
       this.advance(dt)
     }
     this.raf = requestAnimationFrame(tick)
@@ -44,8 +43,16 @@ export class Engine {
   }
 
   advance(dt: number): void {
+    // the fps EMA lives HERE, not in start(): main drives its own rAF loop
+    // straight into advance(), so a start()-only EMA reads a frozen 60
+    // forever (the perf readout was fiction until 2026-06-12)
+    if (dt > 1e-4) this.fps += (1 / dt - this.fps) * 0.05
     this.uTime.value += dt
-    this.accumulator = Math.min(this.accumulator + dt, 0.25)
+    // catch-up cap: 4 fixed steps, not 15 — after a hitch the sim must not
+    // pile MORE work onto the very frame that is already struggling (the
+    // recovery-resistant feedback loop the perf audit flagged). Dropped
+    // wall time is fine: crops/timers re-sync via catchUp on resume.
+    this.accumulator = Math.min(this.accumulator + dt, 4 * this.fixedStep)
     while (this.accumulator >= this.fixedStep) {
       this.accumulator -= this.fixedStep
       for (const fn of this.updates) fn(this.fixedStep)

@@ -124,16 +124,24 @@ export function blockByEdges(
   return blocked
 }
 
-/** the edge nearest a world point (for the Remove action), within maxD */
+/** the edge nearest a world point (for the Remove action), within maxD.
+ * Hot path (runs in the 20Hz proximity tier over EVERY edge): the decode
+ * is inlined so the scan allocates nothing — the per-edge {cx,cz,axis}
+ * object was the save's single largest GC-pressure source at big tiers. */
 export function nearestEdge(sets: FenceSets, x: number, z: number, maxD = 1.6): number | null {
   let best: number | null = null
   let bd = maxD
   const scan = (key: number): void => {
-    const { cx, cz, axis } = decodeEdge(key)
+    const axis = key % 2
+    const cell = (key - axis) / 2
+    const cx = Math.floor(cell / SPAN) - OFF
+    const cz = (cell % SPAN) - OFF
     // distance from p to the edge's midpoint
     const mx = axis === 0 ? cx + 0.5 : cx
     const mz = axis === 0 ? cz : cz + 0.5
-    const d = Math.hypot(x - mx, z - mz)
+    const dx = x - mx
+    const dz = z - mz
+    const d = Math.sqrt(dx * dx + dz * dz)
     if (d < bd) {
       bd = d
       best = key

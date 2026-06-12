@@ -26,7 +26,9 @@ const PITCH_RATE = 0.95
 /** desktop drag: radians per CSS pixel */
 const DRAG_RATE = 0.0042
 const FOV_BASE = 42
-const FOV_RUN = 46.5
+/** trimmed with the tighter landscape frame — the wide-lens run nudge was
+ * double-selling speed once the camera rode closer */
+const FOV_RUN = 45
 /** auto-follow: after this long hands-off, the camera eases around behind
  * the farmer's direction of travel — the player steers, the camera keeps up
  * (owner ask: "no constantly adjusting the camera by hand") */
@@ -400,6 +402,8 @@ export class FollowCamera {
 
   private whisker = new Vector3()
 
+  private whiskerFlip = false
+
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
@@ -445,12 +449,14 @@ export class FollowCamera {
     } else if (this.occlusionTest) {
       // three rays, not one: the center ray can clear a barn corner while
       // the corner still fills a third of the frame — the ±whiskers catch
-      // what the frustum sees and the center line misses
+      // what the frustum sees and the center line misses. One whisker per
+      // frame (alternating sides): the snap-in/clear-beat hysteresis is
+      // slower than 30Hz anyway, and raycasts against merged farm meshes
+      // are the spiky part of this budget.
       let blocked = this.occlusionTest(t, place(dist, this.desired))
-      for (const off of [-0.09, 0.09]) {
-        const b = this.occlusionTest(t, place(dist, this.whisker, off))
-        if (b !== null && (blocked === null || b < blocked)) blocked = b
-      }
+      this.whiskerFlip = !this.whiskerFlip
+      const b = this.occlusionTest(t, place(dist, this.whisker, this.whiskerFlip ? 0.09 : -0.09))
+      if (b !== null && (blocked === null || b < blocked)) blocked = b
       this.lastBlocked = blocked
       // the lens always lands at least the near-plane margin in FRONT of a
       // hit (occlusionWant's invariant — a floor must never push the camera
