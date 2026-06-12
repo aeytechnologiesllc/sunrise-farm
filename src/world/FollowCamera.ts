@@ -398,6 +398,8 @@ export class FollowCamera {
 
   private desired = new Vector3()
 
+  private whisker = new Vector3()
+
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
@@ -421,9 +423,10 @@ export class FollowCamera {
       const raised = Math.min(0.95, Math.max(MIN_PITCH, this.pitch + this.kTight * 0.35 * (1 - this.kCollapse)))
       ep = raised * (1 - this.kCollapse) + 0.12 * this.kCollapse
     }
-    const place = (d: number, into: Vector3): Vector3 => {
+    const place = (d: number, into: Vector3, yawOff = 0): Vector3 => {
       const horiz = Math.cos(ep) * d
-      return into.set(t.x + Math.sin(this.yaw) * horiz, t.y + Math.sin(ep) * d, t.z + Math.cos(this.yaw) * horiz)
+      const y = this.yaw + yawOff
+      return into.set(t.x + Math.sin(y) * horiz, t.y + Math.sin(ep) * d, t.z + Math.cos(y) * horiz)
     }
     // building occlusion: snap IN fast (never clip inside a wall), ease OUT.
     // During cinematics the rule is softer: if the hit is in the NEAR third
@@ -437,7 +440,14 @@ export class FollowCamera {
         dist = Math.max(2.4, blocked - 0.5)
       }
     } else if (this.occlusionTest) {
-      const blocked = this.occlusionTest(t, place(dist, this.desired))
+      // three rays, not one: the center ray can clear a barn corner while
+      // the corner still fills a third of the frame — the ±whiskers catch
+      // what the frustum sees and the center line misses
+      let blocked = this.occlusionTest(t, place(dist, this.desired))
+      for (const off of [-0.09, 0.09]) {
+        const b = this.occlusionTest(t, place(dist, this.whisker, off))
+        if (b !== null && (blocked === null || b < blocked)) blocked = b
+      }
       this.lastBlocked = blocked
       // the lens always lands at least the near-plane margin in FRONT of a
       // hit (occlusionWant's invariant — a floor must never push the camera

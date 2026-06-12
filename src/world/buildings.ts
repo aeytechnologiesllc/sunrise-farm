@@ -822,18 +822,24 @@ export function buildShop(seed: number): Group {
 
 // ---- construction scaffold --------------------------------------------------------
 
-/** Wooden scaffolding ring slightly larger than a w x d footprint: posts at
- * corners + wall midpoints, plank walkways at two heights, and diagonal
- * braces — shown around a building site during build cutscenes. 2 draw calls. */
-export function buildScaffold(w: number, d: number, seed: number): Group {
+/** Wooden scaffolding ring slightly larger than a w x d footprint, split into
+ * THREE build stages so the construction cutscene can raise it piece by piece
+ * and then dismantle it at the reveal:
+ *   stages[0] — corner + midpoint posts (standing from the first hammer hit)
+ *   stages[1] — level-1 walkway planks + the diagonal braces
+ *   stages[2] — level-2 walkway planks + top cap rails
+ * Stages [1] and [2] start at scaleY 0.01 (squashed to the ground); the scene
+ * pops each one up on the work beats. All timber canvas-textured (house art
+ * rule), geometry merged per stage — 4 draw calls total. */
+export function buildScaffoldStaged(w: number, d: number, seed: number): { root: Group; stages: Group[] } {
   const rng = mulberry32(seed)
-  const group = new Group()
+  const root = new Group()
   const hx = w / 2 + 0.35 // ring stands 0.35 outside the footprint
   const hz = d / 2 + 0.35
   const postMat = new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#74552f'), true), roughness: 1 })
   const plankMat = new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#96743f'), true), roughness: 0.95 })
 
-  // -- posts: corners + midpoints, each with its own height and tiny lean -----------
+  // -- stage 0: posts at corners + midpoints, each with its own height and lean -----
   const posts: BufferGeometry[] = []
   const spots: Array<[number, number]> = [
     [-hx, -hz], [hx, -hz], [-hx, hz], [hx, hz],
@@ -847,7 +853,11 @@ export function buildScaffold(w: number, d: number, seed: number): Group {
     p.translate(px, h / 2 - 0.02, pz) // sunk 0.02 so leaning posts never float
     posts.push(p)
   }
-  // -- diagonal braces: one per face, leaning corner-to-mid, proud of the planks ----
+  const stage0 = new Group()
+  const postMesh = fuse(posts, postMat)
+  if (postMesh) stage0.add(postMesh)
+
+  // -- stage 1: level-1 frame + diagonal braces (corner-to-mid, proud of planks) ----
   const braceZ = (x0: number, x1: number, zLine: number): BufferGeometry => {
     const len = Math.hypot(x1 - x0, 1.5)
     const b = new BoxGeometry(0.09, len, 0.035)
@@ -862,27 +872,25 @@ export function buildScaffold(w: number, d: number, seed: number): Group {
     b.translate(xLine + Math.sign(xLine) * 0.19, (0.3 + 1.8) / 2, (z0 + z1) / 2)
     return b
   }
+  const braces: BufferGeometry[] = []
   for (const sz of [-1, 1]) {
     const flip = rng.next() > 0.5 ? 1 : -1
-    posts.push(braceZ(flip * -hx, 0, sz * hz))
+    braces.push(braceZ(flip * -hx, 0, sz * hz))
   }
   for (const sx of [-1, 1]) {
     const flip = rng.next() > 0.5 ? 1 : -1
-    posts.push(braceX(flip * -hz, 0, sx * hx))
+    braces.push(braceX(flip * -hz, 0, sx * hx))
   }
-  const postMesh = fuse(posts, postMat)
-  if (postMesh) group.add(postMesh)
-
-  // -- plank walkways at two heights, slightly jittered like hand-laid boards -------
-  const planks: BufferGeometry[] = []
-  for (const y of [0.95, 1.85]) {
+  // plank walkway rings at the two heights, slightly jittered like hand-laid boards
+  const walkway = (y: number): BufferGeometry[] => {
+    const ps: BufferGeometry[] = []
     for (const sz of [-1, 1]) {
       const len = hx * 2 + 0.5
       const p = new BoxGeometry(len, 0.045, 0.3)
       uvScale(p, len / 0.9, 1)
       p.rotateY((rng.next() - 0.5) * 0.03)
       p.translate((rng.next() - 0.5) * 0.12, y + (rng.next() - 0.5) * 0.04, sz * hz)
-      planks.push(p)
+      ps.push(p)
     }
     for (const sx of [-1, 1]) {
       const len = hz * 2 + 0.5
@@ -890,11 +898,44 @@ export function buildScaffold(w: number, d: number, seed: number): Group {
       uvScale(p, 1, len / 0.9)
       p.rotateY((rng.next() - 0.5) * 0.03)
       p.translate(sx * hx, y + (rng.next() - 0.5) * 0.04, (rng.next() - 0.5) * 0.12)
-      planks.push(p)
+      ps.push(p)
     }
+    return ps
   }
-  const plankMesh = fuse(planks, plankMat)
-  if (plankMesh) group.add(plankMesh)
+  const stage1 = new Group()
+  const braceMesh = fuse(braces, postMat)
+  if (braceMesh) stage1.add(braceMesh)
+  const lvl1Mesh = fuse(walkway(0.95), plankMat)
+  if (lvl1Mesh) stage1.add(lvl1Mesh)
 
-  return group
+  // -- stage 2: level-2 walkway + thin top cap rails along the post tops ------------
+  const lvl2: BufferGeometry[] = walkway(1.85)
+  for (const sz of [-1, 1]) {
+    const cap = new BoxGeometry(hx * 2 + 0.34, 0.05, 0.07)
+    uvScale(cap, (hx * 2 + 0.34) / 0.9, 1)
+    cap.translate((rng.next() - 0.5) * 0.06, 2.32 + (rng.next() - 0.5) * 0.05, sz * hz)
+    lvl2.push(cap)
+  }
+  for (const sx of [-1, 1]) {
+    const cap = new BoxGeometry(0.07, 0.05, hz * 2 + 0.34)
+    uvScale(cap, 1, (hz * 2 + 0.34) / 0.9)
+    cap.translate(sx * hx, 2.32 + (rng.next() - 0.5) * 0.05, (rng.next() - 0.5) * 0.06)
+    lvl2.push(cap)
+  }
+  const stage2 = new Group()
+  const lvl2Mesh = fuse(lvl2, plankMat)
+  if (lvl2Mesh) stage2.add(lvl2Mesh)
+
+  // later stages start squashed flat — the cutscene raises them on the beats
+  stage1.scale.y = 0.01
+  stage2.scale.y = 0.01
+  root.add(stage0, stage1, stage2)
+  return { root, stages: [stage0, stage1, stage2] }
+}
+
+/** fully-built scaffold (all stages up) — kept for non-staged callers */
+export function buildScaffold(w: number, d: number, seed: number): Group {
+  const { root, stages } = buildScaffoldStaged(w, d, seed)
+  for (const s of stages) s.scale.y = 1
+  return root
 }

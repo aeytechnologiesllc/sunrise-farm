@@ -219,6 +219,21 @@ export class Sfx {
     this.tone(f * 1.48, { at: 0.01, type: 'sine', dur: 0.06, gain: 0.03 })
   }
 
+  /** hammer on timber — sharp knock for construction work beats. ±10% freq
+   * jitter is presentation only (file convention: tink/baa/clink do the same) */
+  hammer(): void {
+    const j = 0.9 + Math.random() * 0.2
+    this.noise({ dur: 0.045, gain: 0.3, freq: 1700 * j, q: 2 })
+    this.tone(180 * j, { type: 'square', dur: 0.07, gain: 0.14, glideTo: 95 * j })
+  }
+
+  /** shovel bite — soft earthy scoop for dig ceremonies (same ±10% jitter) */
+  dig(): void {
+    const j = 0.9 + Math.random() * 0.2
+    this.noise({ dur: 0.09, gain: 0.25, freq: 520 * j, q: 1 })
+    this.tone(150 * j, { type: 'sine', dur: 0.12, gain: 0.2, glideTo: 70 * j })
+  }
+
   /** horse hoofbeats — four quick clops fading out */
   hooves(): void {
     for (let i = 0; i < 5; i++) {

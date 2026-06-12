@@ -508,7 +508,10 @@ async function boot(): Promise<void> {
     9: 'The Greenhouse unlocks \u{1F33F}',
     10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
   }
-  game.on('levelup', (e) => {
+  /** a level-up mid-cutscene queues — the fanfare must never fire over the
+   * crew's reveal (it lands ~1.2s after done(), the payday-banking pattern) */
+  let queuedLevelUp: (() => void) | null = null
+  const levelUpBeat = (e: { level: number; unlocked: CropKind[] }): void => {
     const sub = e.unlocked.length
       ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!`
       : (LEVEL_NEWS[e.level] ?? 'The whole town hears the news \u{1F4EF}')
@@ -516,6 +519,10 @@ async function boot(): Promise<void> {
     music.duck()
     sfx.fanfare()
     navigator.vibrate?.([20, 40, 20])
+  }
+  game.on('levelup', (e) => {
+    if (construction.active) queuedLevelUp = () => levelUpBeat(e)
+    else levelUpBeat(e)
   })
   // the ready-chime is rate-limited HARD: with a dozen plots ripening near
   // each other it used to ring over and over ("toon toon") — one chime now
@@ -1207,7 +1214,13 @@ async function boot(): Promise<void> {
   }
 
   // ---- construction projects (the build-your-farm spine) -------------------------
-  const construction = new Construction({ scene, assets, cam, tickSfx: () => sfx.plant() })
+  const construction = new Construction({
+    scene,
+    assets,
+    cam,
+    letterbox,
+    tickSfx: (dig: boolean) => (dig ? sfx.dig() : sfx.hammer()),
+  })
   const grazers = new Grazers(assets, scene, 0xa11ce)
   /** the horse grazes her west paddock by the stable; goats join the pen */
   const paddock = paddockRect(state) // travels with the stable
@@ -1399,6 +1412,7 @@ async function boot(): Promise<void> {
       footprint: def.field
         ? { w: def.field.x1 - def.field.x0, d: def.field.z1 - def.field.z0 }
         : { w: 3, d: 3 },
+      cost: def.cost,
       dig: true,
       reveal: () => {
         // the deed swaps the OLD default ring for the new one — fence the
@@ -1420,6 +1434,10 @@ async function boot(): Promise<void> {
         music.duck()
         sfx.fanfare()
         rareSlowMo()
+        if (queuedLevelUp) {
+          gsap.delayedCall(1.2, queuedLevelUp)
+          queuedLevelUp = null
+        }
         saveNow()
       },
     })
@@ -2065,10 +2083,16 @@ async function boot(): Promise<void> {
         sfx.crate()
         hud.dismissBanner() // a lingering event toast must not float over the scene
         const buildAt = projectSite(def) // the crew digs at the LAYOUT site
+        // the SPEND lands visibly at the site before the crew arrives —
+        // a price paid on-screen is a decision honored, not a ledger entry
+        sfx.kaching()
+        const spendAt = cam.screenPos(new Vector3(buildAt.x, 1.6, buildAt.z))
+        if (!spendAt.behind) hud.floatText(spendAt, `-${def.cost}c`)
         construction.play({
           site: new Vector3(buildAt.x, 0, buildAt.z),
           yaw: def.yaw,
           footprint: def.footprint,
+          cost: def.cost,
           dig: def.kind !== 'building',
           reveal: () => applyProject(def, true),
           done: () => {
@@ -2077,6 +2101,10 @@ async function boot(): Promise<void> {
             music.duck()
             sfx.fanfare()
             rareSlowMo()
+            if (queuedLevelUp) {
+              gsap.delayedCall(1.2, queuedLevelUp)
+              queuedLevelUp = null
+            }
             saveNow()
           },
         })
@@ -2085,6 +2113,7 @@ async function boot(): Promise<void> {
       const def = game.expand()
       if (def) {
         hud.setCoins(state.coins)
+        sfx.kaching()
         expandCeremony(def)
         saveNow()
       }
