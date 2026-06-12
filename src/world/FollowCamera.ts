@@ -411,8 +411,11 @@ export class FollowCamera {
     // the head — over-the-shoulder reads face, never a screen of torso
     if (!this.cineTarget) t.y += this.kTight * 0.25
     // landscape phones: the short viewport makes the farmer read tiny at the
-    // portrait distance — pull the whole orbit ~25% closer when wide
-    const kAspect = this.camera.aspect > 1.2 ? 0.74 : 1
+    // portrait distance — pull the whole orbit closer when wide. Gameplay
+    // sits a notch tighter than before (owner: "more zoomed into the
+    // character on landscape"); CINE shots keep the 0.74 they were authored
+    // and QA'd against on both aspects.
+    const kAspect = this.camera.aspect > 1.2 ? (this.cineTarget ? 0.74 : 0.64) : 1
     let dist = this.smoothDist * kAspect
     // ...and look slightly down from above when pinned (output-stage only:
     // the player's pitch state is untouched, manual feel rules hold). At
