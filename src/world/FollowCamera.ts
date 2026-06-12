@@ -104,7 +104,9 @@ export class FollowCamera {
   private maxDist = MAX_DIST
 
   constructor(dom: HTMLElement, start: Vector3) {
-    this.camera = new PerspectiveCamera(FOV_BASE, innerWidth / innerHeight, 0.5, 400)
+    // a hidden tab can boot with a 0x0 viewport — never divide by it
+    const aspect = innerWidth > 1 && innerHeight > 1 ? innerWidth / innerHeight : 16 / 9
+    this.camera = new PerspectiveCamera(FOV_BASE, aspect, 0.5, 400)
     this.anchor.copy(start)
     this.applyPose()
     dom.addEventListener('wheel', this.wheel, { passive: false })
@@ -145,6 +147,14 @@ export class FollowCamera {
 
   private pDown = (e: PointerEvent): void => {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType })
+    // capture: a look-drag that crosses a HUD chip must keep flowing to the
+    // canvas — without this, drags died at every overlay edge (it read as
+    // "the camera moves around weirdly" on the phone)
+    try {
+      ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+    } catch {
+      /* synthetic/dev pointers can't be captured */
+    }
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()]
       this.pinchDist = Math.hypot(a.x - b.x, a.y - b.y)
@@ -496,8 +506,11 @@ export class FollowCamera {
   }
 
   /** pass the measured viewport when available — iOS can report stale
-   * innerWidth/innerHeight right after a rotation */
+   * innerWidth/innerHeight right after a rotation. Zero/invalid sizes are
+   * REFUSED: one NaN aspect poisons the projection matrix and every
+   * raycast (screen buttons, the fence editor, occlusion) dies silently. */
   resize(w = innerWidth, h = innerHeight): void {
+    if (!(w > 1) || !(h > 1)) return
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }

@@ -19,11 +19,15 @@
  * crop soil, the pen, or the road) — the editor only paints verdicts. */
 import {
   BoxGeometry,
+  CanvasTexture,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
+  PlaneGeometry,
   Raycaster,
+  RepeatWrapping,
   Scene,
+  SRGBColorSpace,
   Vector2,
 } from 'three'
 import { decodeEdge, encodeEdge, nearestEdge, type FenceSets } from '../game/fence'
@@ -40,6 +44,11 @@ const PANEL_CSS = `
 .etool.on{background:#7ec850;color:#fff;box-shadow:0 3px 10px rgba(40,80,10,.4)}
 .etool.locked{filter:grayscale(.8);opacity:.6}
 .etool.done{background:#3a2d1e;color:#fff7e0}
+#editor-status{position:fixed;top:calc(106px + env(safe-area-inset-top));left:50%;
+  transform:translateX(-50%);z-index:30;pointer-events:none;opacity:0;
+  background:rgba(58,45,30,.88);color:#fff7e0;border-radius:999px;padding:6px 14px;
+  font:800 13px 'Trebuchet MS','Segoe UI',system-ui,sans-serif;white-space:nowrap;
+  transition:opacity .15s}
 @media (max-width:760px){.etool{padding:7px 10px 7px 8px;font-size:12px}.etool .em{font-size:16px}}
 `
 
@@ -111,6 +120,9 @@ export interface FenceEditorOpts {
   /** a little pop where something got removed/placed (sfx + sparkle) */
   onFx: (x: number, z: number, kind: 'build' | 'remove' | 'gate') => void
   canOpen: () => boolean
+  /** entering/leaving edit mode (main pulls the camera back for overview) */
+  onOpen?: () => void
+  onClose?: () => void
 }
 
 export class FenceEditor {
@@ -123,11 +135,17 @@ export class FenceEditor {
   private dragId: number | null = null
   private anchor: { x: number; z: number } | null = null
   private preview: Mesh[] = []
-  private previewMatOk = new MeshBasicMaterial({ color: OK_TINT, transparent: true, opacity: 0.85 })
-  private previewMatNo = new MeshBasicMaterial({ color: NO_TINT, transparent: true, opacity: 0.7 })
-  private pendingRun: Array<{ key: number; ok: boolean }> = []
+  private previewMatOk = new MeshBasicMaterial({ color: OK_TINT, transparent: true, opacity: 0.9 })
+  private previewMatNo = new MeshBasicMaterial({ color: NO_TINT, transparent: true, opacity: 0.75 })
+  private pendingRun: Array<{ key: number; ok: boolean; exists: boolean }> = []
   private dirty = false
   private lastRebuild = 0
+  /** the 1u ground grid, visible only while editing — you can't draw on
+   * lines you can't see (the phone playtest's first complaint) */
+  private grid: Mesh
+  /** one-line live verdict under the chips: "+5 posts", "already fenced" */
+  private status: HTMLDivElement
+  private statusHideAt = 0
 
   constructor(private opts: FenceEditorOpts) {
     this.panel = new ToolPanel(
@@ -143,15 +161,40 @@ export class FenceEditor {
       },
       () => this.close(),
     )
-    const geo = new BoxGeometry(0.96, 0.5, 0.07)
+    const geo = new BoxGeometry(0.96, 0.6, 0.09)
     for (let i = 0; i < MAX_RUN; i++) {
       const m = new Mesh(geo, this.previewMatOk)
-      m.position.y = 0.25
+      m.position.y = 0.3
       m.visible = false
       m.renderOrder = 3
       opts.scene.add(m)
       this.preview.push(m)
     }
+    // the editing grid: a faint 1u lattice over the whole farm so the lines
+    // you draw along are VISIBLE (one draw, hidden unless editing)
+    const gc = document.createElement('canvas')
+    gc.width = gc.height = 64
+    const g2 = gc.getContext('2d')!
+    g2.clearRect(0, 0, 64, 64)
+    g2.strokeStyle = 'rgba(255,250,230,0.85)'
+    g2.lineWidth = 2.5
+    g2.strokeRect(0, 0, 64, 64)
+    const gridTex = new CanvasTexture(gc)
+    gridTex.colorSpace = SRGBColorSpace
+    gridTex.wrapS = gridTex.wrapT = RepeatWrapping
+    gridTex.repeat.set(48, 40)
+    const gridGeo = new PlaneGeometry(48, 40)
+    gridGeo.rotateX(-Math.PI / 2)
+    // grid lines land ON integer coordinates: span 48x40 centered at
+    // (1.5, 2.5) puts edges at ...-1,0,1... in both axes
+    gridGeo.translate(1.5, 0.03, 2.5)
+    this.grid = new Mesh(gridGeo, new MeshBasicMaterial({ map: gridTex, transparent: true, opacity: 0.16, depthWrite: false }))
+    this.grid.renderOrder = 2
+    this.grid.visible = false
+    opts.scene.add(this.grid)
+    this.status = document.createElement('div')
+    this.status.id = 'editor-status'
+    document.body.appendChild(this.status)
     // capture phase: while the editor is open, the first finger is a TOOL —
     // the camera drag and the long-press lift never see it
     opts.dom.addEventListener('pointerdown', this.down, { capture: true })
@@ -165,6 +208,9 @@ export class FenceEditor {
     this.active = true
     this.panel.setActive(this.tool)
     this.panel.show()
+    this.grid.visible = true
+    this.say('drag along a line to fence it')
+    this.opts.onOpen?.()
     return true
   }
 
@@ -172,10 +218,28 @@ export class FenceEditor {
     if (!this.active) return
     this.active = false
     this.panel.hide()
+    this.grid.visible = false
+    this.status.style.opacity = '0'
     this.endDrag()
     if (this.dirty) {
       this.dirty = false
       this.opts.onChange()
+    }
+    this.opts.onClose?.()
+  }
+
+  /** the live verdict chip (auto-fades; update() retires it) */
+  private say(text: string, holdMs = 2600): void {
+    this.status.textContent = text
+    this.status.style.opacity = '1'
+    this.statusHideAt = performance.now() + holdMs
+  }
+
+  /** per-frame housekeeping while open (status fade) */
+  update(): void {
+    if (this.statusHideAt && performance.now() > this.statusHideAt) {
+      this.statusHideAt = 0
+      this.status.style.opacity = '0'
     }
   }
 
@@ -190,9 +254,13 @@ export class FenceEditor {
     }
   }
 
-  /** pointer ndc -> the y=0 ground plane */
+  /** pointer ndc -> the y=0 ground plane. Measures the CANVAS, not the
+   * window: they're usually the same, but a zero/stale window measurement
+   * (iOS rotation, hidden boot) must return null, never NaN coordinates. */
   private ground(e: PointerEvent): { x: number; z: number } | null {
-    this.ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1)
+    const r = (this.opts.dom as HTMLElement).getBoundingClientRect()
+    if (!(r.width > 1) || !(r.height > 1)) return null
+    this.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
     this.ray.setFromCamera(this.ndc, this.opts.camera)
     const o = this.ray.ray.origin
     const d = this.ray.ray.direction
@@ -219,7 +287,9 @@ export class FenceEditor {
     for (let i = 0; i < this.preview.length; i++) {
       const m = this.preview[i]
       const entry = this.pendingRun[i]
-      if (!entry) {
+      // existing fence shows NO ghost (it's already there — amber over it
+      // read as "rejected" and made whole drags feel broken)
+      if (!entry || entry.exists) {
         m.visible = false
         continue
       }
@@ -238,9 +308,18 @@ export class FenceEditor {
   }
 
   private endDrag(): void {
+    if (this.dragId !== null) {
+      try {
+        ;(this.opts.dom as Element).releasePointerCapture(this.dragId)
+      } catch {
+        /* already released */
+      }
+    }
     this.dragId = null
     this.anchor = null
     this.hidePreview()
+    // a "+N posts" live verdict must not outlive its drag
+    if (this.statusHideAt > performance.now() + 5000) this.statusHideAt = performance.now() + 1600
   }
 
   // ---- the tools -------------------------------------------------------------
@@ -251,15 +330,26 @@ export class FenceEditor {
     // the canvas is tool intent
     if (this.dragId !== null) return
     e.stopImmediatePropagation()
+    e.preventDefault()
     const g = this.ground(e)
     if (!g) return
     this.dragId = e.pointerId
+    // CAPTURE the pointer: the HUD (joystick, buttons, chips) sits in
+    // sibling layers OVER the canvas — without capture, the instant a
+    // thumb-drag crossed any of them the canvas stopped receiving moves
+    // and the drag silently died. THIS was "the fence editor doesn't
+    // work at all" on the phone.
+    try {
+      ;(this.opts.dom as Element).setPointerCapture(e.pointerId)
+    } catch {
+      /* synthetic/dev pointers can't be captured — fine */
+    }
     if (this.tool === 'draw') {
       this.anchor = { x: Math.round(g.x), z: Math.round(g.z) }
     } else if (this.tool === 'remove') {
-      this.removeNear(g.x, g.z)
+      if (!this.removeNear(g.x, g.z)) this.say('no fence here — sweep along one')
     } else if (this.tool === 'gate') {
-      this.toggleGateNear(g.x, g.z)
+      if (!this.toggleGateNear(g.x, g.z)) this.say('tap a fence piece to make it a gateway')
     }
   }
 
@@ -267,6 +357,7 @@ export class FenceEditor {
     if (!this.active) return
     e.stopImmediatePropagation()
     if (e.pointerId !== this.dragId) return
+    e.preventDefault()
     const g = this.ground(e)
     if (!g) return
     if (this.tool === 'draw' && this.anchor) {
@@ -275,10 +366,15 @@ export class FenceEditor {
         const { cx, cz, axis } = decodeEdge(key)
         const mx = axis === 0 ? cx + 0.5 : cx
         const mz = axis === 0 ? cz : cz + 0.5
-        const fresh = !this.opts.fences.edges.has(key) && !this.opts.fences.gates.has(key)
-        return { key, ok: fresh && this.opts.allowed(mx, mz) }
+        const exists = this.opts.fences.edges.has(key) || this.opts.fences.gates.has(key)
+        return { key, ok: !exists && this.opts.allowed(mx, mz), exists }
       })
       this.showPreview()
+      // live verdict while the finger is still down — the editor TALKS
+      const fresh = this.pendingRun.filter((p) => p.ok).length
+      if (fresh > 0) this.say(`+${fresh} post${fresh === 1 ? '' : 's'}`, 9999)
+      else if (this.pendingRun.length > 0 && this.pendingRun.every((p) => p.exists)) this.say('already fenced here', 9999)
+      else if (this.pendingRun.length > 0) this.say("can't fence here", 9999)
     } else if (this.tool === 'remove') {
       // hold-and-sweep: mow a whole run down in one gesture
       this.removeNear(g.x, g.z)
@@ -301,9 +397,12 @@ export class FenceEditor {
           const { cx, cz, axis } = decodeEdge(last.key)
           this.opts.onFx(axis === 0 ? cx + 0.5 : cx, axis === 0 ? cz : cz + 0.5, 'build')
         }
+        this.say(`${built} post${built === 1 ? '' : 's'} built`)
         this.dirty = true
         this.lastRebuild = 0
         this.commit()
+      } else if (this.pendingRun.length > 0) {
+        this.say(this.pendingRun.every((p) => p.exists) ? 'already fenced here' : "can't fence here")
       }
     }
     if (this.dirty) {
@@ -314,7 +413,8 @@ export class FenceEditor {
   }
 
   removeNear(x: number, z: number): boolean {
-    const k = nearestEdge(this.opts.fences, x, z, 0.95)
+    // a thumb is not a cursor: generous pick radius
+    const k = nearestEdge(this.opts.fences, x, z, 1.3)
     if (k === null) return false
     this.opts.fences.edges.delete(k)
     this.opts.fences.gates.delete(k)
@@ -325,7 +425,7 @@ export class FenceEditor {
   }
 
   toggleGateNear(x: number, z: number): boolean {
-    const k = nearestEdge(this.opts.fences, x, z, 1.2)
+    const k = nearestEdge(this.opts.fences, x, z, 1.5)
     if (k === null) return false
     if (this.opts.fences.gates.has(k)) {
       this.opts.fences.gates.delete(k)

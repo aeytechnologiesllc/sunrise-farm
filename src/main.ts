@@ -215,6 +215,7 @@ declare global {
       room: { enter: (which: RoomId) => void; exit: (which: RoomId) => void; which: () => RoomId | null }
       flock: () => CoopFlock
       cam: () => ReturnType<FollowCamera['probe']>
+      camMat: () => Record<string, unknown>
     }
     __step: (s: number) => void
   }
@@ -481,11 +482,23 @@ async function boot(): Promise<void> {
       if (kind === 'remove') sfx.pop()
       else if (kind === 'build') sfx.plant()
       else sfx.crate()
+      navigator.vibrate?.(8)
       sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
     },
     canOpen: () =>
       !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen,
+    // editing wants OVERVIEW: pull back to see the line you're drawing
+    // (the tight landscape ride is for walking, not surveying)
+    onOpen: () => {
+      editSavedDist = cam.dist
+      cam.dist = Math.max(cam.dist, 14)
+    },
+    onClose: () => {
+      if (editSavedDist !== null) cam.dist = editSavedDist
+      editSavedDist = null
+    },
   })
+  let editSavedDist: number | null = null
   const rebuildFenceMesh = (): void => {
     if (fenceMesh) {
       scene.remove(fenceMesh)
@@ -2415,7 +2428,7 @@ async function boot(): Promise<void> {
         room === 'home' &&
         !roomBusy &&
         (p.distanceTo(farmhouseInterior.wifePos) < 1.9 || p.distanceTo(farmhouseInterior.kidPos) < 1.9)
-      near.fence = nearestEdge(fences, p.x, p.z, 1.7)
+      near.fence = nearestEdge(fences, p.x, p.z, 3.0)
       // nearest building you could pick up (fallback button + discoverability)
       near.movable = null
       if (!carry.carrying && !carry.settling) {
@@ -2901,6 +2914,7 @@ async function boot(): Promise<void> {
       }
     }
     ghInterior.update(dt)
+    fenceEditor.update()
     coopInterior.update(dt)
     stableInterior.update(dt)
     farmhouseInterior.update(dt)
@@ -3034,6 +3048,11 @@ async function boot(): Promise<void> {
   let sizedW = 0
   let sizedH = 0
   const resize = (): void => {
+    // iOS can report 0/stale sizes right after rotation (and a hidden tab
+    // reports 0 at boot) — a zero here would bake NaN into the camera's
+    // projection matrix and silently kill every raycast (the fence editor
+    // died this way in QA). Keep the last good size instead.
+    if (viewW() < 2 || viewH() < 2) return
     sizedW = viewW()
     sizedH = viewH()
     cam.resize(sizedW, sizedH)
@@ -3339,6 +3358,14 @@ async function boot(): Promise<void> {
     },
     flock: () => JSON.parse(JSON.stringify(state.coopFlock)) as CoopFlock,
     cam: () => cam.probe(),
+    camMat: () => ({
+      pos: cam.camera.position.toArray().map((v) => +v.toFixed(2)),
+      aspect: cam.camera.aspect,
+      fov: +cam.camera.fov.toFixed(1),
+      pm0: cam.camera.projectionMatrix.elements[0],
+      pmi0: cam.camera.projectionMatrixInverse.elements[0],
+      mw12: cam.camera.matrixWorld.elements.slice(12, 15).map((v) => +v.toFixed(2)),
+    }),
   }
   window.__step = window.__farm.step
 
