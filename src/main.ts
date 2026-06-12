@@ -113,6 +113,7 @@ import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
 import { CoopInterior } from './world/coopInterior'
+import { STABLE_ANCHOR, StableInterior } from './world/stableInterior'
 import { GreenhouseInterior } from './world/greenhouseInterior'
 import { Homestead } from './world/homestead'
 import { HomeInterior } from './world/interior'
@@ -132,7 +133,7 @@ const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Da
 
 /** every walk-in room (the registry in boot() holds each room's door,
  * bounds, camera volume and occluder shell) */
-type RoomId = 'gh' | 'coop'
+type RoomId = 'gh' | 'coop' | 'stable'
 const PLACE_NAMES: Record<PlaceId, string> = {
   stand: 'the Stand',
   shop: 'the Shop',
@@ -208,7 +209,7 @@ declare global {
       layout: () => Record<string, { x: number; z: number }>
       actions: () => string[]
       act: (id: string) => void
-      room: { enter: (which: 'gh' | 'coop') => void; exit: (which: 'gh' | 'coop') => void; which: () => 'gh' | 'coop' | null }
+      room: { enter: (which: RoomId) => void; exit: (which: RoomId) => void; which: () => RoomId | null }
       flock: () => CoopFlock
       cam: () => ReturnType<FollowCamera['probe']>
     }
@@ -311,6 +312,8 @@ async function boot(): Promise<void> {
   // (the door swap handles both): idle off-world sets must never tax the
   // camera's per-frame occlusion raycast.
   const coopInterior = new CoopInterior(scene)
+  // the STABLE hall — Hazel's house; her stall mirrors the delivery state
+  const stableInterior = new StableInterior(scene, assets)
   /** which walk-in room the player is inside (null = out on the farm).
    * ANY-room gates read `room !== null`, room-specific verbs read
    * `room === 'coop'` — a new room inherits every gate for free. */
@@ -541,6 +544,9 @@ async function boot(): Promise<void> {
   })
   game.on('deliveryDone', (e) => {
     grazers.setHidden('horse', false) // back from town, whatever the path
+    // if the farmer is standing in her stall when she gets back, she
+    // appears home — the room mirrors the delivery truth, always
+    if (room === 'stable') stableInterior.sync({ horseOwned: game.hasProject('horse'), horseHome: true })
     // never let the payday fanfare fire over a cutscene — bank quietly
     if (!sleepActive && !construction.active) {
       sfx.hooves()
@@ -1533,7 +1539,12 @@ async function boot(): Promise<void> {
     /** inside the henhouse: by the hen crate / the next wing's boards */
     crate: false,
     wing: false,
+    /** inside the stable: at Hazel's stall gate */
+    stall: false,
   }
+  /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
+  const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
+  const HAZEL_MUZZLE = STABLE_ANCHOR.clone().add(new Vector3(-3.0, 1.2, -2.2))
   const stablePlace = placeOf(state, 'stable')
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
   const PEN_CENTER = new Vector3((penNow.x0 + penNow.x1) / 2, 0, (penNow.z0 + penNow.z1) / 2)
@@ -1552,6 +1563,9 @@ async function boot(): Promise<void> {
     /** may this door fire at all? (project ownership) */
     gate(): boolean
     placeId: PlaceId
+    /** the door bay's local-x offset on the front face (the stable's door
+     * sits at −1.8, not centered) */
+    doorLocalX: number
     /** enter trigger sits this far out from the building center... */
     doorGap: number
     /** ...and walking out lands here — beyond the 0.95 radius, can't re-fire */
@@ -1570,6 +1584,7 @@ async function boot(): Promise<void> {
       opaque: false, // glass: the farm stays visible, near plane stays 0.5
       gate: () => game.hasProject('greenhouse'),
       placeId: 'greenhouse',
+      doorLocalX: 0,
       doorGap: 1.95,
       exitGap: 3.2,
       bounds: () => ghInterior.bounds,
@@ -1583,6 +1598,7 @@ async function boot(): Promise<void> {
       opaque: true,
       gate: () => game.hasProject('coop'),
       placeId: 'coop',
+      doorLocalX: 0,
       doorGap: 1.4,
       exitGap: 2.6,
       bounds: () => coopInterior.boundsForTier(state.coopFlock.tier),
@@ -1592,15 +1608,40 @@ async function boot(): Promise<void> {
       door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
       onEnter: () => coopInterior.sync(state.coopFlock),
     },
+    stable: {
+      interior: stableInterior,
+      opaque: true,
+      gate: () => game.hasProject('stable'),
+      placeId: 'stable',
+      doorLocalX: -1.8, // the door bay sits left of the open stall front
+      doorGap: 2.3,
+      exitGap: 3.4,
+      bounds: () => stableInterior.bounds,
+      camInset: -0.1,
+      camMaxY: 4.5,
+      zoom: { min: 4.5, max: 9 },
+      door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
+      onEnter: () => {
+        const home = state.produce.deliveryT <= 0
+        stableInterior.sync({ horseOwned: game.hasProject('horse'), horseHome: home })
+        // one soft stamp of welcome — never repeats inside
+        if (game.hasProject('horse') && home) sfx.hooves()
+      },
+    },
   }
   const ROOM_IDS = Object.keys(ROOMS) as RoomId[]
   /** door triggers follow their building wherever the layout puts it */
   const recomputeDoor = (id: RoomId): void => {
     const def = ROOMS[id]
     const at = placeOf(state, def.placeId)
-    def.door.dir.set(Math.sin(at.yaw), 0, Math.cos(at.yaw))
-    def.door.out.set(at.x, 0, at.z).addScaledVector(def.door.dir, def.doorGap)
-    def.door.exitSpot.set(at.x, 0, at.z).addScaledVector(def.door.dir, def.exitGap)
+    const d = def.door
+    d.dir.set(Math.sin(at.yaw), 0, Math.cos(at.yaw))
+    // the bay may sit off-center on the front face: slide along the
+    // building's local +x first, then step out through the face
+    const bx = at.x + Math.cos(at.yaw) * def.doorLocalX
+    const bz = at.z - Math.sin(at.yaw) * def.doorLocalX
+    d.out.set(bx, 0, bz).addScaledVector(d.dir, def.doorGap)
+    d.exitSpot.set(bx, 0, bz).addScaledVector(d.dir, def.exitGap)
   }
   for (const id of ROOM_IDS) recomputeDoor(id)
 
@@ -1886,6 +1927,29 @@ async function boot(): Promise<void> {
         sfx.cluck()
         player.gesture(engine.uTime.value)
         coopInterior.scatterAt(player.pos.x, player.pos.z)
+        saveNow()
+      }
+    } else if (id === 'pethorse' && room === 'stable' && near.stall) {
+      if (game.petHorse()) {
+        heartBurst(scene, HAZEL_MUZZLE)
+        sfx.heart()
+        player.gesture(engine.uTime.value)
+        hud.showBanner(
+          'Hazel leans into it \u{2764}\u{FE0F}',
+          `${state.hazel.hearts} heart${state.hazel.hearts === 1 ? '' : 's'} — deliveries pay +${Math.min(8, state.hazel.hearts)}c`,
+        )
+        saveNow()
+      }
+    } else if (id === 'feedoats' && room === 'stable' && near.stall) {
+      const heartsBefore = state.hazel.hearts
+      if (game.feedHorse()) {
+        hud.setWheat(state.wheat)
+        sfx.crate()
+        player.gesture(engine.uTime.value)
+        if (state.hazel.hearts > heartsBefore) {
+          heartBurst(scene, HAZEL_MUZZLE)
+          sfx.heart()
+        }
         saveNow()
       }
     } else if (id === 'milk' && near.pen) {
@@ -2208,6 +2272,7 @@ async function boot(): Promise<void> {
         near.crate = p.distanceTo(coopInterior.cratePos) < 2.0
         near.wing = state.coopFlock.tier < MAX_COOP_TIER && p.distanceTo(coopInterior.wingBoardPos[state.coopFlock.tier]) < 2.4
       }
+      near.stall = room === 'stable' && !roomBusy && p.distanceTo(STALL_GATE) < 2.1
       near.fence = nearestEdge(fences, p.x, p.z, 1.7)
       // nearest building you could pick up (fallback button + discoverability)
       near.movable = null
@@ -2325,6 +2390,24 @@ async function boot(): Promise<void> {
             locked: state.wheat < 1,
           })
         }
+      }
+      if (room === 'stable' && near.stall && game.hasProject('horse') && state.produce.deliveryT <= 0) {
+        // Hazel's verbs — only while she's actually home in her stall
+        if (game.canPetHorse()) {
+          actions.push({
+            id: 'pethorse',
+            emoji: '\u{1F434}',
+            label: 'Pet Hazel',
+            sub: 'once a day — she remembers',
+          })
+        }
+        actions.push({
+          id: 'feedoats',
+          emoji: '\u{1F33E}',
+          label: 'A scoop of oats',
+          sub: state.wheat >= 1 ? 'hearts pay +1c on her runs' : 'grow 1 wheat first',
+          locked: state.wheat < 1,
+        })
       }
       if (near.emptyPlot >= 0) {
         if (game.isGreenhouse(near.emptyPlot)) {
@@ -2668,6 +2751,7 @@ async function boot(): Promise<void> {
     }
     ghInterior.update(dt)
     coopInterior.update(dt)
+    stableInterior.update(dt)
     carry.frame(dt)
     hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)
@@ -2675,6 +2759,8 @@ async function boot(): Promise<void> {
       ? Math.max(nightDial.k, Math.min(1, (dayCycle.phase - 0.78) / 0.1))
       : Math.max(0, Math.min(1, (dayCycle.phase - 0.78) / 0.1))
     homestead.setEvening(eveK)
+    // the glasshouse lamps warm on the same dusk dial (no-op while hidden)
+    ghInterior.setNight(eveK)
     homestead.update(dt)
     nightSky.update(t)
     for (const v of customerViews.values()) v.frame(dt)
@@ -3079,8 +3165,8 @@ async function boot(): Promise<void> {
     actions: () => [...lastActions],
     act: (id: string) => onAction(id),
     room: {
-      enter: (which: 'gh' | 'coop') => throughDoor(which, true),
-      exit: (which: 'gh' | 'coop') => throughDoor(which, false),
+      enter: (which: RoomId) => throughDoor(which, true),
+      exit: (which: RoomId) => throughDoor(which, false),
       which: () => room,
     },
     flock: () => JSON.parse(JSON.stringify(state.coopFlock)) as CoopFlock,

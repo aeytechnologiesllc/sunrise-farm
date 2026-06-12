@@ -123,6 +123,8 @@ interface InteriorHen {
   tz: number
   timer: number
   pecking: number
+  /** seconds left of a dust bath — the floor straw is irresistible */
+  bathing: number
   phase: number
 }
 
@@ -432,7 +434,7 @@ export class CoopInterior {
     group.position.set(b.x, 0, b.z)
     group.rotation.y = rng.next() * Math.PI * 2
     this.root.add(group)
-    this.hens.push({ group, rig, tx: b.x, tz: b.z, timer: 1 + rng.next() * 3, pecking: 0, phase: rng.next() * 9 })
+    this.hens.push({ group, rig, tx: b.x, tz: b.z, timer: 1 + rng.next() * 3, pecking: 0, bathing: 0, phase: rng.next() * 9 })
   }
 
   private localWander(rng: { next(): number }): { x: number; z: number } {
@@ -497,6 +499,17 @@ export class CoopInterior {
     if (!this.root.visible) return
     this.t += dt
     for (const h of this.hens) {
+      if (h.bathing > 0) {
+        h.bathing -= dt
+        // the dust bath: rock side to side, sunk into the straw
+        h.group.rotation.z = Math.sin(this.t * 13 + h.phase) * 0.24
+        h.group.position.y = -0.05 + Math.abs(Math.sin(this.t * 6.5 + h.phase)) * 0.03
+        if (h.bathing <= 0) {
+          h.group.rotation.z = 0
+          h.group.position.y = 0
+        }
+        continue
+      }
       if (h.pecking > 0) {
         h.pecking -= dt
         // head-bob peck: pitch the whole hen forward in little dips
@@ -510,7 +523,11 @@ export class CoopInterior {
       if (d < 0.15) {
         h.timer -= dt
         if (h.timer <= 0) {
-          if (this.henRng.next() < 0.55) {
+          const roll = this.henRng.next()
+          if (roll < 0.12) {
+            h.bathing = 2.5 + this.henRng.next() * 1.8
+            h.timer = 0.5
+          } else if (roll < 0.62) {
             h.pecking = 1.2 + this.henRng.next() * 1.6
             h.timer = 0.5
           } else {
@@ -534,5 +551,12 @@ export class CoopInterior {
       this.lamps[i].intensity = flicker
     }
     if (this.motes) this.motes.rotation.y = Math.sin(this.t * 0.05) * 0.18
+    // a ready egg breathes faintly in the straw — collect me, says the egg
+    for (let i = 0; i < this.eggs.length; i++) {
+      const e = this.eggs[i]
+      if (!e.visible) continue
+      const p = 1 + Math.sin(this.t * 2.2 + i * 1.3) * 0.03
+      e.scale.set(p, 1.25 * p, p)
+    }
   }
 }

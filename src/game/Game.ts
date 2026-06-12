@@ -179,7 +179,9 @@ export class Game {
       if (hev.readyBoxes.length) this.emit('coopReady', undefined)
     }
     if (pev.deliveryReturned) {
-      const coins = deliveryPay(this.rng.next())
+      // a loved horse haggles better: +1c per heart on LIVE returns only
+      // (offline catch-up stays the flat 34 — the absentee-landlord rule)
+      const coins = deliveryPay(this.rng.next()) + Math.min(8, s.hazel.hearts)
       this.syncRng()
       this.grantCoins(coins)
       this.grantXp(XP_GAIN.deliver)
@@ -306,6 +308,35 @@ export class Game {
     c.hearts += 1
     this.grantXp(XP_GAIN.pet)
     this.retireChip('pet')
+    return true
+  }
+
+  /** a daily hello for Hazel in her stall — hearts cap at 8 and pay +1c
+   * each on live delivery returns (the chicken-pet grammar, horse-sized) */
+  canPetHorse(): boolean {
+    return this.hasProject('horse') && this.state.hazel.lastPetDay !== this.todayFn()
+  }
+
+  petHorse(): boolean {
+    if (!this.canPetHorse()) return false
+    const h = this.state.hazel
+    h.lastPetDay = this.todayFn()
+    h.hearts = Math.min(8, h.hearts + 1)
+    this.grantXp(XP_GAIN.pet)
+    return true
+  }
+
+  /** a scoop of oats (costs 1 wheat) — pure affection; the first scoop of
+   * the day also warms a heart. Only while she's HOME (cozy law: no
+   * feeding an empty stall, no stacking hearts by spamming) */
+  feedHorse(): boolean {
+    const s = this.state
+    if (!this.hasProject('horse') || s.wheat < 1 || s.produce.deliveryT > 0) return false
+    s.wheat -= 1
+    if (s.hazel.lastFedDay !== this.todayFn()) {
+      s.hazel.lastFedDay = this.todayFn()
+      s.hazel.hearts = Math.min(8, s.hazel.hearts + 1)
+    }
     return true
   }
 

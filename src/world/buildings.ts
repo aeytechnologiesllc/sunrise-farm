@@ -492,8 +492,10 @@ export function buildStable(seed: number): Group {
   planks.push(uvScale(box(W, WALL, 0.14, 0, WALL / 2, -D / 2 + 0.07), W / TILE, WALL / TILE)) // back
   planks.push(uvScale(box(0.14, WALL, D, -W / 2 + 0.07, WALL / 2, 0), D / TILE, WALL / TILE)) // left
   planks.push(uvScale(box(0.14, WALL, D, W / 2 - 0.07, WALL / 2, 0), D / TILE, WALL / TILE)) // right
-  // front: solid section x[-2.7,-0.9] holds the door; openings at [-0.9,0.9] and [0.9,2.7]
-  planks.push(uvScale(box(1.8, 1.95, 0.14, -1.8, 0.975, D / 2 - 0.07), 1.8 / TILE, 1.95 / TILE))
+  // front: the left bay x[-2.7,-0.9] is a REAL doorway now (the walk-in
+  // stable) — two narrow strips flank a 1.0-wide opening at x=-1.8
+  for (const dx of [-2.5, -1.1]) planks.push(uvScale(box(0.4, 1.95, 0.14, dx, 0.975, D / 2 - 0.07), 0.4 / TILE, 1.95 / TILE))
+  planks.push(uvScale(box(1.0, 0.25, 0.14, -1.8, 1.825, D / 2 - 0.07), 1.0 / TILE, 0.3)) // doorway header
   planks.push(uvScale(box(W, 0.25, 0.14, 0, 2.075, D / 2 - 0.07), W / TILE, 0.4)) // header band over openings
   const gable = gablePrism(W, RISE, D)
   gable.translate(0, WALL, 0)
@@ -511,13 +513,14 @@ export function buildStable(seed: number): Group {
   timber.push(box(W + 0.1, 0.14, 0.18, 0, 1.88, 1.95)) // lintel across the openings
   for (const tz of [-1.0, 0.7]) timber.push(uvScale(box(W - 0.1, 0.12, 0.12, 0, 2.14, tz), W / TILE, 1)) // tie beams
   timber.push(uvScale(box(0.14, 0.12, D + 0.5, 0, WALL + RISE, 0), 1, D / TILE)) // ridge beam
-  // the closed door (left bay) with battens + a Z-brace
-  timber.push(uvScale(box(1.0, 1.8, 0.08, -1.8, 0.9, 2.02), 0.8, 1.4))
-  for (const by of [0.45, 1.42]) timber.push(box(0.92, 0.1, 0.04, -1.8, by, 2.06))
-  const zBrace = new BoxGeometry(0.1, 1.3, 0.04)
-  zBrace.rotateZ(0.6)
-  zBrace.translate(-1.8, 0.93, 2.065)
-  timber.push(zBrace)
+  // the old plank door, re-baked PARKED OPEN against the doorway's west
+  // post — the stable is a walk-in now, and an open door says so from
+  // across the farm (no live pivot: openings are forever)
+  const leaf = new BoxGeometry(1.0, 1.7, 0.08)
+  leaf.translate(0.5, 0, 0) // hinge at the left edge
+  leaf.rotateY(-1.45)
+  leaf.translate(-2.32, 0.86, 2.04)
+  timber.push(uvScale(leaf, 0.8, 1.4))
   // loft window frame on the front gable face (face sits at z = 2.0)
   timber.push(box(0.62, 0.07, 0.07, 0, 2.86, D / 2))
   timber.push(box(0.62, 0.07, 0.07, 0, 2.38, D / 2))
@@ -560,6 +563,13 @@ export function buildStable(seed: number): Group {
   loft.castShadow = false
   loft.receiveShadow = true
   group.add(loft)
+
+  // -- doorway recess: a dim plane just inside, so the opening reads deep ----
+  const recess = new Mesh(new BoxGeometry(1.04, 1.74, 0.05), loftMat)
+  recess.position.set(-1.8, 0.87, D / 2 - 0.18)
+  recess.castShadow = false
+  recess.receiveShadow = true
+  group.add(recess)
 
   return group
 }

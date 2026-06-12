@@ -8,8 +8,11 @@
  * Perf: merged statics per material (~12 draws), root hidden until entered.
  * House art rule: every surface canvas-painted — no flat-color blobs. */
 import {
+  AdditiveBlending,
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
+  Color,
   CylinderGeometry,
   DoubleSide,
   Group,
@@ -18,7 +21,10 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   PointLight,
+  Points,
+  PointsMaterial,
   Scene,
+  TorusGeometry,
   Vector3,
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -158,6 +164,41 @@ function box(geos: BufferGeometry[], w: number, h: number, d: number, x: number,
   geos.push(g)
 }
 
+/** brushed galvanized metal for the hand tools */
+function metalCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(64, 64)
+  g.fillStyle = '#9aa39c'
+  g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 70; i++) {
+    g.fillStyle = rng.next() > 0.5 ? 'rgba(235,240,235,0.18)' : 'rgba(50,60,55,0.16)'
+    g.fillRect(rng.next() * 64, rng.next() * 64, 1 + rng.next() * 2, 4 + rng.next() * 10)
+  }
+  return c
+}
+
+/** a leaning row of five seed packets — tiny watercolor labels */
+function packetsCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(200, 48)
+  g.clearRect(0, 0, 200, 48)
+  const tones = ['#c8563e', '#3f7b46', '#caa23a', '#5a6fae', '#a4533f']
+  for (let i = 0; i < 5; i++) {
+    const x = 4 + i * 39
+    g.fillStyle = '#f2ead6'
+    g.fillRect(x, 4, 34, 40)
+    g.fillStyle = tones[i]
+    g.fillRect(x + 4, 8, 26, 18)
+    // a sketchy sprout on each label
+    g.strokeStyle = '#2f4a2c'
+    g.lineWidth = 2
+    g.beginPath()
+    g.moveTo(x + 17, 40)
+    g.lineTo(x + 17, 30)
+    g.lineTo(x + 12 + rng.next() * 10, 26)
+    g.stroke()
+  }
+  return c
+}
+
 export class GreenhouseInterior {
   /** just inside the door — the player lands here on entry */
   readonly spawnPos: Vector3
@@ -174,7 +215,12 @@ export class GreenhouseInterior {
 
   private readonly root = new Group()
   private readonly lampA: PointLight
+  private readonly lampB: PointLight
   private readonly baskets: Group[] = []
+  private motes: Points
+  private readonly lampBase = new Color('#ffc98a')
+  private readonly lampWarm = new Color('#ffb37a')
+  private nightK = 0
   private t = 0
 
   constructor(scene: Scene) {
@@ -428,21 +474,148 @@ export class GreenhouseInterior {
     this.lampA = new PointLight('#ffc98a', 0, 20, 1.4)
     this.lampA.position.set(0, 3.4, -0.6)
     this.root.add(this.lampA)
+    // a second lamp over the south rows — one light left the far half of a
+    // 26u hall in murk after dark (the owner's "barren at night" note)
+    this.lampB = new PointLight('#ffc98a', 0, 20, 1.4)
+    this.lampB.position.set(0, 3.4, 5.5)
+    this.root.add(this.lampB)
+
+    // ---- the premium air pass: ridge light shafts + drifting pollen -------------
+    const shaftMat = new MeshBasicMaterial({
+      color: '#fff3cf',
+      transparent: true,
+      opacity: 0.1,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
+    })
+    const shafts: BufferGeometry[] = []
+    for (const sx of [-6, 0, 6]) {
+      const sh = new PlaneGeometry(2.2, 3.6)
+      sh.rotateX(0.9)
+      sh.translate(sx, 4.6, -1.2)
+      shafts.push(sh)
+    }
+    const shaftMesh = new Mesh(mergeGeometries(shafts) ?? new PlaneGeometry(1, 1), shaftMat)
+    this.root.add(shaftMesh)
+    const moteN = 30
+    const motePos = new Float32Array(moteN * 3)
+    for (let i = 0; i < moteN; i++) {
+      motePos[i * 3] = (rng.next() - 0.5) * (ROOM_W - 2)
+      motePos[i * 3 + 1] = 0.6 + rng.next() * 3.6
+      motePos[i * 3 + 2] = (rng.next() - 0.5) * (ROOM_D - 2)
+    }
+    const moteGeo = new BufferGeometry()
+    moteGeo.setAttribute('position', new BufferAttribute(motePos, 3))
+    this.motes = new Points(
+      moteGeo,
+      new PointsMaterial({ color: '#fff7d0', size: 0.03, transparent: true, opacity: 0.5, depthWrite: false }),
+    )
+    this.root.add(this.motes)
+
+    // ---- bench dressing: the tools of an actual gardener -----------------------
+    const metal = new MeshStandardMaterial({ map: toTexture(metalCanvas(rng), true), roughness: 0.55 })
+    const metalGeos: BufferGeometry[] = []
+    // trowel on the bench: blade + a wood handle (handle joins the wood bake)
+    box(metalGeos, 0.07, 0.018, 0.14, -hw + 0.62, 0.83, -2.2, 0.4)
+    // watering can: body, spout, strap handle
+    const canBody = new CylinderGeometry(0.13, 0.15, 0.24, 10)
+    canBody.translate(-hw + 0.82, 0.94, 0.6)
+    metalGeos.push(canBody)
+    const spout = new CylinderGeometry(0.018, 0.03, 0.3, 6)
+    spout.rotateZ(1.0)
+    spout.translate(-hw + 0.64, 1.0, 0.6)
+    metalGeos.push(spout)
+    const strap = new TorusGeometry(0.09, 0.014, 6, 10, Math.PI)
+    strap.translate(-hw + 0.82, 1.06, 0.6)
+    metalGeos.push(strap)
+    // wheelbarrow wheel (the barrow itself is wood)
+    const wheel = new CylinderGeometry(0.16, 0.16, 0.06, 10)
+    wheel.rotateZ(Math.PI / 2)
+    wheel.translate(hw - 2.3, 0.16, -hd + 1.15)
+    metalGeos.push(wheel)
+    bake(metalGeos, metal)
+    // the wood bits: trowel handle, wheelbarrow tray/legs/handles, 2 crates
+    const dressWood: BufferGeometry[] = []
+    box(dressWood, 0.03, 0.03, 0.1, -hw + 0.66, 0.84, -2.3, 0.4)
+    const tray = new BoxGeometry(0.7, 0.22, 0.95)
+    tray.rotateZ(0.08)
+    tray.translate(hw - 1.9, 0.42, -hd + 1.15)
+    dressWood.push(tray)
+    for (const s of [-1, 1]) {
+      box(dressWood, 0.05, 0.34, 0.05, hw - 1.62, 0.17, -hd + 1.15 + s * 0.3)
+      const handle = new BoxGeometry(0.05, 0.05, 0.78)
+      handle.rotateY(0.06 * s)
+      handle.translate(hw - 1.45, 0.5, -hd + 1.15 + s * 0.32)
+      dressWood.push(handle)
+    }
+    for (const [cx, cz] of [
+      [-hw + 0.8, 3.4],
+      [-hw + 0.85, 4.1],
+    ]) {
+      box(dressWood, 0.5, 0.34, 0.5, cx, 0.17, cz, 0.2)
+    }
+    bake(dressWood, brown)
+    // a coiled garden hose hung on the west wall
+    const hoseMat = new MeshStandardMaterial({ color: '#4a6648', roughness: 0.8 })
+    const hose: BufferGeometry[] = []
+    for (let i = 0; i < 3; i++) {
+      const ring = new TorusGeometry(0.3 - i * 0.015, 0.035, 6, 14)
+      ring.translate(-hw + 0.16 + i * 0.05, 1.7, 2.8)
+      hose.push(ring)
+    }
+    const hoseMesh = new Mesh(mergeGeometries(hose) ?? new BoxGeometry(0.01, 0.01, 0.01), hoseMat)
+    hoseMesh.rotation.y = Math.PI / 2 - 0.12
+    hoseMesh.position.x = 0.02
+    this.root.add(hoseMesh)
+    // five seed packets leaning at the bench back
+    const packets = new Mesh(
+      new PlaneGeometry(1.3, 0.32),
+      new MeshStandardMaterial({ map: toTexture(packetsCanvas(rng)), transparent: false, alphaTest: 0.4, side: DoubleSide, roughness: 0.9 }),
+    )
+    packets.position.set(-hw + 0.38, 0.99, -3.2)
+    packets.rotation.y = Math.PI / 2
+    packets.rotation.x = -0.18
+    this.root.add(packets)
+    // carrot tops poking from the crates
+    const tufts: BufferGeometry[] = []
+    for (let i = 0; i < 6; i++) {
+      const tp = new PlaneGeometry(0.22, 0.26)
+      tp.rotateY(rng.next() * Math.PI)
+      tp.translate(-hw + 0.72 + rng.next() * 0.3, 0.42, 3.3 + rng.next() * 0.9)
+      tufts.push(tp)
+    }
+    bake(tufts, leafMat)
 
     this.root.visible = false
   }
 
-  /** show/hide the set + its lamp (the lamp warms evenings under glass) */
+  /** evening warmth under glass: 0 = noon (lamps idle), 1 = deep dusk —
+   * driven from the same day-cycle hook as the homestead windows */
+  setNight(k: number): void {
+    this.nightK = Math.max(0, Math.min(1, k))
+    this.applyLamps()
+  }
+
+  private applyLamps(): void {
+    const i = this.root.visible ? 1.1 + this.nightK * 0.5 : 0
+    this.lampA.intensity = i
+    this.lampB.intensity = i
+    this.lampA.color.lerpColors(this.lampBase, this.lampWarm, this.nightK)
+    this.lampB.color.copy(this.lampA.color)
+  }
+
+  /** show/hide the set + its lamps (they warm evenings under glass) */
   setActive(on: boolean): void {
     this.root.visible = on
-    this.lampA.intensity = on ? 1.1 : 0
+    this.applyLamps()
   }
 
   get active(): boolean {
     return this.root.visible
   }
 
-  /** hanging baskets sway gently — the set breathes; zero allocations */
+  /** hanging baskets sway, pollen drifts — the set breathes; zero allocs */
   update(dt: number): void {
     if (!this.root.visible) return
     this.t += dt
@@ -450,5 +623,6 @@ export class GreenhouseInterior {
       this.baskets[i].rotation.x = Math.sin(this.t * 0.8 + i * 1.7) * 0.04
       this.baskets[i].rotation.z = Math.cos(this.t * 0.6 + i * 2.3) * 0.05
     }
+    this.motes.rotation.y = Math.sin(this.t * 0.04) * 0.22
   }
 }
