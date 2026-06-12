@@ -89,6 +89,8 @@ interface WallGate {
 type Mode = 'penned' | 'escaping' | 'loose' | 'homing'
 
 interface SheepUnit {
+  /** banked animation time while throttled at distance */
+  mixAccum?: number
   group: Group
   mixer: AnimationMixer
   idle: AnimationAction | null
@@ -320,8 +322,16 @@ export class Flock {
     }
   }
 
-  frame(dt: number): void {
-    for (const u of this.sheep) u.mixer.update(dt)
+  frame(dt: number, near?: Vector3): void {
+    for (const u of this.sheep) {
+      u.mixAccum = (u.mixAccum ?? 0) + dt
+      // distant rigs animate at 2Hz with SUMMED time (no pose drift) — a
+      // penned sheep across the farm is ~6px tall, and skinned bone math
+      // is the phone's steadiest per-frame sim cost
+      if (near && u.group.position.distanceToSquared(near) > 484 && u.mixAccum < 0.5) continue
+      u.mixer.update(u.mixAccum)
+      u.mixAccum = 0
+    }
   }
 
   // ---- behaviors ------------------------------------------------------------

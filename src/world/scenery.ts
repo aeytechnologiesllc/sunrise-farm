@@ -643,7 +643,10 @@ export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: It
   const picket = new BoxGeometry(0.09, 0.62, 0.05)
   const rail = new BoxGeometry(1, 0.07, 0.045)
   const post = new BoxGeometry(0.12, 0.78, 0.12)
-  const gatePost = new BoxGeometry(0.13, 1.05, 0.13)
+  // gate frame: posts tall enough that the lintel clears the farmer's hat
+  // (1.6u tall) — the old 1.0u header crossed at chest height and the
+  // farmer clipped straight through it
+  const gatePost = new BoxGeometry(0.13, 2.05, 0.13)
   const posts = new Set<string>()
   const gatePosts = new Set<string>()
 
@@ -678,11 +681,19 @@ export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: It
     const rot = axis === 1 ? Math.PI / 2 : 0
     const mx = axis === 0 ? cx + 0.5 : cx
     const mz = axis === 0 ? cz : cz + 0.5
-    // header bar over the opening
-    const h = new BoxGeometry(1.06, 0.07, 0.06)
+    // the lintel rides ABOVE head height — you walk under a gate, never
+    // through it — with little corner braces for the ranch-frame read
+    const h = new BoxGeometry(1.06, 0.08, 0.08)
     h.rotateY(rot)
-    h.translate(mx, 1.0, mz)
+    h.translate(mx, 1.98, mz)
     geos.push(h)
+    for (const side of [-0.5, 0.5]) {
+      const brace = new BoxGeometry(0.2, 0.07, 0.06)
+      brace.rotateZ(side > 0 ? 0.8 : -0.8)
+      brace.rotateY(rot)
+      brace.translate(axis === 0 ? mx + side * 0.86 : mx, 1.84, axis === 0 ? mz : mz + side * 0.86)
+      geos.push(brace)
+    }
     gatePosts.add(`${cx},${cz}`)
     gatePosts.add(axis === 0 ? `${cx + 1},${cz}` : `${cx},${cz + 1}`)
   }
@@ -690,7 +701,7 @@ export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: It
     posts.delete(k) // the taller gate post wins the corner
     const [x, z] = k.split(',').map(Number)
     const p = gatePost.clone()
-    p.translate(x, 0.52, z)
+    p.translate(x, 1.02, z)
     geos.push(p)
   }
   for (const k of posts) {
@@ -881,11 +892,19 @@ function buildBarn(scene: Scene): void {
     m.position.copy(BARN_POS)
     m.rotation.y = groupRot
     scene.add(m)
-    OCCLUDERS.push(m)
   }
   placeMerged(redGeos, red)
   placeMerged(roofGeos, roof)
   placeMerged(trimGeos, trim)
+  // the camera's occlusion rays test ONE invisible hull, not three merged
+  // meshes' full trimwork (the raycaster ignores object.visible, the
+  // renderer doesn't — a free box-test instead of thousands of triangles)
+  const hull = new Mesh(new BoxGeometry(5.5, 4.2, 4.5), new MeshStandardMaterial())
+  hull.position.copy(BARN_POS).setY(2.1)
+  hull.rotation.y = groupRot
+  hull.visible = false
+  scene.add(hull)
+  OCCLUDERS.push(hull)
 }
 
 /** axis-aligned triangular prism (gable), apex up, centered */

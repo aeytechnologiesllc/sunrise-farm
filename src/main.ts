@@ -8,10 +8,13 @@
 import gsap from 'gsap'
 import {
   ACESFilmicToneMapping,
+  Box3,
+  BoxGeometry,
   Color,
   CylinderGeometry,
   Group,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PCFShadowMap,
   Raycaster,
@@ -257,6 +260,10 @@ async function boot(): Promise<void> {
   const cam = new FollowCamera(renderer.domElement, PLAYER_SPAWN)
   // displacement-based camera look-ahead (see the onFrame block): reset
   // alongside every player teleport or the first frame computes a huge jump
+  /** occlusion-hull material: the proxy OBJECT is invisible (renderer
+   * skips it) while the raycaster — which ignores object.visible — still
+   * hits it. Material stays default-visible or Mesh.raycast would bail. */
+  const OCC_PROXY_MAT = new MeshBasicMaterial()
   const lastCamPos = PLAYER_SPAWN.clone()
   const camDispVel = new Vector3()
   /** first-person collapse: lens pressed into the farmer = he fades out */
@@ -1271,11 +1278,23 @@ async function boot(): Promise<void> {
 
   const addBuilding = (builder: (seed: number) => Group, def: ProjectDef, pop: boolean): Group => {
     const b = builder(0xb1d + def.cost)
+    // the camera's occlusion rays test an invisible HULL, not the building's
+    // merged trimwork: a box is a handful of triangles, the real geometry is
+    // thousands (the near-building raycast spikes the perf audit clocked).
+    // It's a CHILD, so carries and relayouts take it along for free.
+    const hull = new Box3().setFromObject(b)
+    const hsize = hull.getSize(new Vector3())
+    const hcenter = hull.getCenter(new Vector3())
+    const proxy = new Mesh(new BoxGeometry(hsize.x, hsize.y, hsize.z), OCC_PROXY_MAT)
+    proxy.name = 'occ-proxy'
+    proxy.position.copy(hcenter)
+    proxy.visible = false
+    b.add(proxy)
     const at = placeOf(state, def.id as PlaceId) // only buildings come here — all PlaceIds
     b.position.set(at.x, 0, at.z)
     b.rotation.y = at.yaw
     scene.add(b)
-    OCCLUDERS.push(b)
+    OCCLUDERS.push(proxy)
     carry.register(def.id as PlaceId, b)
     if (pop) {
       b.scale.setScalar(0.01)
@@ -1865,7 +1884,8 @@ async function boot(): Promise<void> {
     // the carried building stops hiding the camera and stops occluding
     const g = carry.entries().find(([cid]) => cid === id)?.[1]
     if (g) {
-      const i = OCCLUDERS.indexOf(g)
+      const occ = g.getObjectByName('occ-proxy') ?? g
+      const i = OCCLUDERS.indexOf(occ as Mesh)
       if (i >= 0) OCCLUDERS.splice(i, 1)
     }
     return true
@@ -1884,7 +1904,8 @@ async function boot(): Promise<void> {
       navigator.vibrate?.([18, 30, 18])
       sparkleBurst(scene, new Vector3(lx, 0.6, lz), false, 10)
       const g = carry.entries().find(([cid]) => cid === id)?.[1]
-      if (g && !OCCLUDERS.includes(g)) OCCLUDERS.push(g)
+      const occ = (g?.getObjectByName('occ-proxy') ?? g) as Mesh | undefined
+      if (occ && !OCCLUDERS.includes(occ)) OCCLUDERS.push(occ)
     })
   }
   let roomBusy = false
@@ -2882,8 +2903,8 @@ async function boot(): Promise<void> {
     player.frame(dt, t)
     chicken.frame(dt, t)
     dog.frame(dt)
-    flock.frame(dt)
-    grazers.frame(dt)
+    flock.frame(dt, player.pos)
+    grazers.frame(dt, player.pos)
     farmhand?.frame(dt)
     coopHens?.frame(dt, t)
     construction.frame(dt)
@@ -2984,6 +3005,11 @@ async function boot(): Promise<void> {
   let driftTick = 0
   let uiTick = 0
   let shadowTick = 0
+  /** stressed: pinned at the DPR floor AND still missing budget — shed the
+   * invisible extras (shadow cadence, whisker ray) before anything the eye
+   * would catch. Releases with hysteresis so it never flickers. */
+  let stressed = false
+  let stressMs = 0
   /** ms spent at a steady ~33ms cadence while already at the DPR floor —
    * that signature is a 30Hz LOCK (iOS Low Power Mode / thermal vsync
    * shelf), not load: stepping resolution further down buys nothing */
@@ -3007,7 +3033,7 @@ async function boot(): Promise<void> {
     // 50ms-stale shadow) — and the every-OTHER-frame sawtooth this used to
     // be read as judder on phones. Dusk park crawls even slower.
     shadowTick++
-    const shadowEvery = dayCycle.atDusk ? 6 : isCoarse ? 3 : 2
+    const shadowEvery = stressed || dayCycle.atDusk ? 6 : isCoarse ? 3 : 2
     if (shadowTick % shadowEvery === 0) renderer.shadowMap.needsUpdate = true
     // adaptive resolution: miss budget -> step softer; comfortably under
     // budget for a while -> step sharper. Cooldowns stop buffer thrash.
@@ -3017,6 +3043,25 @@ async function boot(): Promise<void> {
     // neither nukes quality nor oscillates (resize() itself is a hitch)
     if (dpr <= DPR_MIN + 1e-3 && frameAvg > 31 && frameAvg < 35.5) lockedMs += dtMs
     else lockedMs = 0
+    // the stress latch: at the floor and still over budget -> shed the
+    // invisible extras; recover only after a comfortably-smooth stretch
+    if (!stressed && dpr <= DPR_MIN + 1e-3 && frameAvg > 17.5) {
+      stressMs += dtMs
+      if (stressMs > 3000) {
+        stressed = true
+        cam.lowSpec = true
+        stressMs = 0
+      }
+    } else if (stressed && frameAvg < 15) {
+      stressMs += dtMs
+      if (stressMs > 5000) {
+        stressed = false
+        cam.lowSpec = false
+        stressMs = 0
+      }
+    } else {
+      stressMs = 0
+    }
     if (now > dprSettleAt && lockedMs < 5000) {
       // down-step BEFORE the 60fps budget is truly lost (the old 19.5
       // threshold left 16.7 inside the dead band — a phone at half refresh

@@ -82,6 +82,8 @@ function suffixAction(mixer: AnimationMixer, root: Group, clips: AnimationClip[]
 
 interface GrazerUnit {
   kind: GrazerKind
+  /** banked animation time while throttled at distance */
+  mixAccum?: number
   group: Group
   mixer: AnimationMixer
   idle: AnimationAction | null
@@ -126,8 +128,14 @@ export class Grazers {
   }
 
   /** render step (raw frame dt): advance the animation mixers */
-  frame(dt: number): void {
-    for (const u of this.units) u.mixer.update(dt)
+  frame(dt: number, near?: Vector3): void {
+    for (const u of this.units) {
+      u.mixAccum = (u.mixAccum ?? 0) + dt
+      // far grazers tick at 2Hz with summed time — see Sheep.frame
+      if (near && u.run === null && u.group.position.distanceToSquared(near) > 484 && u.mixAccum < 0.5) continue
+      u.mixer.update(u.mixAccum)
+      u.mixAccum = 0
+    }
   }
 
   /** live positions of every grazer (references, not copies) */

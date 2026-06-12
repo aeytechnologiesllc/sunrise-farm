@@ -102,6 +102,9 @@ export class FollowCamera {
    * 4.5u-deep hall ceiling or wall */
   private minDist = MIN_DIST
   private maxDist = MAX_DIST
+  /** stressed-device mode (set by the adaptive governor at its floor):
+   * sheds the whisker ray — the center ray + confiner still protect */
+  lowSpec = false
 
   constructor(dom: HTMLElement, start: Vector3) {
     // a hidden tab can boot with a 0x0 viewport — never divide by it
@@ -464,9 +467,11 @@ export class FollowCamera {
       // slower than 30Hz anyway, and raycasts against merged farm meshes
       // are the spiky part of this budget.
       let blocked = this.occlusionTest(t, place(dist, this.desired))
-      this.whiskerFlip = !this.whiskerFlip
-      const b = this.occlusionTest(t, place(dist, this.whisker, this.whiskerFlip ? 0.09 : -0.09))
-      if (b !== null && (blocked === null || b < blocked)) blocked = b
+      if (!this.lowSpec) {
+        this.whiskerFlip = !this.whiskerFlip
+        const b = this.occlusionTest(t, place(dist, this.whisker, this.whiskerFlip ? 0.09 : -0.09))
+        if (b !== null && (blocked === null || b < blocked)) blocked = b
+      }
       this.lastBlocked = blocked
       // the lens always lands at least the near-plane margin in FRONT of a
       // hit (occlusionWant's invariant — a floor must never push the camera
