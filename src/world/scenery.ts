@@ -36,6 +36,7 @@ import {
   BARN_AT,
   CRATE_AT,
   DOG_AT,
+  LOT_RECT,
   NEST_AT,
   ROAD_Z as GEO_ROAD_Z,
   SPAWN_AT,
@@ -209,6 +210,9 @@ export function forestClear(x: number, z: number): boolean {
   const f = fenceFor(99) // max-tier ring
   if (x > f.minX - 1.4 && x < f.maxX + 1.4 && z > f.minZ - 1.4 && z < f.maxZ + 1.4) return true
   if (inRect(x, z, PEN, 1.2)) return true // the DEFAULT pen yard stays tree-free
+  // the crossroad lot: the player LIVES there once the shop opens — a tree
+  // between the pulled-back camera and the counter is a wall of leaves
+  if (x > LOT_RECT.x0 - 2.5 && x < LOT_RECT.x1 + 2.5 && z > LOT_RECT.z0 - 1.5 && z < LOT_RECT.z1 + 2.5) return true
   if (Math.abs(z - ROAD_Z) < 3.0) return true
   return false
 }

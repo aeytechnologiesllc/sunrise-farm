@@ -210,6 +210,49 @@ export function deliveryRoute(s: LayoutHost): Array<[number, number]> {
   ]
 }
 
+/** is this point inside any standing building (or the homestead)? The
+ * player can't walk INTO buildings — and fences can't thread through them.
+ * `skip` exempts a building (the one being carried rides overhead). */
+export function pointInBuilding(s: LayoutHost, x: number, z: number, skip: PlaceId | null = null): boolean {
+  if (obbContains(HOME_OBB, x, z)) return true
+  for (const id of PLACE_IDS) {
+    if (id === skip || id === 'pen' || fieldTierOf(id) >= 0 || id === 'farmhand') continue
+    const exists =
+      id === 'tractor'
+        ? s.expansion >= 2
+        : id === 'stand'
+          ? s.projects.stand === true && s.projects.shop !== true
+          : s.projects[id] === true
+    if (!exists) continue
+    const pl = placeOf(s, id)
+    if (obbContains(obbFor(id, pl.x, pl.z, 0), x, z)) return true
+  }
+  return false
+}
+
+/** may a fence edge live here? On your land, and NEVER through a building,
+ * crop soil, the pen, or the road (owner's rule: fences must not break the
+ * farm's working parts). Edges along field BORDERS are fine — fencing your
+ * crops in is the whole point. */
+export function fenceEdgeAllowed(s: LayoutHost, mx: number, mz: number): boolean {
+  // owned land: the ring (skirted) or the lot
+  const ring = fenceFor(s.expansion)
+  const inRing = mx > ring.minX - 0.6 && mx < ring.maxX + 0.6 && mz > ring.minZ - 0.6 && mz < ring.maxZ + 0.6
+  const inLot = s.expansion >= 4 && mx > LOT_RECT.x0 && mx < LOT_RECT.x1 && mz > LOT_RECT.z0 && mz < LOT_RECT.z1
+  if (!inRing && !inLot) return false
+  if (Math.abs(mz - ROAD_Z) < ROAD_CLEAR) return false
+  if (pointInBuilding(s, mx, mz)) return false
+  // strictly INSIDE soil is off-limits; the border line itself is allowed
+  for (let t = 0; t < TIERS.length; t++) {
+    if (!TIERS[t].field) continue
+    const fr = t <= s.expansion ? fieldRectFor(s, t) : TIERS[t].field!
+    if (mx > fr.x0 + 0.05 && mx < fr.x1 - 0.05 && mz > fr.z0 + 0.05 && mz < fr.z1 - 0.05) return false
+  }
+  const pr = penRect(s)
+  if (mx > pr.x0 + 0.05 && mx < pr.x1 - 0.05 && mz > pr.z0 + 0.05 && mz < pr.z1 - 0.05) return false
+  return true
+}
+
 // ---- placement rules ---------------------------------------------------------
 
 export type PlaceBlock =
@@ -325,6 +368,16 @@ const SPOT_RADII: Array<{ at: [number, number]; r: number }> = [
   { at: CRATE_AT, r: 1.0 },
   { at: DOG_AT, r: 0.7 },
 ]
+
+function obbContains(o: Obb, px: number, pz: number): boolean {
+  const c = Math.cos(o.yaw)
+  const s = Math.sin(o.yaw)
+  const dx = px - o.x
+  const dz = pz - o.z
+  const lx = dx * c - dz * s
+  const lz = dx * s + dz * c
+  return Math.abs(lx) < o.hw && Math.abs(lz) < o.hd
+}
 
 function obbNearPoint(o: Obb, px: number, pz: number, r: number): boolean {
   // closest point on the obb to p, in obb-local space

@@ -19,7 +19,9 @@ import { normalizeHeight } from './scale'
 const WALK_SPEED = 1.5
 const TURN_RATE = 8
 /** seconds between jobs — the player stays the main farmer */
-const JOB_COOLDOWN: [number, number] = [35, 55]
+// brisk enough to feel like staff (the owner: "it costs a lot, it should
+// do more") — he rests under half a minute, never outpacing the player
+const JOB_COOLDOWN: [number, number] = [16, 26]
 const HARVEST_TIME = 1.3
 
 function suffixAction(mixer: AnimationMixer, root: Group, clips: AnimationClip[], suffix: string): AnimationAction | null {

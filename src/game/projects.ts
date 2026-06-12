@@ -163,7 +163,7 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 0,
     footprint: { w: 1.2, d: 1.2 },
     kind: 'staff',
-    earns: 'A helper who harvests ripe crops for you.',
+    earns: 'A helper who harvests ripe crops AND resows wheat behind himself.',
   },
 ]
 

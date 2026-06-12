@@ -37,17 +37,7 @@ import {
   type GoodKind,
 } from './game/economy'
 import { Customers } from './game/customers'
-import {
-  blockByEdges,
-  crossedEdge,
-  decodeEdge,
-  encodeEdge,
-  expandRing,
-  nearestEdge,
-  toSets,
-  toState,
-} from './game/fence'
-import { LOT_RECT } from './game/geo'
+import { blockByEdges, encodeEdge, expandRing, nearestEdge, toSets, toState } from './game/fence'
 import { Game, type Suggestion } from './game/Game'
 import {
   canPlace,
@@ -58,13 +48,16 @@ import {
   footprintOf,
   layoutView,
   paddockRect,
+  fenceEdgeAllowed,
   penRect,
   PLACE_IDS,
+  pointInBuilding,
   placeOf,
   setPlace,
   type PlaceCheck,
   type PlaceId,
 } from './game/layout'
+import { FenceEditor } from './ui/fenceEditor'
 import { CarrySystem, snapToGrid } from './world/carry'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
 import { Joystick } from './input/joystick'
@@ -101,7 +94,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
-import { fenceFor, sheepCount, TIERS, type TierDef } from './game/expansion'
+import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
@@ -193,7 +186,14 @@ declare global {
       fence: (x0: number, z0: number, x1: number, z1: number) => number
       unfence: (x: number, z: number) => boolean
       fences: () => number
-      fenceModeOn: (on: boolean) => void
+      editor: {
+        open: () => boolean
+        close: () => void
+        draw: (ax: number, az: number, bx: number, bz: number) => number
+        remove: (x: number, z: number) => boolean
+        gate: (x: number, z: number) => boolean
+        active: () => boolean
+      }
       lift: (id: string) => boolean
       placeAt: (x: number, z: number) => boolean
       carry: () => { id: string; ghost: [number, number]; ok: boolean } | null
@@ -418,9 +418,23 @@ async function boot(): Promise<void> {
 
   // ---- the fence is yours: free to draw, free to tear down ------------------
   const fences = toSets(state.fences)
-  /** walk-to-draw: while true, every grid line you cross gets a fence */
-  let fenceMode = false
   fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates)
+  const fenceEditor = new FenceEditor({
+    dom: renderer.domElement,
+    camera: cam.camera,
+    scene,
+    fences,
+    allowed: (mx, mz) => fenceEdgeAllowed(state, mx, mz),
+    onChange: () => rebuildFenceMesh(),
+    onFx: (x, z, kind) => {
+      if (kind === 'remove') sfx.pop()
+      else if (kind === 'build') sfx.plant()
+      else sfx.crate()
+      sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
+    },
+    canOpen: () =>
+      !sleepActive && !construction.active && !fetchCine && !ghBusy && !inGreenhouse && !carry.carrying && !hud.modalOpen,
+  })
   const rebuildFenceMesh = (): void => {
     if (fenceMesh) {
       scene.remove(fenceMesh)
@@ -431,15 +445,7 @@ async function boot(): Promise<void> {
     state.fences = toState(fences)
     saveNow()
   }
-  /** new fence goes on land your deeds enclose (the ring + the lot) */
-  const edgeAllowed = (key: number): boolean => {
-    const { cx, cz, axis } = decodeEdge(key)
-    const mx = axis === 0 ? cx + 0.5 : cx
-    const mz = axis === 0 ? cz : cz + 0.5
-    const f = fenceFor(state.expansion)
-    if (mx > f.minX - 0.6 && mx < f.maxX + 0.6 && mz > f.minZ - 0.6 && mz < f.maxZ + 0.6) return true
-    return state.expansion >= 4 && mx > LOT_RECT.x0 && mx < LOT_RECT.x1 && mz > LOT_RECT.z0 && mz < LOT_RECT.z1
-  }
+
 
   let wiping = false
   const saveNow = (): void => {
@@ -890,7 +896,7 @@ async function boot(): Promise<void> {
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
     if (sleepActive || construction.active || fetchCine || inGreenhouse || carry.carrying || !dayCycle.atDusk) return
-    fenceMode = false // the day's fencing is done at dusk
+    fenceEditor.close() // the day's fencing is done at dusk
     sleepActive = true
     sleepStarted = engine.uTime.value
     touch()
@@ -1227,8 +1233,14 @@ async function boot(): Promise<void> {
     } else if (def.id === 'farmhand') {
       const fh = placeOf(state, 'farmhand')
       farmhand = new FarmhandView(assets, scene, new Vector3(fh.x, 0, fh.z))
-      farmhand.onHarvest = (i) => doHarvest(i)
-      carry.register('farmhand', farmhand.group)
+      // he harvests AND resows wheat behind himself — a self-running wheat
+      // loop is what a thousand coins of staff should feel like
+      farmhand.onHarvest = (i) => {
+        doHarvest(i)
+        if (!game.isGreenhouse(i) && !game.plotAt(i)?.crop && game.plant(i, 'wheat')) {
+          plots[i]?.setCrop('wheat', 0, true)
+        }
+      }
     }
   }
   for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
@@ -1566,8 +1578,9 @@ async function boot(): Promise<void> {
 
   /** may the player pick this up right now? (one scene at a time) */
   const canLift = (id: PlaceId): boolean => {
-    if (carry.carrying || carry.settling || fenceMode) return false
+    if (carry.carrying || carry.settling || fenceEditor.active) return false
     if (sleepActive || construction.active || fetchCine || ghBusy || inGreenhouse || hud.modalOpen) return false
+    if (id === 'farmhand') return false // he's a PERSON — he walks himself
     const ft = fieldTierOf(id)
     const owned =
       ft >= 0
@@ -1633,7 +1646,7 @@ async function boot(): Promise<void> {
   const throughGhDoor = (enter: boolean): void => {
     if (ghBusy) return
     ghBusy = true
-    fenceMode = false // the trance ends at the glasshouse door
+    fenceEditor.close() // editing ends at the glasshouse door
     touch()
     sfx.crate() // the old hinge
     letterbox.fade(true, 0.22)
@@ -1663,32 +1676,7 @@ async function boot(): Promise<void> {
     if (id === 'setdown') setDown()
     else if (id.startsWith('move-')) tryLift(id.slice(5) as PlaceId)
     else if (carry.carrying) return // a building in your arms is a full-time job
-    else if (id === 'fence-build') {
-      fenceMode = true
-      sfx.crate()
-    } else if (id === 'fence-done') {
-      fenceMode = false
-      fenceDirty = false
-      rebuildFenceMesh()
-    } else if (id === 'fence-remove' && near.fence !== null) {
-      fences.edges.delete(near.fence)
-      fences.gates.delete(near.fence)
-      sfx.pop()
-      const { cx, cz, axis } = decodeEdge(near.fence)
-      sparkleBurst(scene, new Vector3(axis === 0 ? cx + 0.5 : cx, 0.5, axis === 0 ? cz : cz + 0.5), false, 5)
-      rebuildFenceMesh()
-    } else if (id === 'fence-gate' && near.fence !== null) {
-      const k = near.fence
-      if (fences.gates.has(k)) {
-        fences.gates.delete(k)
-        fences.edges.add(k)
-      } else if (fences.edges.has(k)) {
-        fences.edges.delete(k)
-        fences.gates.add(k)
-      }
-      sfx.crate()
-      rebuildFenceMesh()
-    }
+    else if (id === 'fence-edit') fenceEditor.open()
     else if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
@@ -1781,9 +1769,15 @@ async function boot(): Promise<void> {
         sowCooldown = TRACTOR_COOLDOWN
         sfx.tractor()
         tractor.chug()
+        // the sowing must be IMPOSSIBLE to miss (owner pressed it and saw
+        // "nothing"): the count floats at the tractor and a sparkle wave
+        // rolls plot to plot as each one takes its seed
+        const ts = cam.screenPos(tractor.position.clone().setY(1.8))
+        if (!ts.behind) hud.floatText(ts, `${planted.length} plots sown 🌾`)
         planted.forEach((i, k) =>
           gsap.delayedCall(0.45 + k * 0.14, () => {
             plots[i]?.setCrop('wheat', 0, true)
+            sparkleBurst(scene, plots[i].center.clone().setY(0.5), false, 4)
             sfx.plant()
           }),
         )
@@ -1813,19 +1807,15 @@ async function boot(): Promise<void> {
    * cancels the step that crosses it. In fence mode the player is the
    * builder: steps are never blocked, and every grid line they cross gets a
    * fence BEHIND them (you can never wall yourself in mid-stride). */
-  let fenceDirty = false
-  let fenceRebuildT = 0
   const fenceBlock = (): void => {
     const p = player.pos
-    if (fenceMode) {
-      const k = crossedEdge(prevPos, p)
-      if (k !== null && !fences.edges.has(k) && !fences.gates.has(k) && edgeAllowed(k)) {
-        fences.edges.add(k)
-        fenceDirty = true
-        sfx.plant()
-      }
-    } else {
-      blockByEdges(prevPos, p, fences)
+    blockByEdges(prevPos, p, fences)
+    // buildings are SOLID now (the camera was living inside coop roofs):
+    // a step INTO a footprint cancels; stepping OUT is always allowed, and
+    // cutscene escorts (the sleep walk enters the homestead) pass freely
+    if (!player.autoWalking && pointInBuilding(state, p.x, p.z, carry.carrying) && !pointInBuilding(state, prevPos.x, prevPos.z, carry.carrying)) {
+      p.x = prevPos.x
+      p.z = prevPos.z
     }
     prevPos.x = p.x
     prevPos.z = p.z
@@ -1846,13 +1836,6 @@ async function boot(): Promise<void> {
     customers.update(dt, game.stock())
     player.update(dt, joy.value, cam.yaw)
     fenceBlock()
-    // fence drawing: batch mesh rebuilds (one merge per ~half second)
-    fenceRebuildT = Math.max(0, fenceRebuildT - dt)
-    if (fenceDirty && fenceRebuildT <= 0) {
-      fenceRebuildT = 0.45
-      fenceDirty = false
-      rebuildFenceMesh()
-    }
     // ---- carry & place: long-press lifts; the ghost glides ahead ----
     checkLongPress()
     if (carry.carrying) {
@@ -2074,9 +2057,8 @@ async function boot(): Promise<void> {
         sub: carryCheck.ok ? 'right here' : (why[carryCheck.reason ?? 'building'] ?? 'not here'),
         locked: !carryCheck.ok,
       })
-    } else if (fenceMode && !hud.modalOpen) {
-      // building fence is its own little trance: walk, posts trail behind
-      actions.push({ id: 'fence-done', emoji: '\u{2705}', label: 'Done fencing', sub: 'lovely work' })
+    } else if (fenceEditor.active) {
+      // the editor panel owns the screen — no contextual buttons under it
     } else if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !ghBusy && !carry.settling) {
       if (near.emptyPlot >= 0) {
         if (game.isGreenhouse(near.emptyPlot)) {
@@ -2211,8 +2193,10 @@ async function boot(): Promise<void> {
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
       }
-      if (near.movable) {
-        // fallback for the long-press (and the discoverable path on desktop)
+      // fallback verbs only join a QUIET stack — when real work is on the
+      // buttons (plant/serve/sow...), they step aside (long-press still
+      // lifts, the fence editor entry waits for a calmer moment)
+      if (actions.length <= 2 && near.movable) {
         actions.push({
           id: `move-${near.movable}`,
           emoji: '\u{1F4E6}',
@@ -2220,23 +2204,8 @@ async function boot(): Promise<void> {
           sub: 'carry it anywhere',
         })
       }
-      if (near.fence !== null || fences.edges.size + fences.gates.size === 0) {
-        actions.push({ id: 'fence-build', emoji: '\u{1FAB5}', label: 'Build fence', sub: 'free — walk to draw it' })
-        if (near.fence !== null) {
-          const isGate = fences.gates.has(near.fence)
-          actions.push({
-            id: 'fence-gate',
-            emoji: '\u{1F6AA}',
-            label: isGate ? 'Close the gateway' : 'Make it a gateway',
-            sub: isGate ? 'solid fence again' : 'everyone can pass',
-          })
-          actions.push({
-            id: 'fence-remove',
-            emoji: '\u{1F528}',
-            label: isGate ? 'Remove the gate' : 'Remove fence',
-            sub: 'free, always',
-          })
-        }
+      if (actions.length <= 2 && (near.fence !== null || fences.edges.size + fences.gates.size === 0)) {
+        actions.push({ id: 'fence-edit', emoji: '\u{1F6E0}', label: 'Edit fences', sub: 'draw, gate, remove' })
       }
     }
     lastActions = actions.map((a) => a.id)
@@ -2256,7 +2225,7 @@ async function boot(): Promise<void> {
     }
     const duskFor = duskAt >= 0 ? engine.uTime.value - duskAt : -1
     let chipText: string | null = null
-    if (!hud.modalOpen && !construction.active && !sleepActive) {
+    if (!hud.modalOpen && !construction.active && !sleepActive && !fenceEditor.active) {
       if (!movedEver && !state.chipsDone.plant) {
         chipText = 'Drag the joystick to take a walk \u{1F33B}'
       } else if (dayCycle.atDusk && duskFor < 20) {
@@ -2738,8 +2707,13 @@ async function boot(): Promise<void> {
       return true
     },
     fences: () => fences.edges.size + fences.gates.size,
-    fenceModeOn: (on: boolean) => {
-      fenceMode = on
+    editor: {
+      open: () => fenceEditor.open(),
+      close: () => fenceEditor.close(),
+      draw: (ax: number, az: number, bx: number, bz: number) => fenceEditor.drawRun(ax, az, bx, bz),
+      remove: (x: number, z: number) => fenceEditor.removeNear(x, z),
+      gate: (x: number, z: number) => fenceEditor.toggleGateNear(x, z),
+      active: () => fenceEditor.active,
     },
     // ---- carry & place (E2E drives the same paths the thumb does) ----
     lift: (id: string) => tryLift(id as PlaceId),

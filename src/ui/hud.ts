@@ -46,13 +46,13 @@ const CSS = `
 #actions{position:absolute;right:calc(14px + env(safe-area-inset-right));
   bottom:calc(158px + env(safe-area-inset-bottom));display:flex;flex-direction:column;
   gap:10px;align-items:flex-end}
-.act{pointer-events:auto;display:flex;align-items:center;gap:10px;border:none;
-  background:rgba(255,252,240,.96);border-radius:999px;padding:11px 20px 11px 14px;
-  font-family:inherit;font-weight:800;font-size:17px;color:#3a2d1e;min-height:56px;
+.act{pointer-events:auto;display:flex;align-items:center;gap:8px;border:none;
+  background:rgba(255,252,240,.96);border-radius:999px;padding:8px 15px 8px 11px;
+  font-family:inherit;font-weight:800;font-size:15px;color:#3a2d1e;min-height:46px;
   box-shadow:0 5px 16px rgba(60,40,10,.3),0 3px 0 #d8cdb2;cursor:pointer;
   touch-action:manipulation}
 .act:active{transform:translateY(2px);box-shadow:0 3px 10px rgba(60,40,10,.3),0 1px 0 #d8cdb2}
-.act .em{font-size:26px;line-height:1}
+.act .em{font-size:21px;line-height:1}
 .act .lbl{text-align:left;line-height:1.1}
 .act .lbl small{display:block;font-size:11px;font-weight:700;color:#8a7a5a}
 .act.locked{filter:grayscale(.85);opacity:.7}
