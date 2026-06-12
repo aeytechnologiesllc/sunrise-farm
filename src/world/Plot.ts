@@ -149,6 +149,13 @@ export class PlotView {
     }
   }
 
+  /** the field slab moved: the plot rides along (center drives proximity,
+   * FX anchors, the farmhand's rounds — all of it follows) */
+  moveTo(v: Vector3): void {
+    this.center.copy(v)
+    this.group.position.copy(v)
+  }
+
   /** glow mode is recomputed from game progress every fixed tick */
   setGlow(mode: 'none' | 'shimmer' | 'ready'): void {
     this.glow = mode

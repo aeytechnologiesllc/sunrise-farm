@@ -42,7 +42,7 @@ import {
   TOWN_GATE_X as GEO_TOWN_GATE_X,
   WORLD_BOUNDS as GEO_WORLD_BOUNDS,
 } from '../game/geo'
-import { DEFAULT_PLACES, footprintOf, PLACE_IDS, type LayoutView, type Place } from '../game/layout'
+import { DEFAULT_PLACES, fieldTierOf, footprintOf, PLACE_IDS, type LayoutView, type Place } from '../game/layout'
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
@@ -157,10 +157,25 @@ function nearPath(x: number, z: number, r: number): boolean {
   return false
 }
 
+/** every tier's field rect at its CURRENT slab position (unbought tiers
+ * sit at their authored homes — LV holds defaults for them) */
+function fieldRectsNow(): Array<{ x0: number; z0: number; x1: number; z1: number }> {
+  const out: Array<{ x0: number; z0: number; x1: number; z1: number }> = []
+  for (const id of PLACE_IDS) {
+    const t = fieldTierOf(id)
+    if (t < 0) continue
+    const f = allFieldRects()[t]
+    const pl = LV[id]
+    const d = DEFAULT_PLACES[id]
+    out.push({ x0: f.x0 + pl.x - d.x, z0: f.z0 + pl.z - d.z, x1: f.x1 + pl.x - d.x, z1: f.z1 + pl.z - d.z })
+  }
+  return out
+}
+
 /** true where grass tufts must NOT grow */
 export function groundClear(x: number, z: number): boolean {
   if (Math.abs(z - ROAD_Z) < 2.4) return true
-  for (const f of allFieldRects()) if (inRect(x, z, f, 0.35)) return true
+  for (const f of fieldRectsNow()) if (inRect(x, z, f, 0.35)) return true
   // every building site — at its CURRENT layout position — stays clear
   // (owner's rule: the ground is ready before the crew arrives)
   for (const id of PLACE_IDS) {
@@ -429,7 +444,7 @@ function paintGround(rng: Rng, into?: HTMLCanvasElement): HTMLCanvasElement {
   }
 
   // fallow beds where fields live (soil meshes cover the bought ones)
-  for (const f of allFieldRects()) {
+  for (const f of fieldRectsNow()) {
     g.fillStyle = '#8b9a5b'
     g.globalAlpha = 0.4
     roundRect(g, p.px(f.x0), p.pz(f.z0), p.s(f.x1 - f.x0), p.s(f.z1 - f.z0), p.s(0.5))

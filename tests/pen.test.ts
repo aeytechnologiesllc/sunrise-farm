@@ -59,3 +59,36 @@ describe('the pen travels', () => {
     expect(canPlace(h, 'tractor', DEFAULT_PLACES.pen.x + 0.5, DEFAULT_PLACES.pen.z).ok).toBe(true)
   })
 })
+
+describe('field slabs travel', () => {
+  it('fieldRectFor/fieldPlotsFor at the default layout match the authored tables', async () => {
+    const { fieldRectFor, fieldPlotsFor } = await import('../src/game/layout')
+    const { TIERS, plotPositions } = await import('../src/game/expansion')
+    const h = host()
+    for (let t = 0; t <= 3; t++) {
+      if (!TIERS[t].field) continue
+      expect(fieldRectFor(h, t)).toEqual(TIERS[t].field)
+    }
+    expect(fieldPlotsFor(h)).toEqual(plotPositions(4))
+  })
+
+  it('a moved slab shifts ONLY its own plots, order and length intact', async () => {
+    const { fieldPlotsFor, setPlace, DEFAULT_PLACES } = await import('../src/game/layout')
+    const { plotPositions, TIERS } = await import('../src/game/expansion')
+    const h = host()
+    setPlace(h, 'field1', DEFAULT_PLACES.field1.x + 3, DEFAULT_PLACES.field1.z - 6)
+    const moved = fieldPlotsFor(h)
+    const legacy = plotPositions(4)
+    expect(moved.length).toBe(legacy.length)
+    const t1start = TIERS[0].plots.length
+    const t1end = t1start + TIERS[1].plots.length
+    for (let i = 0; i < moved.length; i++) {
+      if (i >= t1start && i < t1end) {
+        expect(moved[i][0]).toBeCloseTo(legacy[i][0] + 3, 10)
+        expect(moved[i][1]).toBeCloseTo(legacy[i][1] - 6, 10)
+      } else {
+        expect(moved[i]).toEqual(legacy[i])
+      }
+    }
+  })
+})

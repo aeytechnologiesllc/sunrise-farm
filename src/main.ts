@@ -53,6 +53,8 @@ import {
   canPlace,
   DEFAULT_PLACES,
   deliveryRoute,
+  fieldPlotsFor,
+  fieldTierOf,
   footprintOf,
   layoutView,
   paddockRect,
@@ -99,7 +101,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
-import { fenceFor, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
+import { fenceFor, sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
@@ -141,6 +143,10 @@ const PLACE_NAMES: Record<PlaceId, string> = {
   tractor: 'the Tractor',
   farmhand: "the Farmhand's post",
   pen: 'the Sheep Pen',
+  field0: 'the Home Field',
+  field1: 'the East Meadow field',
+  field2: 'the Far East field',
+  field3: 'the Old Pasture field',
 }
 const GOOD_EMOJI: Record<GoodKind, string> = {
   wheat: '\u{1F33E}',
@@ -300,9 +306,18 @@ async function boot(): Promise<void> {
     state.projects.shop || !state.projects.stand ? null : buildStand(scene, assets)
   if (standGroup) OCCLUDERS.push(standGroup)
   let fenceMesh: Mesh | null = null // built once the fence edge-set loads below
+  /** each owned tier's soil slab — a movable (the whole group translates) */
+  const fieldGroups = new Map<number, Group>()
   for (let t = 0; t <= state.expansion; t++) {
     const def = TIERS[t]
-    if (def.field) scene.add(buildField(def.field, def.plots, 0x6011 + t * 97))
+    if (def.field) {
+      const g = buildField(def.field, def.plots, 0x6011 + t * 97)
+      const pl = placeOf(state, ('field' + t) as PlaceId)
+      const dpl = DEFAULT_PLACES[('field' + t) as PlaceId]
+      g.position.set(pl.x - dpl.x, 0, pl.z - dpl.z)
+      scene.add(g)
+      fieldGroups.set(t, g)
+    }
   }
   const clouds = buildClouds(scene)
   const ambient = new AmbientLife(scene)
@@ -336,7 +351,7 @@ async function boot(): Promise<void> {
   }
   // view order mirrors Game's combined index space: field plots, then
   // greenhouse planters (always at the tail so expansions insert BEFORE them)
-  const plots = plotPositions(state.expansion).map(([px, pz]) => mkPlot(px, pz))
+  const plots = fieldPlotsFor(state).map(([px, pz]) => mkPlot(px, pz))
   // greenhouse planters live INSIDE the walkable glasshouse set
   if (state.projects.greenhouse) for (const b of ghInterior.bedPositions) plots.push(mkPlot(b.x, b.z, true))
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
@@ -397,6 +412,7 @@ async function boot(): Promise<void> {
   const carry = new CarrySystem(scene)
   if (standGroup) carry.register('stand', standGroup)
   if (tractor) carry.register('tractor', tractor.group)
+  for (const [t, g] of fieldGroups) carry.register(('field' + t) as PlaceId, g)
   /** the latest ghost validity — buttons + commit share one verdict */
   let carryCheck: PlaceCheck = { ok: false }
 
@@ -1277,6 +1293,8 @@ async function boot(): Promise<void> {
       fg = buildField(def.field, def.plots, 0x6011 + state.expansion * 97)
       fg.scale.setScalar(0.001)
       scene.add(fg)
+      fieldGroups.set(state.expansion, fg)
+      carry.register(('field' + state.expansion) as PlaceId, fg)
       const insertAt = state.plots.length - def.plots.length
       def.plots.forEach(([px, pz], k) => {
         const v = mkPlot(px, pz)
@@ -1506,6 +1524,18 @@ async function boot(): Promise<void> {
       reflowQueue()
     } else if (id === 'farmhand') {
       farmhand?.setHome(new Vector3(p.x, 0, p.z))
+    } else if (fieldTierOf(id) >= 0) {
+      // the slab's plots ride along — same indices, new centers (the crops,
+      // their timers, the farmhand's rounds and FX anchors all follow)
+      const t = fieldTierOf(id)
+      let start = 0
+      for (let i = 0; i < t; i++) start += TIERS[i].plots.length
+      const positions = fieldPlotsFor(state)
+      for (let k = 0; k < TIERS[t].plots.length; k++) {
+        const i = start + k
+        plots[i]?.moveTo(new Vector3(positions[i][0], 0, positions[i][1]))
+        if (plots[i]) plots[i].group.visible = true
+      }
     } else if (id === 'pen') {
       const r = penRect(state)
       PEN_GATE.set(r.x1 + 0.4, 0, (r.gate.z0 + r.gate.z1) / 2)
@@ -1538,14 +1568,17 @@ async function boot(): Promise<void> {
   const canLift = (id: PlaceId): boolean => {
     if (carry.carrying || carry.settling || fenceMode) return false
     if (sleepActive || construction.active || fetchCine || ghBusy || inGreenhouse || hud.modalOpen) return false
+    const ft = fieldTierOf(id)
     const owned =
-      id === 'tractor'
-        ? state.expansion >= 2
-        : id === 'pen'
-          ? state.projects.sheep === true
-          : id === 'stand'
-            ? state.projects.stand === true && state.projects.shop !== true
-            : state.projects[id] === true
+      ft >= 0
+        ? state.expansion >= ft
+        : id === 'tractor'
+          ? state.expansion >= 2
+          : id === 'pen'
+            ? state.projects.sheep === true
+            : id === 'stand'
+              ? state.projects.stand === true && state.projects.shop !== true
+              : state.projects[id] === true
     if (!owned) return false
     // Hazel can't come home to a missing stable
     if (id === 'stable' && state.produce.deliveryT > 0) return false
@@ -1558,6 +1591,16 @@ async function boot(): Promise<void> {
   const tryLift = (id: PlaceId): boolean => {
     if (!canLift(id)) return false
     if (!carry.lift(id, player.group)) return false
+    // a carried slab's plots vanish with it (crops keep growing in state;
+    // they re-appear at the landing spot)
+    const ft = fieldTierOf(id)
+    if (ft >= 0) {
+      let start = 0
+      for (let i = 0; i < ft; i++) start += TIERS[i].plots.length
+      for (let k = 0; k < TIERS[ft].plots.length; k++) {
+        if (plots[start + k]) plots[start + k].group.visible = false
+      }
+    }
     touch()
     sfx.crate()
     navigator.vibrate?.(20)
@@ -1925,6 +1968,7 @@ async function boot(): Promise<void> {
     // the goodnight walk passes the fields — no auto-harvests mid-cinematic
     if (!hud.modalOpen && !sleepActive) {
       for (let i = 0; i < plots.length; i++) {
+        if (!plots[i].group.visible) continue // riding overhead right now
         if (p.distanceTo(plots[i].center) > PLOT_R) continue
         const crop = game.plotAt(i)?.crop
         if (!crop) {

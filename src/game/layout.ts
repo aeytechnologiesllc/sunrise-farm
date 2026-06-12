@@ -22,10 +22,22 @@ import {
   ROAD_Z,
   TOWN_GATE_X,
 } from './geo'
-import { allFieldRects, fenceFor, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
+import { fenceFor, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
 import { PADDOCK, PROJECTS } from './projects'
 
-export type PlaceId = 'stand' | 'shop' | 'coop' | 'stable' | 'greenhouse' | 'tractor' | 'farmhand' | 'pen'
+export type PlaceId =
+  | 'stand'
+  | 'shop'
+  | 'coop'
+  | 'stable'
+  | 'greenhouse'
+  | 'tractor'
+  | 'farmhand'
+  | 'pen'
+  | 'field0'
+  | 'field1'
+  | 'field2'
+  | 'field3'
 
 export interface Place {
   x: number
@@ -42,6 +54,16 @@ export interface LayoutHost {
   expansion: number
   projects: Partial<Record<string, boolean>>
   produce?: { deliveryT: number }
+}
+
+function fieldHome(tier: number): Place {
+  const f = TIERS[tier].field!
+  return { x: (f.x0 + f.x1) / 2, z: (f.z0 + f.z1) / 2, yaw: 0 }
+}
+
+/** which field tier a PlaceId names, or -1 */
+export function fieldTierOf(id: PlaceId): number {
+  return id.startsWith('field') ? Number(id.slice(5)) : -1
 }
 
 function siteOf(id: string): Place {
@@ -61,6 +83,11 @@ export const DEFAULT_PLACES: Record<PlaceId, Place> = {
   farmhand: siteOf('farmhand'),
   // the authored pen center — its rect/gate derive in penRect()
   pen: { x: (PEN.x0 + PEN.x1) / 2, z: (PEN.z0 + PEN.z1) / 2, yaw: 0 },
+  // each tier's soil slab, centered on its authored rect
+  field0: fieldHome(0),
+  field1: fieldHome(1),
+  field2: fieldHome(2),
+  field3: fieldHome(3),
 }
 
 export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]
@@ -70,6 +97,11 @@ export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]
 export function footprintOf(id: PlaceId): { w: number; d: number } {
   if (id === 'tractor') return { w: 2.6, d: 1.6 }
   if (id === 'pen') return { w: PEN.x1 - PEN.x0, d: PEN.z1 - PEN.z0 }
+  const ft = fieldTierOf(id)
+  if (ft >= 0) {
+    const f = TIERS[ft].field!
+    return { w: f.x1 - f.x0, d: f.z1 - f.z0 }
+  }
   const def = PROJECTS.find((p) => p.id === id)!
   return def.footprint
 }
@@ -120,6 +152,34 @@ export function penRect(s: LayoutHost): PenRect {
     z1: p.z + hd,
     gate: { z0: p.z + gateMidOff - gateHalf, z1: p.z + gateMidOff + gateHalf },
   }
+}
+
+/** a tier's soil rect, wherever its slab stands today */
+export function fieldRectFor(s: LayoutHost, tier: number): FieldRect {
+  const f = TIERS[tier].field!
+  if (!s.layout?.[('field' + tier) as PlaceId]) return f // unmoved: bit-exact
+  const p = placeOf(s, ('field' + tier) as PlaceId)
+  const d = DEFAULT_PLACES[('field' + tier) as PlaceId]
+  return { x0: f.x0 + p.x - d.x, z0: f.z0 + p.z - d.z, x1: f.x1 + p.x - d.x, z1: f.z1 + p.z - d.z }
+}
+
+/** cumulative plot centers for the OWNED tiers, each translated by its
+ * slab's move — same order and length as expansion.plotPositions, so the
+ * save's plot indices never change meaning */
+export function fieldPlotsFor(s: LayoutHost): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  for (let t = 0; t <= Math.min(s.expansion, TIERS.length - 1); t++) {
+    const tierDef = TIERS[t]
+    if (!tierDef.field) continue
+    if (!s.layout?.[('field' + t) as PlaceId]) {
+      for (const pl of tierDef.plots) out.push(pl) // unmoved: bit-exact
+      continue
+    }
+    const p = placeOf(s, ('field' + t) as PlaceId)
+    const d = DEFAULT_PLACES[('field' + t) as PlaceId]
+    for (const [px, pz] of tierDef.plots) out.push([px + p.x - d.x, pz + p.z - d.z])
+  }
+  return out
 }
 
 /** the horse paddock TRAVELS WITH the stable: same rect, same relative
@@ -319,9 +379,14 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
   if (!inRing && !inLot) return { ok: false, reason: 'land' }
   if (onLotSide && !inLot) return { ok: false, reason: inRing ? 'road' : 'land' }
 
-  // soil, present and future (mirrors the grass rule: fields stay buildable-free)
-  for (const f of allFieldRects()) {
-    for (const b of bodies) if (overlaps(b, obbOfRect(f, 0.3))) return { ok: false, reason: 'field' }
+  // soil, present and future (mirrors the grass rule: fields stay
+  // buildable-free) — OWNED slabs at their current spots, unbought tiers
+  // at their authored homes
+  const selfTier = fieldTierOf(id)
+  for (let t = 0; t < TIERS.length; t++) {
+    if (!TIERS[t].field || t === selfTier) continue
+    const fr = t <= s.expansion ? fieldRectFor(s, t) : TIERS[t].field!
+    for (const b of bodies) if (overlaps(b, obbOfRect(fr, 0.3))) return { ok: false, reason: 'field' }
   }
 
   // the sheep pen — wherever it stands today. Snug + 0.3: the authored
