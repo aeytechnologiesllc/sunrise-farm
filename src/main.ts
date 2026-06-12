@@ -181,6 +181,8 @@ declare global {
       camProbe: () => Record<string, unknown>
       ray: (nx: number, ny: number) => Array<{ d: number; n: number | undefined; name: string }>
       draws: () => number
+      perf: () => { calls: number; tris: number; dpr: number; frameMs: number; fps: number }
+      meshes: () => Array<{ name: string; tris: number; inst: number }>
       warp: (x: number, z: number) => void
       lookYaw: (y: number) => void
       fence: (x0: number, z0: number, x1: number, z1: number) => number
@@ -220,9 +222,17 @@ async function boot(): Promise<void> {
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = PCFShadowMap
-  // 1.5 on phones: fill rate is the #1 mobile cost and the tone-mapped,
-  // post-processed image hides the resolution drop ("feels heavy" report)
-  renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarse ? 1.5 : 2))
+  // the shadow map redraws on OUR schedule (every other frame — the sun
+  // crawls, nobody can see a 33ms-stale shadow), not every frame
+  renderer.shadowMap.autoUpdate = false
+  // ADAPTIVE resolution (the smooth-fps pass): start sharp, and only ease
+  // down when the measured frame time actually misses budget — the old
+  // flat 1.5 cap was the 'lost quality' the owner clocked. Sharp when the
+  // scene is light, soft only under real load, never choppy.
+  const DPR_MAX = Math.min(devicePixelRatio, isCoarse ? 2.2 : 2)
+  const DPR_MIN = isCoarse ? 1.25 : 1.5
+  let dpr = Math.min(devicePixelRatio, isCoarse ? 1.8 : 2)
+  renderer.setPixelRatio(dpr)
   document.body.appendChild(renderer.domElement)
 
   const scene = new Scene()
@@ -688,6 +698,7 @@ async function boot(): Promise<void> {
   let cineEnding = false
   let cineStarted = 0
   const cineAim = new Vector3()
+  const fetchEye = new Vector3()
   const endFetchCine = (): void => {
     if (!fetchCine) return
     fetchCine = false
@@ -2358,9 +2369,10 @@ async function boot(): Promise<void> {
     construction.frame(dt)
     dayCycle.update(dt)
     // fetch cinema camera: stick flight first, then smooth-pursuit on Rex
+    // (reused temp — a per-frame clone() was feeding the GC during cines)
     if (fetchCine) {
       cam.cineFollow(
-        cineEnding || t - cineStarted > 0.75 ? dog.group.position.clone().setY(0.55) : cineAim,
+        cineEnding || t - cineStarted > 0.75 ? fetchEye.copy(dog.group.position).setY(0.55) : cineAim,
       )
     }
     // goodnight scene camera: the lit doorway -> the dinner table inside ->
@@ -2444,6 +2456,10 @@ async function boot(): Promise<void> {
   // ---- frame driver with rare-event slow-mo (presentation only) -------------------
   let last = performance.now()
   let driftTick = 0
+  let shadowFlip = false
+  /** EMA of real frame time, ms — drives the adaptive resolution */
+  let frameAvg = 16.7
+  let dprSettleAt = performance.now() + 4000 // let boot hitches pass first
   const loop = (now: number): void => {
     requestAnimationFrame(loop)
     // self-healing viewport: iOS standalone misses resize events — if the
@@ -2453,8 +2469,28 @@ async function boot(): Promise<void> {
       driftTick = 0
       if (viewW() !== sizedW || viewH() !== sizedH) resize()
     }
-    const dt = Math.min((now - last) / 1000, 0.1)
+    const dtMs = now - last
+    const dt = Math.min(dtMs / 1000, 0.1)
     last = now
+    // shadows redraw every OTHER frame (the sun crawls; nobody can tell)
+    shadowFlip = !shadowFlip
+    if (shadowFlip) renderer.shadowMap.needsUpdate = true
+    // adaptive resolution: miss budget -> step softer; comfortably under
+    // budget for a while -> step sharper. Cooldowns stop buffer thrash.
+    if (dtMs < 250) frameAvg += (dtMs - frameAvg) * 0.04
+    if (now > dprSettleAt) {
+      if (frameAvg > 19.5 && dpr > DPR_MIN) {
+        dpr = Math.max(DPR_MIN, dpr - 0.2)
+        renderer.setPixelRatio(dpr)
+        resize()
+        dprSettleAt = now + 2500
+      } else if (frameAvg < 14.2 && dpr < DPR_MAX) {
+        dpr = Math.min(DPR_MAX, dpr + 0.15)
+        renderer.setPixelRatio(dpr)
+        resize()
+        dprSettleAt = now + 5000
+      }
+    }
     engine.advance(dt * (now < slowUntilReal ? 0.2 : 1))
   }
   requestAnimationFrame(loop)
@@ -2670,6 +2706,41 @@ async function boot(): Promise<void> {
     },
     dusk: () => dayCycle.setPhase(0.88),
     draws: () => renderer.info.render.calls,
+    meshes: () => {
+      const out: Array<{ name: string; tris: number; inst: number }> = []
+      scene.traverse((o) => {
+        const m = o as Mesh
+        if (!m.isMesh || !m.visible) return
+        const g = m.geometry as { index?: { count: number } | null; attributes?: { position?: { count: number } } }
+        const idx = g.index ? g.index.count : (g.attributes?.position?.count ?? 0)
+        const inst = (m as unknown as { isInstancedMesh?: boolean; count?: number }).isInstancedMesh
+          ? ((m as unknown as { count: number }).count ?? 1)
+          : 1
+        const im = m as unknown as {
+          isInstancedMesh?: boolean
+          frustumCulled: boolean
+          boundingSphere?: { center: { x: number; z: number }; radius: number } | null
+          computeBoundingSphere?: () => void
+        }
+        if (im.isInstancedMesh && im.boundingSphere === null) im.computeBoundingSphere?.()
+        const bs = im.isInstancedMesh ? im.boundingSphere : null
+        out.push({
+          name: m.name || (im.isInstancedMesh ? 'inst' : m.type),
+          tris: Math.round((idx / 3) * inst),
+          inst,
+          fc: im.frustumCulled,
+          sphere: bs ? `r${bs.radius.toFixed(1)}@${bs.center.x.toFixed(0)},${bs.center.z.toFixed(0)}` : 'n/a',
+        } as never)
+      })
+      return out.sort((a, b) => b.tris - a.tris).slice(0, 14)
+    },
+    perf: () => ({
+      calls: renderer.info.render.calls,
+      tris: renderer.info.render.triangles,
+      dpr: +dpr.toFixed(2),
+      frameMs: +frameAvg.toFixed(2),
+      fps: Math.round(engine.fps),
+    }),
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)
       prevPos.x = x

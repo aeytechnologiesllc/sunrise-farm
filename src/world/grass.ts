@@ -22,6 +22,7 @@ import {
   MeshStandardMaterial,
   Quaternion,
   Scene,
+  Sphere,
   Vector3,
 } from 'three'
 import { mulberry32 } from '../game/rng'
@@ -88,12 +89,14 @@ function bladeGeometry(): BufferGeometry {
 }
 
 export function buildGrass(scene: Scene, isClear: (x: number, z: number) => boolean): GrassField {
-  // phones get a thinner field; each blade is only 8 tris so even the
-  // desktop count is lighter per pixel than the old alpha-cutout cards
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
-  // 28k on phones ("heavy" report): the wind shader prices every blade every
-  // frame — the drop reads as a slightly airier lawn, not as missing grass
-  const COUNT = coarse ? 28000 : 64000
+  // CHUNKED instancing (the smooth-fps pass): the meadow is split into a
+  // grid of cells, each its own InstancedMesh with a hand-set bounding
+  // sphere — so the camera only pays vertex+wind cost for cells actually
+  // on screen (typically a third of the field). That headroom buys the
+  // phone lawn DENSITY back (40k blades, up from the 28k 'airier' cut
+  // the owner clocked as lost quality) and still comes out far cheaper.
+  const COUNT = coarse ? 40000 : 64000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
@@ -143,10 +146,45 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
       )
   }
 
-  const mesh = new InstancedMesh(bladeGeometry(), mat, COUNT)
-  mesh.frustumCulled = false // instances span the whole meadow
-  mesh.castShadow = false
-  mesh.receiveShadow = true
+  // world span of the scatter (matches the placement loops below)
+  const SPAN = { x0: -34, x1: 34, z0: -28, z1: 28 }
+  const CELL = 12
+  const COLS = Math.ceil((SPAN.x1 - SPAN.x0) / CELL)
+  const ROWS = Math.ceil((SPAN.z1 - SPAN.z0) / CELL)
+  const bladeGeo = bladeGeometry()
+  interface Chunk {
+    mesh: InstancedMesh
+    bladeAt: Float32Array
+    n: number
+  }
+  const cap = Math.ceil((COUNT / (COLS * ROWS)) * 3.2) // clustering headroom
+  const chunks: Chunk[] = []
+  for (let r = 0; r < ROWS; r++) {
+    for (let cI = 0; cI < COLS; cI++) {
+      const cx = SPAN.x0 + (cI + 0.5) * CELL
+      const cz = SPAN.z0 + (r + 0.5) * CELL
+      const mesh = new InstancedMesh(bladeGeo, mat, cap)
+      // culling reads the MESH-level sphere on InstancedMesh — hand it the
+      // cell (NEVER the geometry's: instance matrices re-offset a geometry
+      // sphere per blade and the union balloons to world size — found the
+      // hard way when nothing culled)
+      mesh.boundingSphere = new Sphere(new Vector3(cx, 0.25, cz), CELL * 0.75 + 1.4)
+      mesh.frustumCulled = true
+      mesh.castShadow = false
+      // no shadow sampling on the biggest fill surface in the game — the
+      // GROUND under the blades still receives, which is what the eye reads
+      mesh.receiveShadow = false
+      mesh.count = 0
+      scene.add(mesh)
+      chunks.push({ mesh, bladeAt: new Float32Array(cap * 2), n: 0 })
+    }
+  }
+  const chunkFor = (x: number, z: number): Chunk | null => {
+    const cI = Math.floor((x - SPAN.x0) / CELL)
+    const r = Math.floor((z - SPAN.z0) / CELL)
+    if (cI < 0 || cI >= COLS || r < 0 || r >= ROWS) return null
+    return chunks[r * COLS + cI]
+  }
 
   const m = new Matrix4()
   const pos = new Vector3()
@@ -156,10 +194,9 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   const up = new Vector3(0, 1, 0)
   const side = new Vector3(1, 0, 0)
   const col = new Color()
-  /** per-instance world x,z — the commit-time hide pass needs them */
-  const bladeAt = new Float32Array(COUNT * 2)
   const scatter = (): number => {
   const rng = mulberry32(48151623)
+  for (const c of chunks) c.n = 0
   let placed = 0
   let attempts = 0
   while (placed < COUNT && attempts < COUNT * 10) {
@@ -198,27 +235,31 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
       // splayed tilts were what read as weeds sticking out
       quat.multiply(tilt.setFromAxisAngle(side, rng.next() * 0.1))
       // z scales with height so the baked lean stays proportional to it
+      const chunk = chunkFor(x, z)
+      if (!chunk || chunk.n >= cap) continue
       scl.set(sw, hy, hy)
       m.compose(pos, quat, scl)
-      mesh.setMatrixAt(placed, m)
-      bladeAt[placed * 2] = x
-      bladeAt[placed * 2 + 1] = z
+      chunk.mesh.setMatrixAt(chunk.n, m)
+      chunk.bladeAt[chunk.n * 2] = x
+      chunk.bladeAt[chunk.n * 2 + 1] = z
       col.setHSL(
         ch + (rng.next() - 0.5) * 0.01,
         cs + (rng.next() - 0.5) * 0.06,
         cl + (rng.next() - 0.5) * 0.12,
       )
-      mesh.setColorAt(placed, col)
+      chunk.mesh.setColorAt(chunk.n, col)
+      chunk.n++
       placed++
     }
   }
-  mesh.count = placed
-  mesh.instanceMatrix.needsUpdate = true
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  for (const c of chunks) {
+    c.mesh.count = c.n
+    c.mesh.instanceMatrix.needsUpdate = true
+    if (c.mesh.instanceColor) c.mesh.instanceColor.needsUpdate = true
+  }
   return placed
   }
   scatter()
-  scene.add(mesh)
 
   const zero = new Matrix4().makeScale(0, 0, 0)
   return {
@@ -226,14 +267,28 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
       if (timeU) timeU.value = t
     },
     hideIn(rect): void {
-      for (let i = 0; i < mesh.count; i++) {
-        const x = bladeAt[i * 2]
-        const z = bladeAt[i * 2 + 1]
-        if (x > rect.x0 && x < rect.x1 && z > rect.z0 && z < rect.z1) {
-          mesh.setMatrixAt(i, zero)
+      for (const c of chunks) {
+        // only chunks that overlap the rect pay the scan (the cell sphere
+        // lives on the MESH — the instanced-culling fix moved it there)
+        const s = (c.mesh as unknown as { boundingSphere: Sphere }).boundingSphere
+        if (
+          s.center.x + s.radius < rect.x0 ||
+          s.center.x - s.radius > rect.x1 ||
+          s.center.z + s.radius < rect.z0 ||
+          s.center.z - s.radius > rect.z1
+        )
+          continue
+        let touched = false
+        for (let i = 0; i < c.n; i++) {
+          const x = c.bladeAt[i * 2]
+          const z = c.bladeAt[i * 2 + 1]
+          if (x > rect.x0 && x < rect.x1 && z > rect.z0 && z < rect.z1) {
+            c.mesh.setMatrixAt(i, zero)
+            touched = true
+          }
         }
+        if (touched) c.mesh.instanceMatrix.needsUpdate = true
       }
-      mesh.instanceMatrix.needsUpdate = true
     },
     rebuild(): void {
       scatter()

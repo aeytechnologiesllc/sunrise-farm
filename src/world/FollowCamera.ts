@@ -360,9 +360,12 @@ export class FollowCamera {
     this.camera.updateProjectionMatrix()
   }
 
-  /** world -> CSS pixels (projected DOM widgets) */
+  private spTmp = new Vector3()
+
+  /** world -> CSS pixels (projected DOM widgets) — allocation-free, it runs
+   * several times every frame for the ring/pip/name-tag/bubbles */
   screenPos(world: Vector3): { x: number; y: number; behind: boolean } {
-    const v = world.clone().project(this.camera)
+    const v = this.spTmp.copy(world).project(this.camera)
     return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight, behind: v.z > 1 }
   }
 }
