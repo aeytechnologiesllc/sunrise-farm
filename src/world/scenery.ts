@@ -193,7 +193,7 @@ export function forestClear(x: number, z: number): boolean {
   if (groundClear(x, z)) return true
   const f = fenceFor(99) // max-tier ring
   if (x > f.minX - 1.4 && x < f.maxX + 1.4 && z > f.minZ - 1.4 && z < f.maxZ + 1.4) return true
-  if (inRect(x, z, PEN, 1.2)) return true
+  if (inRect(x, z, PEN, 1.2)) return true // the DEFAULT pen yard stays tree-free
   if (Math.abs(z - ROAD_Z) < 3.0) return true
   return false
 }
@@ -437,7 +437,7 @@ function paintGround(rng: Rng, into?: HTMLCanvasElement): HTMLCanvasElement {
     g.globalAlpha = 1
   }
 
-  // dusty yard around the barn + inside the pen
+  // dusty yard around the barn + inside the pen (wherever it stands today)
   g.fillStyle = '#a98e5e'
   g.globalAlpha = 0.35
   g.beginPath()
@@ -445,7 +445,9 @@ function paintGround(rng: Rng, into?: HTMLCanvasElement): HTMLCanvasElement {
   g.fill()
   g.fillStyle = '#9aa05e'
   g.globalAlpha = 0.3
-  roundRect(g, p.px(PEN.x0), p.pz(PEN.z0), p.s(PEN.x1 - PEN.x0), p.s(PEN.z1 - PEN.z0), p.s(0.6))
+  const penW = PEN.x1 - PEN.x0
+  const penD = PEN.z1 - PEN.z0
+  roundRect(g, p.px(LV.pen.x - penW / 2), p.pz(LV.pen.z - penD / 2), p.s(penW), p.s(penD), p.s(0.6))
   g.fill()
   g.globalAlpha = 1
 
@@ -691,10 +693,16 @@ export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: It
 
 // ---- wooden sheep pen (built by The Sheep Pen project) -------------------------------
 
-export function buildPen(scene: Scene): void {
+/** the wooden sheep pen, ROOT-RELATIVE (it's a movable now): rails and the
+ * gate gap are built around the local origin; the root sits at the place */
+export function buildPen(scene: Scene, at: { x: number; z: number }): Group {
   const rng = mulberry32(424242)
   const woodTex = toTexture(woodCanvas(rng, '#7a5c38'), true)
   const geos: BufferGeometry[] = []
+  const cx = (PEN.x0 + PEN.x1) / 2
+  const cz = (PEN.z0 + PEN.z1) / 2
+  // local frame: the authored rect re-centered on the origin
+  const L = { x0: PEN.x0 - cx, z0: PEN.z0 - cz, x1: PEN.x1 - cx, z1: PEN.z1 - cz, gate: { z0: PEN.gate.z0 - cz, z1: PEN.gate.z1 - cz } }
   const post = (x: number, z: number): void => {
     const p = new BoxGeometry(0.14, 0.95, 0.14)
     p.translate(x, 0.45, z)
@@ -732,16 +740,21 @@ export function buildPen(scene: Scene): void {
       }
     }
   }
-  span(PEN.x0, PEN.z0, PEN.x1, PEN.z0)
-  span(PEN.x0, PEN.z1, PEN.x1, PEN.z1)
-  span(PEN.x0, PEN.z0, PEN.x0, PEN.z1)
-  span(PEN.x1, PEN.z0, PEN.x1, PEN.z1, { from: PEN.gate.z0, to: PEN.gate.z1 })
+  span(L.x0, L.z0, L.x1, L.z0)
+  span(L.x0, L.z1, L.x1, L.z1)
+  span(L.x0, L.z0, L.x0, L.z1)
+  span(L.x1, L.z0, L.x1, L.z1, { from: L.gate.z0, to: L.gate.z1 })
+  const root = new Group()
   const merged = mergeGeometries(geos)
-  if (!merged) return
-  const mesh = new Mesh(merged, new MeshStandardMaterial({ map: woodTex, roughness: 0.95 }))
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  scene.add(mesh)
+  if (merged) {
+    const mesh = new Mesh(merged, new MeshStandardMaterial({ map: woodTex, roughness: 0.95 }))
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    root.add(mesh)
+  }
+  root.position.set(at.x, 0, at.z)
+  scene.add(root)
+  return root
 }
 
 // ---- FOR SALE deed sign --------------------------------------------------------------

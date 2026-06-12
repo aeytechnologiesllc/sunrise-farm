@@ -25,7 +25,7 @@ import {
 import { allFieldRects, fenceFor, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
 import { PADDOCK, PROJECTS } from './projects'
 
-export type PlaceId = 'stand' | 'shop' | 'coop' | 'stable' | 'greenhouse' | 'tractor' | 'farmhand'
+export type PlaceId = 'stand' | 'shop' | 'coop' | 'stable' | 'greenhouse' | 'tractor' | 'farmhand' | 'pen'
 
 export interface Place {
   x: number
@@ -59,6 +59,8 @@ export const DEFAULT_PLACES: Record<PlaceId, Place> = {
   greenhouse: siteOf('greenhouse'),
   tractor: { x: -7.2, z: -6.6, yaw: -0.35 },
   farmhand: siteOf('farmhand'),
+  // the authored pen center — its rect/gate derive in penRect()
+  pen: { x: (PEN.x0 + PEN.x1) / 2, z: (PEN.z0 + PEN.z1) / 2, yaw: 0 },
 }
 
 export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]
@@ -67,6 +69,7 @@ export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]
  * the farmhand's little post get sensible bodies) */
 export function footprintOf(id: PlaceId): { w: number; d: number } {
   if (id === 'tractor') return { w: 2.6, d: 1.6 }
+  if (id === 'pen') return { w: PEN.x1 - PEN.x0, d: PEN.z1 - PEN.z0 }
   const def = PROJECTS.find((p) => p.id === id)!
   return def.footprint
 }
@@ -92,6 +95,31 @@ export function layoutView(s: LayoutHost): LayoutView {
   const out = {} as LayoutView
   for (const id of PLACE_IDS) out[id] = placeOf(s, id)
   return out
+}
+
+/** the sheep pen rect + its east-wall gate, derived from wherever the pen
+ * stands (same shape as the authored PEN; the gate keeps its offset) */
+export interface PenRect {
+  x0: number
+  z0: number
+  x1: number
+  z1: number
+  gate: { z0: number; z1: number }
+}
+
+export function penRect(s: LayoutHost): PenRect {
+  const p = placeOf(s, 'pen')
+  const hw = (PEN.x1 - PEN.x0) / 2
+  const hd = (PEN.z1 - PEN.z0) / 2
+  const gateMidOff = (PEN.gate.z0 + PEN.gate.z1) / 2 - (PEN.z0 + PEN.z1) / 2
+  const gateHalf = (PEN.gate.z1 - PEN.gate.z0) / 2
+  return {
+    x0: p.x - hw,
+    z0: p.z - hd,
+    x1: p.x + hw,
+    z1: p.z + hd,
+    gate: { z0: p.z + gateMidOff - gateHalf, z1: p.z + gateMidOff + gateHalf },
+  }
 }
 
 /** the horse paddock TRAVELS WITH the stable: same rect, same relative
@@ -129,6 +157,7 @@ export type PlaceBlock =
   | 'road' // the road must stay clear
   | 'field' // crops will grow there (any tier's soil)
   | 'pen' // the sheep pen
+  | 'flock-out' // the pen can't move while sheep are loose
   | 'paddock' // Hazel's paddock (moves with the stable)
   | 'building' // overlaps another structure
   | 'home' // the homestead and its doorway
@@ -295,12 +324,13 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
     for (const b of bodies) if (overlaps(b, obbOfRect(f, 0.3))) return { ok: false, reason: 'field' }
   }
 
-  // the sheep pen (fixed until Phase 3) and the paddock (travels with the
-  // stable). Snug + 0.3: the authored stable's rotated corner clears the
-  // pen by exactly that much.
-  const penObb = obbOfRect(PEN, 0.3)
-  if (overlaps(snug, penObb)) return { ok: false, reason: 'pen' }
-  if (bodies.length > 1 && overlaps(bodies[1], penObb)) return { ok: false, reason: 'pen' }
+  // the sheep pen — wherever it stands today. Snug + 0.3: the authored
+  // stable's rotated corner clears it by exactly that much.
+  if (id !== 'pen') {
+    const penObb = obbOfRect(penRect(s), 0.3)
+    if (overlaps(snug, penObb)) return { ok: false, reason: 'pen' }
+    if (bodies.length > 1 && overlaps(bodies[1], penObb)) return { ok: false, reason: 'pen' }
+  }
   if (id !== 'stable' && overlaps(box, obbOfRect(paddockRect(s), 0.2))) return { ok: false, reason: 'paddock' }
 
   // the homestead has roots (BUILDING only, snug: the paddock wraps the
@@ -333,9 +363,11 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
     const exists =
       other === 'tractor'
         ? s.expansion >= 2
-        : other === 'stand'
-          ? s.projects.stand === true && s.projects.shop !== true // the shop replaced it
-          : s.projects[other] === true
+        : other === 'pen'
+          ? false // its layout-aware rect is checked above
+          : other === 'stand'
+            ? s.projects.stand === true && s.projects.shop !== true // the shop replaced it
+            : s.projects[other] === true
     if (!exists) continue
     const p = placeOf(s, other)
     if (overlaps(box, obbFor(other, p.x, p.z, 0.3))) return { ok: false, reason: 'building' }

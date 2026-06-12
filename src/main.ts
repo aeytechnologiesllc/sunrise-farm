@@ -56,6 +56,7 @@ import {
   footprintOf,
   layoutView,
   paddockRect,
+  penRect,
   PLACE_IDS,
   placeOf,
   setPlace,
@@ -98,7 +99,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
-import { fenceFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
+import { fenceFor, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
@@ -139,6 +140,7 @@ const PLACE_NAMES: Record<PlaceId, string> = {
   greenhouse: 'the Greenhouse',
   tractor: 'the Tractor',
   farmhand: "the Farmhand's post",
+  pen: 'the Sheep Pen',
 }
 const GOOD_EMOJI: Record<GoodKind, string> = {
   wheat: '\u{1F33E}',
@@ -384,6 +386,9 @@ async function boot(): Promise<void> {
     state.projects.sheep ? sheepCount(state.expansion) : 0,
     (state.chicken.seed ^ 0x51f15e) >>> 0,
   )
+  // a saved pen location binds before anyone meets the flock — penned sheep
+  // spawn at the default rect and ride the delta to wherever the pen stands
+  flock.setPen(penRect(state))
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
@@ -620,7 +625,9 @@ async function boot(): Promise<void> {
   }
 
   // ---- herding missions --------------------------------------------------------
-  const PEN_GATE = new Vector3(PEN.x1 + 0.4, 0, (PEN.gate.z0 + PEN.gate.z1) / 2)
+  let penGroup: Group | null = null
+  const penNow = penRect(state)
+  const PEN_GATE = new Vector3(penNow.x1 + 0.4, 0, (penNow.gate.z0 + penNow.gate.z1) / 2)
   // mission cadence survives reload (no more refresh-to-farm-sheep)
   let herdTimer = state.timers.herd > 0
     ? state.timers.herd
@@ -1112,7 +1119,8 @@ async function boot(): Promise<void> {
   /** the horse grazes her west paddock by the stable; goats join the pen */
   const paddock = paddockRect(state) // travels with the stable
   const HORSE_RECT = { x0: paddock.x0 + 0.3, z0: paddock.z0 + 0.3, x1: paddock.x1 - 0.3, z1: paddock.z1 - 0.3 }
-  const GOAT_RECT = { x0: PEN.x0 + 0.7, z0: PEN.z0 + 0.7, x1: PEN.x1 - 0.7, z1: PEN.z1 - 0.7 }
+  const penRect0 = penRect(state)
+  const GOAT_RECT = { x0: penRect0.x0 + 0.7, z0: penRect0.z0 + 0.7, x1: penRect0.x1 - 0.7, z1: penRect0.z1 - 0.7 }
   let farmhand: FarmhandView | null = null
   let coopHens: CoopHens | null = null
   const coopPlace = placeOf(state, 'coop')
@@ -1157,7 +1165,8 @@ async function boot(): Promise<void> {
       }
       customers.active = state.harvests >= 1
     } else if (def.id === 'sheep') {
-      buildPen(scene)
+      penGroup = buildPen(scene, placeOf(state, 'pen'))
+      carry.register('pen', penGroup)
       // at boot the Flock constructor already spawned the saved flock; a
       // fresh build spawns the full state-derived headcount (incl. any
       // pasture-deed bonus bought first) so reloads never change income
@@ -1448,7 +1457,7 @@ async function boot(): Promise<void> {
   }
   const stablePlace = placeOf(state, 'stable')
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
-  const PEN_CENTER = new Vector3((PEN.x0 + PEN.x1) / 2, 0, (PEN.z0 + PEN.z1) / 2)
+  const PEN_CENTER = new Vector3((penNow.x0 + penNow.x1) / 2, 0, (penNow.z0 + penNow.z1) / 2)
 
   // ---- the glasshouse door: walk up to it and the set fades up around you ----
   // (diner grammar — no button; the dip-to-black hides the off-world teleport)
@@ -1497,6 +1506,17 @@ async function boot(): Promise<void> {
       reflowQueue()
     } else if (id === 'farmhand') {
       farmhand?.setHome(new Vector3(p.x, 0, p.z))
+    } else if (id === 'pen') {
+      const r = penRect(state)
+      PEN_GATE.set(r.x1 + 0.4, 0, (r.gate.z0 + r.gate.z1) / 2)
+      PEN_CENTER.set((r.x0 + r.x1) / 2, 0, (r.z0 + r.z1) / 2)
+      GOAT_RECT.x0 = r.x0 + 0.7
+      GOAT_RECT.z0 = r.z0 + 0.7
+      GOAT_RECT.x1 = r.x1 - 0.7
+      GOAT_RECT.z1 = r.z1 - 0.7
+      // penned sheep ride along with their home; the goats (whose grazing
+      // rect just moved) amble over on their own
+      flock.setPen(r)
     }
     // signs re-stake beside wherever their buildings stand now
     for (const [sid, sgn] of projectSigns) {
@@ -1521,12 +1541,16 @@ async function boot(): Promise<void> {
     const owned =
       id === 'tractor'
         ? state.expansion >= 2
-        : id === 'stand'
-          ? state.projects.stand === true && state.projects.shop !== true
-          : state.projects[id] === true
+        : id === 'pen'
+          ? state.projects.sheep === true
+          : id === 'stand'
+            ? state.projects.stand === true && state.projects.shop !== true
+            : state.projects[id] === true
     if (!owned) return false
     // Hazel can't come home to a missing stable
     if (id === 'stable' && state.produce.deliveryT > 0) return false
+    // the pen stays put while the flock's out ("bring them home first")
+    if (id === 'pen' && flock.missionActive) return false
     const p = placeOf(state, id)
     return player.pos.distanceTo(new Vector3(p.x, 0, p.z)) < 4.6
   }
@@ -1798,7 +1822,7 @@ async function boot(): Promise<void> {
     }
     chicken.update(dt)
     dog.update(dt, player.pos)
-    flock.update(dt, player.pos, dog.group.position, state.expansion)
+    flock.update(dt, player.pos, dog.group.position, state.expansion, fences)
     construction.update(dt)
     grazers.update(dt, player.pos)
     // fetch cinema safety: if the mission system yanked Rex off the job,

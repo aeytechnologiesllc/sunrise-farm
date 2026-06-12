@@ -17,6 +17,8 @@ import {
   type AnimationClip,
 } from 'three'
 import { fenceFor, PEN } from '../game/expansion'
+import { blockByEdges, type FenceSets } from '../game/fence'
+import { type PenRect } from '../game/layout'
 import { mulberry32, type Rng } from '../game/rng'
 import { type Assets } from './assets'
 import { WORLD_BOUNDS } from './scenery'
@@ -31,29 +33,50 @@ const TURN_RATE = 7
  * tiers 0-2: the pen sits outside the picket ring, so sheep scatter into the
  * open WEST meadow (no ring walls on the way). tier 3 fences the pasture in,
  * so the flock raids the YARD instead ("sheep in the crops!"). */
-const SCATTER_WEST: Array<[number, number]> = [
-  [-17.5, 6.5],
-  [-17.0, 0.5],
-  [-13.0, 12.0],
+/** scatter offsets from the PEN CENTER (the pen is a movable now): the west
+ * meadow raid at the authored spot, reproduced exactly at the default pen */
+const SCATTER_NEAR: Array<[number, number]> = [
+  [-5.2, 1.2],
+  [-4.7, -4.8],
+  [-0.7, 6.7],
 ]
+/** the tier-3 yard raid stays absolute — "sheep in the crops!" */
 const SCATTER_YARD: Array<[number, number]> = [
   [-5.5, 8.0],
   [-2.5, -6.5],
   [3.0, -2.0],
 ]
-/** just outside the pen gate */
-const GATE_OUT = new Vector3(PEN.x1 + 0.7, 0, (PEN.gate.z0 + PEN.gate.z1) / 2)
-const GATE_IN = new Vector3(PEN.x1 - 0.8, 0, (PEN.gate.z0 + PEN.gate.z1) / 2)
-/** swing points clearing the pen's NE / SE corners (no wall clipping) */
-const CORNER_N = new Vector3(PEN.x1 + 0.9, 0, PEN.z1 + 1.2)
-const CORNER_S = new Vector3(PEN.x1 + 0.9, 0, PEN.z0 - 1.2)
-/** travel lanes along the pen's north/south edge out to the west meadow */
-const WEST_N = new Vector3(PEN.x0 - 1.0, 0, PEN.z1 + 1.2)
-const WEST_S = new Vector3(PEN.x0 - 1.0, 0, PEN.z0 - 1.2)
 
-function insidePen(x: number, z: number, pad: number): boolean {
-  return x > PEN.x0 - pad && x < PEN.x1 + pad && z > PEN.z0 - pad && z < PEN.z1 + pad
+/** everything the flock derives from wherever its pen stands today */
+interface PenGeom {
+  rect: PenRect
+  gateOut: Vector3
+  gateIn: Vector3
+  cornerN: Vector3
+  cornerS: Vector3
+  westN: Vector3
+  westS: Vector3
+  scatterNear: Vector3[]
 }
+
+function penGeometry(rect: PenRect): PenGeom {
+  const gateMid = (rect.gate.z0 + rect.gate.z1) / 2
+  const cx = (rect.x0 + rect.x1) / 2
+  const cz = (rect.z0 + rect.z1) / 2
+  return {
+    rect,
+    gateOut: new Vector3(rect.x1 + 0.7, 0, gateMid),
+    gateIn: new Vector3(rect.x1 - 0.8, 0, gateMid),
+    cornerN: new Vector3(rect.x1 + 0.9, 0, rect.z1 + 1.2),
+    cornerS: new Vector3(rect.x1 + 0.9, 0, rect.z0 - 1.2),
+    westN: new Vector3(rect.x0 - 1.0, 0, rect.z1 + 1.2),
+    westS: new Vector3(rect.x0 - 1.0, 0, rect.z0 - 1.2),
+    scatterNear: SCATTER_NEAR.map(([dx, dz]) => new Vector3(cx + dx, 0, cz + dz)),
+  }
+}
+
+/** the authored pen as a PenRect (the flock's default until main binds one) */
+const DEFAULT_PEN: PenRect = { x0: PEN.x0, z0: PEN.z0, x1: PEN.x1, z1: PEN.z1, gate: { z0: PEN.gate.z0, z1: PEN.gate.z1 } }
 
 interface WallGate {
   /** 'z' = gate span along z on a wall x=line; 'x' = span along x on z=line */
@@ -82,6 +105,8 @@ interface SheepUnit {
   baaTimer: number
   prev: { x: number; z: number }
   modelScale: number
+  /** seconds spent shoving a fence — give up and graze past the threshold */
+  blockedFor: number
 }
 
 function suffixAction(mixer: AnimationMixer, root: Group, clips: AnimationClip[], suffix: string): AnimationAction | null {
@@ -101,10 +126,37 @@ export class Flock {
   private rng: Rng
   private escaped = 0
   private tier = 0
+  private geo: PenGeom = penGeometry(DEFAULT_PEN)
+  private fences: FenceSets | null = null
 
   constructor(private assets: Assets, private scene: Scene, count: number, seed: number) {
     this.rng = mulberry32(seed)
     for (let i = 0; i < count; i++) this.addSheep()
+  }
+
+  /** the pen moved: re-derive every waypoint and carry the penned sheep
+   * along (their whole world is the pen). Loose sheep stay loose where
+   * they are — the mission lock in main means none exist during a move. */
+  setPen(rect: PenRect): void {
+    const dx = (rect.x0 + rect.x1) / 2 - (this.geo.rect.x0 + this.geo.rect.x1) / 2
+    const dz = (rect.z0 + rect.z1) / 2 - (this.geo.rect.z0 + this.geo.rect.z1) / 2
+    this.geo = penGeometry(rect)
+    for (const u of this.sheep) {
+      if (u.mode !== 'penned') continue
+      u.group.position.x += dx
+      u.group.position.z += dz
+      u.prev.x = u.group.position.x
+      u.prev.z = u.group.position.z
+      if (u.dest) {
+        u.dest.x += dx
+        u.dest.z += dz
+      }
+    }
+  }
+
+  private insidePen(x: number, z: number, pad: number): boolean {
+    const r = this.geo.rect
+    return x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad
   }
 
   addSheep(): void {
@@ -129,8 +181,9 @@ export class Flock {
         }
       }
     })
-    const x = PEN.x0 + 0.9 + this.rng.next() * (PEN.x1 - PEN.x0 - 1.8)
-    const z = PEN.z0 + 0.9 + this.rng.next() * (PEN.z1 - PEN.z0 - 1.8)
+    const r = this.geo.rect
+    const x = r.x0 + 0.9 + this.rng.next() * (r.x1 - r.x0 - 1.8)
+    const z = r.z0 + 0.9 + this.rng.next() * (r.z1 - r.z0 - 1.8)
     g.position.set(x, 0, z)
     const heading = this.rng.next() * Math.PI * 2
     g.rotation.y = heading
@@ -154,6 +207,7 @@ export class Flock {
       baaTimer: 6 + this.rng.next() * 18,
       prev: { x, z },
       modelScale: s,
+      blockedFor: 0,
     }
     unit.idle?.play()
     unit.current = unit.idle
@@ -177,21 +231,22 @@ export class Flock {
     this.tier = tier
     const penned = this.sheep.filter((s) => s.mode === 'penned')
     const n = Math.min(k, penned.length)
-    const spots = tier >= 3 ? SCATTER_YARD : SCATTER_WEST
+    const g = this.geo
+    const spots = tier >= 3 ? SCATTER_YARD.map(([x, z]) => new Vector3(x, 0, z)) : g.scatterNear
     for (let i = 0; i < n; i++) {
       const u = penned[i]
       const spot = spots[Math.floor(this.rng.next() * spots.length)]
       const target = new Vector3(
-        spot[0] + (this.rng.next() - 0.5) * 3,
+        spot.x + (this.rng.next() - 0.5) * 3,
         0,
-        spot[1] + (this.rng.next() - 0.5) * 3,
+        spot.z + (this.rng.next() - 0.5) * 3,
       )
       u.mode = 'escaping'
-      u.waypoints = [GATE_IN.clone(), GATE_OUT.clone()]
-      // west-bound runaways lane around the pen (corner, then the west lane)
-      const north = target.z >= (PEN.z0 + PEN.z1) / 2
-      if (target.x < PEN.x1 + 1) u.waypoints.push((north ? CORNER_N : CORNER_S).clone())
-      if (target.x < PEN.x0 - 0.5) u.waypoints.push((north ? WEST_N : WEST_S).clone())
+      u.waypoints = [g.gateIn.clone(), g.gateOut.clone()]
+      // pen-bound runaways lane around the rails (corner, then the west lane)
+      const north = target.z >= (g.rect.z0 + g.rect.z1) / 2
+      if (target.x < g.rect.x1 + 1) u.waypoints.push((north ? g.cornerN : g.cornerS).clone())
+      if (target.x < g.rect.x0 - 0.5) u.waypoints.push((north ? g.westN : g.westS).clone())
       u.waypoints.push(target)
       u.dest = u.waypoints.shift()!
       this.onBaa?.(u.group.position)
@@ -203,23 +258,24 @@ export class Flock {
   /** where a fleeing sheep should be funneled next: around the pen corner if
    * she's west of the pen, otherwise straight at the gate mouth */
   private funnelPoint(p: Vector3): Vector3 {
-    // funnel chain: around the pen (west lane → corner) and around the picket
-    // ring's west corners — every hop moves toward the gate, so it terminates
-    const north = p.z >= (PEN.z0 + PEN.z1) / 2
+    // funnel chain: around the pen (west lane → corner) — every hop moves
+    // toward the gate, so it terminates. The old picket-ring corner hints
+    // remain as gentle routing flavor where the DEFAULT ring once stood.
+    const g = this.geo
+    const north = p.z >= (g.rect.z0 + g.rect.z1) / 2
     // the +0.2 covers wall-huggers pressed against the west rails, so corner
     // deadlocks resolve by sliding west into the lane first
-    if (p.x < PEN.x0 + 0.2) return north ? WEST_N : WEST_S
-    if (p.x < PEN.x1 + 0.4) return north ? CORNER_N : CORNER_S
+    if (p.x < g.rect.x0 + 0.2) return north ? g.westN : g.westS
+    if (p.x < g.rect.x1 + 0.4) return north ? g.cornerN : g.cornerS
     const f = fenceFor(this.tier)
-    // outside the ring to its south/north but east of its west wall:
-    // clear the ring corner before heading for the pen gate
     if (p.z > f.maxZ - 0.1 && p.x > f.minX - 0.4) return new Vector3(f.minX - 0.9, 0, f.maxZ + 0.9)
     if (p.z < f.minZ + 0.1 && p.x > f.minX - 0.4) return new Vector3(f.minX - 0.9, 0, f.minZ - 0.9)
-    return GATE_OUT
+    return g.gateOut
   }
 
-  update(dt: number, playerPos: Vector3, dogPos: Vector3, tier = 0): void {
+  update(dt: number, playerPos: Vector3, dogPos: Vector3, tier = 0, fences: FenceSets | null = null): void {
     this.tier = tier
+    this.fences = fences
     for (const u of this.sheep) {
       u.baaTimer -= dt
       if (u.baaTimer <= 0) {
@@ -227,9 +283,11 @@ export class Flock {
         this.onBaa?.(u.group.position)
       }
       switch (u.mode) {
-        case 'penned':
-          this.graze(u, dt, PEN.x0 + 0.8, PEN.x1 - 0.8, PEN.z0 + 0.8, PEN.z1 - 0.8)
+        case 'penned': {
+          const r = this.geo.rect
+          this.graze(u, dt, r.x0 + 0.8, r.x1 - 0.8, r.z0 + 0.8, r.z1 - 0.8)
           break
+        }
         case 'escaping':
           if (this.walkTo(u, dt, ESCAPE_SPEED)) {
             if (u.waypoints.length) u.dest = u.waypoints.shift()!
@@ -295,16 +353,16 @@ export class Flock {
       let dir = away.multiplyScalar(0.72).add(toGate.multiplyScalar(0.28)).normalize()
       // never flee INTO the pen rails — fall back to the pure funnel route
       const probe = p.clone().add(dir.clone().multiplyScalar(1.2))
-      if (insidePen(probe.x, probe.z, 0.35)) dir = funnel.clone().sub(p).setY(0).normalize()
+      if (this.insidePen(probe.x, probe.z, 0.35)) dir = funnel.clone().sub(p).setY(0).normalize()
       u.dest = p.clone().add(dir.multiplyScalar(2.2))
       u.dest.x = Math.max(WORLD_BOUNDS.minX + 1, Math.min(WORLD_BOUNDS.maxX - 1, u.dest.x))
       u.dest.z = Math.max(WORLD_BOUNDS.minZ + 1, Math.min(WORLD_BOUNDS.maxZ - 1, u.dest.z))
       this.walkTo(u, dt, FLEE_SPEED)
       // once she's at the gate mouth she gives in and trots home
-      if (p.distanceTo(GATE_OUT) < 2.2) {
+      if (p.distanceTo(this.geo.gateOut) < 2.2) {
         u.mode = 'homing'
-        u.waypoints = [GATE_IN.clone().add(new Vector3(-(0.5 + this.rng.next()), 0, (this.rng.next() - 0.5) * 1.5))]
-        u.dest = GATE_OUT.clone()
+        u.waypoints = [this.geo.gateIn.clone().add(new Vector3(-(0.5 + this.rng.next()), 0, (this.rng.next() - 0.5) * 1.5))]
+        u.dest = this.geo.gateOut.clone()
       }
       return
     }
@@ -340,11 +398,40 @@ export class Flock {
    * gate. The PICKET RING is the player's now (an edge-set they can redraw
    * or demolish — see game/fence.ts), so the old invisible tier-rect wall is
    * gone; sheep learn to respect player fences in Phase 3. */
-  private move(u: SheepUnit, _dt: number): void {
+  private move(u: SheepUnit, dt: number): void {
     const p = u.group.position
-    blockRect(u.prev, p, PEN.x0, PEN.x1, PEN.z0, PEN.z1, [
-      { axis: 'z', line: PEN.x1, c0: PEN.gate.z0, c1: PEN.gate.z1 },
+    const r = this.geo.rect
+    blockRect(u.prev, p, r.x0, r.x1, r.z0, r.z1, [
+      { axis: 'z', line: r.x1, c0: r.gate.z0, c1: r.gate.z1 },
     ])
+    // player fences are real to sheep now (gates pass — sheep use them
+    // politely). A blocked traveler re-routes through the funnel; one who
+    // has been shoving a fence for seconds GIVES UP and grazes where she
+    // stands — no sheep ever grinds forever, the mission stays pushable,
+    // and demolition remains the player's escape hatch for true mazes.
+    if (this.fences && blockByEdges(u.prev, p, this.fences)) {
+      if (u.mode === 'escaping' || u.mode === 'homing') {
+        u.blockedFor += dt
+        if (u.blockedFor > 3.5) {
+          u.dest = null
+          u.waypoints = []
+          u.blockedFor = 0
+          if (this.insidePen(p.x, p.z, 0)) {
+            // she gave up INSIDE the pen — that counts as home
+            u.mode = 'penned'
+            const left = this.looseCount
+            this.onSheepHome?.(left)
+            if (left === 0) this.onAllHome?.(this.escaped)
+          } else {
+            u.mode = 'loose'
+          }
+        } else {
+          u.dest = this.funnelPoint(p)
+        }
+      }
+    } else {
+      u.blockedFor = 0
+    }
     u.prev.x = p.x
     u.prev.z = p.z
   }
