@@ -88,6 +88,20 @@ const CSS = `
   border-radius:999px;padding:3px 12px;font-size:13px;font-weight:800;opacity:0;
   box-shadow:0 2px 8px rgba(60,40,10,.25);white-space:nowrap}
 #nametag .hearts{color:#e0526e;letter-spacing:-1px}
+#sunveil{position:fixed;inset:0;z-index:999;pointer-events:none;opacity:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:radial-gradient(circle at 50% 62%,#fff3d2 0%,#ffe3ae 45%,#f6c87e 100%);
+  transition:opacity .12s ease-out}
+#sunveil.show{opacity:1}
+#sunveil.bye{opacity:0;transition:opacity .38s ease-in}
+#sunveil .sun{width:64px;height:64px;border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,#fff3b8,#ffc83d 62%,#e89b12);
+  box-shadow:0 0 34px 10px rgba(255,196,80,.55);animation:sunrise 1s ease-in-out infinite alternate}
+#sunveil .wm{font-weight:800;font-size:19px;letter-spacing:.14em;color:#5d3a00;
+  text-transform:uppercase}
+#sunveil .wm small{display:block;text-align:center;font-size:10px;letter-spacing:.3em;
+  color:#8a6a35;margin-top:2px}
+@keyframes sunrise{from{transform:translateY(5px)}to{transform:translateY(-4px)}}
 .tickpop{animation:tickpop .18s ease-out}
 @keyframes tickpop{50%{transform:scale(1.18)}}
 #musicbtn{position:absolute;top:max(10px,env(safe-area-inset-top));
@@ -499,6 +513,47 @@ export class Hud {
       this.actionsBox.appendChild(b)
       gsap.from(b, { scale: 0.5, opacity: 0, duration: 0.28, delay: i * 0.05, ease: 'back.out(2.4)' })
     })
+  }
+
+  // ---- the sunrise veil: a branded split-second over rotation rebuilds ----
+  // (owner: better a beautiful blink than a felt hitch). Pure presentation:
+  // plain timers are fine here, nothing deterministic depends on it.
+  private sunveil: HTMLDivElement | null = null
+  private veilShownAt = 0
+  private veilCap: ReturnType<typeof setTimeout> | null = null
+
+  get rotateVeilUp(): boolean {
+    return this.sunveil !== null
+  }
+
+  showRotateVeil(): void {
+    if (this.sunveil) return
+    const v = document.createElement('div')
+    v.id = 'sunveil'
+    v.innerHTML = `<div class="sun"></div><div class="wm">Sunrise Farm<small>turning the field</small></div>`
+    document.body.appendChild(v)
+    // force a style flush so the opacity transition has a FROM state —
+    // rAF would do it too, but rAF doesn't tick in a backgrounded tab
+    void v.offsetWidth
+    v.classList.add('show')
+    this.sunveil = v
+    this.veilShownAt = performance.now()
+    // belt-and-braces: the veil may NEVER strand, whatever resize does
+    this.veilCap = setTimeout(() => this.hideRotateVeil(), 1400)
+  }
+
+  hideRotateVeil(): void {
+    const v = this.sunveil
+    if (!v) return
+    this.sunveil = null
+    if (this.veilCap) clearTimeout(this.veilCap)
+    this.veilCap = null
+    // hold at least a beat — a 60ms flash reads as a glitch, not a brand
+    const wait = Math.max(0, 350 - (performance.now() - this.veilShownAt))
+    setTimeout(() => {
+      v.classList.add('bye')
+      setTimeout(() => v.remove(), 420)
+    }, wait)
   }
 
   // ---- customer want bubbles (projected) ----------------------------------

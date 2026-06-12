@@ -3051,6 +3051,9 @@ async function boot(): Promise<void> {
       driftTick = 0
       if (viewW() !== sizedW || viewH() !== sizedH) resize()
     }
+    // the veil lifts the moment the new shape is stable and rendering —
+    // its own min-hold keeps the beat readable, its cap keeps it honest
+    if (hud.rotateVeilUp && viewW() === sizedW && viewH() === sizedH) hud.hideRotateVeil()
     const dtMs = now - last
     const dt = Math.min(dtMs / 1000, 0.1)
     last = now
@@ -3129,6 +3132,9 @@ async function boot(): Promise<void> {
     // post chain (a guaranteed hitch). No-ops bail; real changes apply at
     // most ~3x/second — the drift check re-converges within 500ms anyway.
     if (viewW() === sizedW && viewH() === sizedH) return
+    // an aspect FLIP without an orientationchange event (iPadOS does this)
+    // still deserves the veil
+    if (sizedW > 2 && (viewW() > viewH()) !== (sizedW > sizedH)) hud.showRotateVeil()
     const now = performance.now()
     if (now - lastRealloc < 350) return
     lastRealloc = now
@@ -3152,6 +3158,9 @@ async function boot(): Promise<void> {
   addEventListener('resize', resize)
   visualViewport?.addEventListener('resize', resize)
   addEventListener('orientationchange', () => {
+    // the rotation rebuild is unavoidable (every buffer re-shapes) — so it
+    // hides behind a branded split-second instead of reading as lag
+    hud.showRotateVeil()
     resize()
     // iOS reports stale innerHeight for a beat after rotating — re-measure
     // on the next frames (the per-frame drift check below also catches it)
