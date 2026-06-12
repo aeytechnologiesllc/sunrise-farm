@@ -31,7 +31,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
-import { allFieldRects, fenceFor, gatesFor, inRect, PEN, SOUTH_GATE } from '../game/expansion'
+import { allFieldRects, fenceFor, inRect, PEN, SOUTH_GATE } from '../game/expansion'
 import {
   BARN_AT,
   CRATE_AT,
@@ -610,70 +610,76 @@ export function buildMeadow(scene: Scene, assets: Assets): GrassField {
   return grass
 }
 
-// ---- white picket fence ring (tier-aware, rebuilt on expansion) ------------------
+// ---- white picket fence, edge by edge (the player's to redraw) ---------------
 
-export function buildPicketFence(scene: Scene, tier: number): Mesh | null {
-  const f = fenceFor(tier)
-  const gates = gatesFor(tier)
+/** Render the whole fence network from the saved edge set: each unit edge
+ * gets pickets + two rails; posts stand at every used grid vertex (deduped).
+ * A GATE edge renders as an open little frame — taller flanking posts and a
+ * header bar, no pickets — so openings read on purpose, not as missing
+ * fence. One merged mesh, one draw call, rebuilt only when the fence edits. */
+export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: Iterable<number>): Mesh | null {
   const geos: BufferGeometry[] = []
   const picket = new BoxGeometry(0.09, 0.62, 0.05)
   const rail = new BoxGeometry(1, 0.07, 0.045)
   const post = new BoxGeometry(0.12, 0.78, 0.12)
+  const gatePost = new BoxGeometry(0.13, 1.05, 0.13)
+  const posts = new Set<string>()
+  const gatePosts = new Set<string>()
 
-  const wallOf = (x0: number, z0: number, x1: number, z1: number): 'N' | 'S' | 'E' | 'W' => {
-    if (z0 === z1) return z0 === f.minZ ? 'N' : 'S'
-    return x0 === x1 && x0 === f.minX ? 'W' : 'E'
+  const decode = (key: number): { cx: number; cz: number; axis: number } => {
+    const axis = key % 2
+    const cell = (key - axis) / 2
+    return { cx: Math.floor(cell / 256) - 64, cz: (cell % 256) - 64, axis }
   }
-  const inGap = (wall: 'N' | 'S' | 'E' | 'W', t: number): boolean =>
-    gates.some((g) => g.wall === wall && Math.abs(t - g.center) < g.half)
 
-  const run = (x0: number, z0: number, x1: number, z1: number): void => {
-    const len = Math.hypot(x1 - x0, z1 - z0)
-    const dirX = (x1 - x0) / len
-    const dirZ = (z1 - z0) / len
-    const rot = Math.atan2(dirZ, dirX)
-    const wall = wallOf(x0, z0, x1, z1)
-    const n = Math.round(len / 0.46)
-    for (let i = 0; i <= n; i++) {
-      const t = (i / n) * len
-      const wx = x0 + dirX * t
-      const wz = z0 + dirZ * t
-      const tc = Math.abs(dirX) > 0.5 ? wx : wz
-      if (inGap(wall, tc)) continue
+  for (const key of edges) {
+    const { cx, cz, axis } = decode(key)
+    const rot = axis === 1 ? Math.PI / 2 : 0
+    const mx = axis === 0 ? cx + 0.5 : cx
+    const mz = axis === 0 ? cz : cz + 0.5
+    for (const t of [-0.25, 0.25]) {
       const g = picket.clone()
-      g.rotateY(-rot)
-      g.translate(wx, 0.34, wz)
+      g.rotateY(rot)
+      g.translate(axis === 0 ? mx + t : mx, 0.34, axis === 0 ? mz : mz + t)
       geos.push(g)
     }
-    const sections = Math.ceil(len / 2.2)
-    for (let sIdx = 0; sIdx < sections; sIdx++) {
-      const a = (sIdx / sections) * len
-      const b = Math.min(len, a + len / sections)
-      const mid = (a + b) / 2
-      const wx = x0 + dirX * mid
-      const wz = z0 + dirZ * mid
-      const tc = Math.abs(dirX) > 0.5 ? wx : wz
-      if (inGap(wall, tc)) continue
-      for (const y of [0.2, 0.48]) {
-        const r = rail.clone()
-        r.scale(b - a, 1, 1)
-        r.rotateY(-rot)
-        r.translate(wx, y, wz)
-        geos.push(r)
-      }
-      const p = post.clone()
-      const px = x0 + dirX * a
-      const pz = z0 + dirZ * a
-      if (!inGap(wall, Math.abs(dirX) > 0.5 ? px : pz)) {
-        p.translate(px, 0.39, pz)
-        geos.push(p)
-      }
+    for (const y of [0.2, 0.48]) {
+      const r = rail.clone()
+      r.rotateY(rot)
+      r.translate(mx, y, mz)
+      geos.push(r)
     }
+    posts.add(`${cx},${cz}`)
+    posts.add(axis === 0 ? `${cx + 1},${cz}` : `${cx},${cz + 1}`)
   }
-  run(f.minX, f.minZ, f.maxX, f.minZ)
-  run(f.maxX, f.minZ, f.maxX, f.maxZ)
-  run(f.maxX, f.maxZ, f.minX, f.maxZ)
-  run(f.minX, f.maxZ, f.minX, f.minZ)
+  for (const key of gates) {
+    const { cx, cz, axis } = decode(key)
+    const rot = axis === 1 ? Math.PI / 2 : 0
+    const mx = axis === 0 ? cx + 0.5 : cx
+    const mz = axis === 0 ? cz : cz + 0.5
+    // header bar over the opening
+    const h = new BoxGeometry(1.06, 0.07, 0.06)
+    h.rotateY(rot)
+    h.translate(mx, 1.0, mz)
+    geos.push(h)
+    gatePosts.add(`${cx},${cz}`)
+    gatePosts.add(axis === 0 ? `${cx + 1},${cz}` : `${cx},${cz + 1}`)
+  }
+  for (const k of gatePosts) {
+    posts.delete(k) // the taller gate post wins the corner
+    const [x, z] = k.split(',').map(Number)
+    const p = gatePost.clone()
+    p.translate(x, 0.52, z)
+    geos.push(p)
+  }
+  for (const k of posts) {
+    const [x, z] = k.split(',').map(Number)
+    const p = post.clone()
+    p.translate(x, 0.39, z)
+    geos.push(p)
+  }
+  // a fully demolished farm is a legal farm — nothing to merge, nothing drawn
+  if (geos.length === 0) return null
   const merged = mergeGeometries(geos)
   if (!merged) return null
   const mesh = new Mesh(merged, new MeshStandardMaterial({ color: '#f4eedd', roughness: 0.85 }))

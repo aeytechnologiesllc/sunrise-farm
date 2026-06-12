@@ -16,7 +16,7 @@ import {
   Vector3,
   type AnimationClip,
 } from 'three'
-import { fenceFor, gatesFor, PEN } from '../game/expansion'
+import { fenceFor, PEN } from '../game/expansion'
 import { mulberry32, type Rng } from '../game/rng'
 import { type Assets } from './assets'
 import { WORLD_BOUNDS } from './scenery'
@@ -336,20 +336,12 @@ export class Flock {
     return false
   }
 
-  /** wall honesty: cancel any crossing of the picket ring or pen rails,
-   * except through real gate spans */
+  /** wall honesty: cancel any crossing of the pen rails, except through the
+   * gate. The PICKET RING is the player's now (an edge-set they can redraw
+   * or demolish — see game/fence.ts), so the old invisible tier-rect wall is
+   * gone; sheep learn to respect player fences in Phase 3. */
   private move(u: SheepUnit, _dt: number): void {
     const p = u.group.position
-    const f = fenceFor(this.tier)
-    const ringGates: WallGate[] = gatesFor(this.tier).map((g) => {
-      switch (g.wall) {
-        case 'N': return { axis: 'x', line: f.minZ, c0: g.center - g.half, c1: g.center + g.half }
-        case 'S': return { axis: 'x', line: f.maxZ, c0: g.center - g.half, c1: g.center + g.half }
-        case 'W': return { axis: 'z', line: f.minX, c0: g.center - g.half, c1: g.center + g.half }
-        case 'E': return { axis: 'z', line: f.maxX, c0: g.center - g.half, c1: g.center + g.half }
-      }
-    })
-    blockRect(u.prev, p, f.minX, f.maxX, f.minZ, f.maxZ, ringGates)
     blockRect(u.prev, p, PEN.x0, PEN.x1, PEN.z0, PEN.z1, [
       { axis: 'z', line: PEN.x1, c0: PEN.gate.z0, c1: PEN.gate.z1 },
     ])

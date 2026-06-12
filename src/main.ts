@@ -37,6 +37,17 @@ import {
   type GoodKind,
 } from './game/economy'
 import { Customers } from './game/customers'
+import {
+  blockByEdges,
+  crossedEdge,
+  decodeEdge,
+  encodeEdge,
+  expandRing,
+  nearestEdge,
+  toSets,
+  toState,
+} from './game/fence'
+import { LOT_RECT } from './game/geo'
 import { Game, type Suggestion } from './game/Game'
 import {
   canPlace,
@@ -72,7 +83,7 @@ import {
   buildGround,
   buildLights,
   buildMeadow,
-  buildPicketFence,
+  buildFenceEdges,
   buildSky,
   buildStand,
   buildPen,
@@ -87,7 +98,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
-import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
+import { fenceFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
@@ -171,6 +182,10 @@ declare global {
       draws: () => number
       warp: (x: number, z: number) => void
       lookYaw: (y: number) => void
+      fence: (x0: number, z0: number, x1: number, z1: number) => number
+      unfence: (x: number, z: number) => boolean
+      fences: () => number
+      fenceModeOn: (on: boolean) => void
       lift: (id: string) => boolean
       placeAt: (x: number, z: number) => boolean
       carry: () => { id: string; ghost: [number, number]; ok: boolean } | null
@@ -282,7 +297,7 @@ async function boot(): Promise<void> {
   let standGroup: Group | null =
     state.projects.shop || !state.projects.stand ? null : buildStand(scene, assets)
   if (standGroup) OCCLUDERS.push(standGroup)
-  let fenceMesh = buildPicketFence(scene, state.expansion)
+  let fenceMesh: Mesh | null = null // built once the fence edge-set loads below
   for (let t = 0; t <= state.expansion; t++) {
     const def = TIERS[t]
     if (def.field) scene.add(buildField(def.field, def.plots, 0x6011 + t * 97))
@@ -379,6 +394,31 @@ async function boot(): Promise<void> {
   if (tractor) carry.register('tractor', tractor.group)
   /** the latest ghost validity — buttons + commit share one verdict */
   let carryCheck: PlaceCheck = { ok: false }
+
+  // ---- the fence is yours: free to draw, free to tear down ------------------
+  const fences = toSets(state.fences)
+  /** walk-to-draw: while true, every grid line you cross gets a fence */
+  let fenceMode = false
+  fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates)
+  const rebuildFenceMesh = (): void => {
+    if (fenceMesh) {
+      scene.remove(fenceMesh)
+      fenceMesh.geometry.dispose()
+      disposeMaterials(fenceMesh)
+    }
+    fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates)
+    state.fences = toState(fences)
+    saveNow()
+  }
+  /** new fence goes on land your deeds enclose (the ring + the lot) */
+  const edgeAllowed = (key: number): boolean => {
+    const { cx, cz, axis } = decodeEdge(key)
+    const mx = axis === 0 ? cx + 0.5 : cx
+    const mz = axis === 0 ? cz : cz + 0.5
+    const f = fenceFor(state.expansion)
+    if (mx > f.minX - 0.6 && mx < f.maxX + 0.6 && mz > f.minZ - 0.6 && mz < f.maxZ + 0.6) return true
+    return state.expansion >= 4 && mx > LOT_RECT.x0 && mx < LOT_RECT.x1 && mz > LOT_RECT.z0 && mz < LOT_RECT.z1
+  }
 
   let wiping = false
   const saveNow = (): void => {
@@ -827,6 +867,7 @@ async function boot(): Promise<void> {
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
     if (sleepActive || construction.active || fetchCine || inGreenhouse || carry.carrying || !dayCycle.atDusk) return
+    fenceMode = false // the day's fencing is done at dusk
     sleepActive = true
     sleepStarted = engine.uTime.value
     touch()
@@ -1245,12 +1286,10 @@ async function boot(): Promise<void> {
         : { w: 3, d: 3 },
       dig: true,
       reveal: () => {
-        if (fenceMesh) {
-          scene.remove(fenceMesh)
-          fenceMesh.geometry.dispose()
-          disposeMaterials(fenceMesh)
-        }
-        fenceMesh = buildPicketFence(scene, state.expansion)
+        // the deed swaps the OLD default ring for the new one — fence the
+        // player drew elsewhere survives, pieces they removed stay gone
+        expandRing(fences, state.expansion - 1, state.expansion)
+        rebuildFenceMesh()
         if (fg) gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
         for (const v of newViews) gsap.to(v.group.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(1.6)' })
         if (def.tractor && !tractor) {
@@ -1404,6 +1443,8 @@ async function boot(): Promise<void> {
     project: null as ProjectId | null,
     /** nearest liftable building (the "Move" button fallback + E2E path) */
     movable: null as PlaceId | null,
+    /** nearest fence edge key (build/remove/gate actions) */
+    fence: null as number | null,
   }
   const stablePlace = placeOf(state, 'stable')
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
@@ -1475,7 +1516,7 @@ async function boot(): Promise<void> {
 
   /** may the player pick this up right now? (one scene at a time) */
   const canLift = (id: PlaceId): boolean => {
-    if (carry.carrying || carry.settling) return false
+    if (carry.carrying || carry.settling || fenceMode) return false
     if (sleepActive || construction.active || fetchCine || ghBusy || inGreenhouse || hud.modalOpen) return false
     const owned =
       id === 'tractor'
@@ -1525,6 +1566,7 @@ async function boot(): Promise<void> {
   const throughGhDoor = (enter: boolean): void => {
     if (ghBusy) return
     ghBusy = true
+    fenceMode = false // the trance ends at the glasshouse door
     touch()
     sfx.crate() // the old hinge
     letterbox.fade(true, 0.22)
@@ -1554,6 +1596,32 @@ async function boot(): Promise<void> {
     if (id === 'setdown') setDown()
     else if (id.startsWith('move-')) tryLift(id.slice(5) as PlaceId)
     else if (carry.carrying) return // a building in your arms is a full-time job
+    else if (id === 'fence-build') {
+      fenceMode = true
+      sfx.crate()
+    } else if (id === 'fence-done') {
+      fenceMode = false
+      fenceDirty = false
+      rebuildFenceMesh()
+    } else if (id === 'fence-remove' && near.fence !== null) {
+      fences.edges.delete(near.fence)
+      fences.gates.delete(near.fence)
+      sfx.pop()
+      const { cx, cz, axis } = decodeEdge(near.fence)
+      sparkleBurst(scene, new Vector3(axis === 0 ? cx + 0.5 : cx, 0.5, axis === 0 ? cz : cz + 0.5), false, 5)
+      rebuildFenceMesh()
+    } else if (id === 'fence-gate' && near.fence !== null) {
+      const k = near.fence
+      if (fences.gates.has(k)) {
+        fences.gates.delete(k)
+        fences.edges.add(k)
+      } else if (fences.edges.has(k)) {
+        fences.edges.delete(k)
+        fences.gates.add(k)
+      }
+      sfx.crate()
+      rebuildFenceMesh()
+    }
     else if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
@@ -1674,19 +1742,23 @@ async function boot(): Promise<void> {
 
   // picket fence is solid except at its gates (walls/gates follow the tier)
   const prevPos = { x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z }
+  /** fence honesty + walk-to-draw. Normally any fence edge (except gates)
+   * cancels the step that crosses it. In fence mode the player is the
+   * builder: steps are never blocked, and every grid line they cross gets a
+   * fence BEHIND them (you can never wall yourself in mid-stride). */
+  let fenceDirty = false
+  let fenceRebuildT = 0
   const fenceBlock = (): void => {
     const p = player.pos
-    const f = fenceFor(state.expansion)
-    const gates = gatesFor(state.expansion)
-    const open = (wall: 'N' | 'S' | 'E' | 'W', along: number): boolean =>
-      gates.some((g) => g.wall === wall && Math.abs(along - g.center) < g.half)
-    const inX = Math.max(prevPos.x, p.x) > f.minX - 0.2 && Math.min(prevPos.x, p.x) < f.maxX + 0.2
-    const inZ = Math.max(prevPos.z, p.z) > f.minZ - 0.2 && Math.min(prevPos.z, p.z) < f.maxZ + 0.2
-    for (const [line, wall] of [[f.minZ, 'N'], [f.maxZ, 'S']] as Array<[number, 'N' | 'S']>) {
-      if (inX && (prevPos.z - line) * (p.z - line) < 0 && !open(wall, p.x)) p.z = prevPos.z
-    }
-    for (const [line, wall] of [[f.minX, 'W'], [f.maxX, 'E']] as Array<[number, 'W' | 'E']>) {
-      if (inZ && (prevPos.x - line) * (p.x - line) < 0 && !open(wall, p.z)) p.x = prevPos.x
+    if (fenceMode) {
+      const k = crossedEdge(prevPos, p)
+      if (k !== null && !fences.edges.has(k) && !fences.gates.has(k) && edgeAllowed(k)) {
+        fences.edges.add(k)
+        fenceDirty = true
+        sfx.plant()
+      }
+    } else {
+      blockByEdges(prevPos, p, fences)
     }
     prevPos.x = p.x
     prevPos.z = p.z
@@ -1707,6 +1779,13 @@ async function boot(): Promise<void> {
     customers.update(dt, game.stock())
     player.update(dt, joy.value, cam.yaw)
     fenceBlock()
+    // fence drawing: batch mesh rebuilds (one merge per ~half second)
+    fenceRebuildT = Math.max(0, fenceRebuildT - dt)
+    if (fenceDirty && fenceRebuildT <= 0) {
+      fenceRebuildT = 0.45
+      fenceDirty = false
+      rebuildFenceMesh()
+    }
     // ---- carry & place: long-press lifts; the ghost glides ahead ----
     checkLongPress()
     if (carry.carrying) {
@@ -1856,6 +1935,7 @@ async function boot(): Promise<void> {
         // leaves — a room you can't get out of would break the cozy contract
         else if (inGreenhouse && p.distanceTo(ghInterior.exitPos) < 0.7 && player.vel.z > 0.2) throughGhDoor(false)
       }
+      near.fence = nearestEdge(fences, p.x, p.z, 1.7)
       // nearest building you could pick up (fallback button + discoverability)
       near.movable = null
       if (!carry.carrying && !carry.settling) {
@@ -1926,6 +2006,9 @@ async function boot(): Promise<void> {
         sub: carryCheck.ok ? 'right here' : (why[carryCheck.reason ?? 'building'] ?? 'not here'),
         locked: !carryCheck.ok,
       })
+    } else if (fenceMode && !hud.modalOpen) {
+      // building fence is its own little trance: walk, posts trail behind
+      actions.push({ id: 'fence-done', emoji: '\u{2705}', label: 'Done fencing', sub: 'lovely work' })
     } else if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !ghBusy && !carry.settling) {
       if (near.emptyPlot >= 0) {
         if (game.isGreenhouse(near.emptyPlot)) {
@@ -2068,6 +2151,24 @@ async function boot(): Promise<void> {
           label: `Move ${PLACE_NAMES[near.movable]}`,
           sub: 'carry it anywhere',
         })
+      }
+      if (near.fence !== null || fences.edges.size + fences.gates.size === 0) {
+        actions.push({ id: 'fence-build', emoji: '\u{1FAB5}', label: 'Build fence', sub: 'free — walk to draw it' })
+        if (near.fence !== null) {
+          const isGate = fences.gates.has(near.fence)
+          actions.push({
+            id: 'fence-gate',
+            emoji: '\u{1F6AA}',
+            label: isGate ? 'Close the gateway' : 'Make it a gateway',
+            sub: isGate ? 'solid fence again' : 'everyone can pass',
+          })
+          actions.push({
+            id: 'fence-remove',
+            emoji: '\u{1F528}',
+            label: isGate ? 'Remove the gate' : 'Remove fence',
+            sub: 'free, always',
+          })
+        }
       }
     }
     lastActions = actions.map((a) => a.id)
@@ -2536,6 +2637,41 @@ async function boot(): Promise<void> {
       player.pos.set(x, 0, z)
       prevPos.x = x
       prevPos.z = z
+    },
+    // ---- fences (E2E) ----
+    fence: (x0: number, z0: number, x1: number, z1: number) => {
+      let n = 0
+      if (z0 === z1) {
+        for (let x = Math.min(x0, x1); x < Math.max(x0, x1); x++) {
+          const k = encodeEdge(x, z0, 0)
+          if (!fences.edges.has(k)) {
+            fences.edges.add(k)
+            n++
+          }
+        }
+      } else {
+        for (let z = Math.min(z0, z1); z < Math.max(z0, z1); z++) {
+          const k = encodeEdge(x0, z, 1)
+          if (!fences.edges.has(k)) {
+            fences.edges.add(k)
+            n++
+          }
+        }
+      }
+      rebuildFenceMesh()
+      return n
+    },
+    unfence: (x: number, z: number) => {
+      const k = nearestEdge(fences, x, z, 2.5)
+      if (k === null) return false
+      fences.edges.delete(k)
+      fences.gates.delete(k)
+      rebuildFenceMesh()
+      return true
+    },
+    fences: () => fences.edges.size + fences.gates.size,
+    fenceModeOn: (on: boolean) => {
+      fenceMode = on
     },
     // ---- carry & place (E2E drives the same paths the thumb does) ----
     lift: (id: string) => tryLift(id as PlaceId),

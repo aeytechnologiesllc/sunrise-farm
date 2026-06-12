@@ -1,6 +1,7 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
+import { ringEdges, type FenceState } from './fence'
 import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
 import { GREENHOUSE_BEDS } from './projects'
@@ -80,6 +81,9 @@ export interface GameState {
   /** where moved buildings stand — SPARSE: only moved ones appear, so old
    * clients render defaults and future default tweaks reach non-movers */
   layout: LayoutState
+  /** every fence edge on the farm, the player's to redraw (free). Absence
+   * in an old save = unmigrated: the authored tier ring converts on load. */
+  fences: FenceState
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -116,6 +120,7 @@ export function initialState(seed: number): GameState {
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
     layout: {},
+    fences: ringEdges(0),
     chicken: {
       arrived: false,
       name: null,
@@ -203,6 +208,9 @@ export function deserialize(json: string | null): GameState | null {
     s.projects ??= {}
     s.ghPlots ??= []
     s.layout ??= {}
+    // one-time fence migration: the authored picket ring becomes player
+    // fence (its presence IS the migrated flag)
+    s.fences ??= ringEdges(clampTier(s.expansion ?? 0))
     // the glasshouse grew from 4 beds to 8 — owners get the new beds on load
     if (s.projects.greenhouse) while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
     // grandfather PRE-LADDER saves exactly once: they already had the stand
