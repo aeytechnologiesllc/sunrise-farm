@@ -472,6 +472,26 @@ export class CoopInterior {
     }
   }
 
+  /** the two nearest hens trot over to say hello at the door — a welcome,
+   * not a mob (deterministic: plain distance pick, no rng) */
+  greetAt(world: Vector3): void {
+    const lx = world.x - COOP_ANCHOR.x
+    const lz = world.z - COOP_ANCHOR.z
+    const byDist = [...this.hens].sort(
+      (a, b) =>
+        Math.hypot(a.group.position.x - lx, a.group.position.z - lz) -
+        Math.hypot(b.group.position.x - lx, b.group.position.z - lz),
+    )
+    for (let i = 0; i < Math.min(2, byDist.length); i++) {
+      const h = byDist[i]
+      h.tx = lx + (i === 0 ? 0.8 : -0.9)
+      h.tz = lz + 0.4 + i * 0.5
+      h.pecking = 0
+      h.bathing = 0
+      h.timer = 2 + i
+    }
+  }
+
   /** scatter feed at the player's feet: the whole flock rushes the spot */
   scatterAt(wx: number, wz: number): void {
     const maxX = BASE_HALF + WING_W * this.tier - 0.8

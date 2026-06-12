@@ -96,6 +96,7 @@ import {
   WORLD_BOUNDS,
 } from './world/scenery'
 import { BARN_AT, BARN_ROT } from './game/geo'
+import { keeperName, tomorrowLines } from './game/tomorrow'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
@@ -604,6 +605,19 @@ async function boot(): Promise<void> {
       gsap.delayedCall(1.2, () =>
         hud.showBanner('While you were away \u{1F305}', 'Hazel came home from Millbrook — 34 coins in the saddlebag'),
       )
+    } else if (offline.readyPlots.length > 0 || state.coopFlock.boxes.some((b) => b.ready)) {
+      // a signed note beats a silent ledger: someone kept watch
+      const crops = offline.readyPlots.length
+      const eggsReady = game.hasProject('coop') ? state.coopFlock.boxes.filter((b) => b.ready).length : 0
+      const bits = [
+        crops > 0 ? `${crops} crop${crops === 1 ? '' : 's'} ripened` : null,
+        eggsReady > 0 ? `${eggsReady} egg${eggsReady === 1 ? '' : 's'} laid` : null,
+      ].filter(Boolean)
+      if (bits.length) {
+        gsap.delayedCall(1.2, () =>
+          hud.showBanner('Welcome back to Sunrise Farm \u{1F305}', `${bits.join(', ')} — ${keeperName(state)} kept watch`),
+        )
+      }
     }
     const readySpots: Vector3[] = []
     for (let i = 0; i < plots.length; i++) {
@@ -900,10 +914,16 @@ async function boot(): Promise<void> {
       s.harvests > 0 ? `\u{1F33E} ${s.harvests} harvest${s.harvests === 1 ? '' : 's'}` : null,
       s.eggs > 0 ? `\u{1F95A} ${s.eggs} egg${s.eggs === 1 ? '' : 's'}` : null,
     ].filter(Boolean)
+    // the Tomorrow tease: true things to look forward to — anticipation is
+    // what brings a player back at dawn (and it must never lie)
+    const tease = tomorrowLines(state)
+    const teaseHtml = tease.length
+      ? `<div style="font-size:13px;opacity:.85;margin-top:6px"><span style="opacity:.7;letter-spacing:.14em;text-transform:uppercase;font-size:11px">Tomorrow</span><br>${tease.join('<br>')}</div>`
+      : `<div style="font-size:13px;opacity:.8">\u{1F331} the crops grow while everyone sleeps</div>`
     dayCard.innerHTML =
       `<div style="font-size:13px;opacity:.75;letter-spacing:.18em;text-transform:uppercase">Day ${day} on Sunrise Farm</div>` +
       `<div>${parts.length ? parts.join(' &nbsp;\u{B7}&nbsp; ') : 'A quiet day of good work'}</div>` +
-      `<div style="font-size:13px;opacity:.8">\u{1F331} the crops grow while everyone sleeps</div>`
+      teaseHtml
     gsap.killTweensOf(dayCard)
     gsap.to(dayCard, { opacity: 1, scale: 1, duration: 0.9, ease: 'power2.out' })
   }
@@ -1619,7 +1639,11 @@ async function boot(): Promise<void> {
       camMaxY: 3.9,
       zoom: { min: 4.5, max: 9 },
       door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
-      onEnter: () => coopInterior.sync(state.coopFlock),
+      onEnter: () => {
+        coopInterior.sync(state.coopFlock)
+        // the nearest two hens come say hello — it's THEIR house
+        coopInterior.greetAt(coopInterior.spawnPos)
+      },
     },
     stable: {
       interior: stableInterior,
@@ -2312,10 +2336,24 @@ async function boot(): Promise<void> {
           const got = game.collectBoxInside(i)
           if (!got) continue
           sfx.cluck()
-          sfx.pop()
-          sparkleBurst(scene, bp.clone().setY(1.0), got.golden, got.golden ? 14 : 6)
-          fountainFrom(bp.clone().setY(0.9), got.coins, got.golden)
-          if (got.golden) hud.showBanner('A golden egg! \u2728', `${state.coopFlock.hens[i]?.name ?? 'The flock'} outdid herself — ${got.coins}c`)
+          if (got.golden) {
+            // the wind-up: a held breath before the payoff (the roll is
+            // already banked and saved — this is pure theater)
+            sfx.tink()
+            sparkleBurst(scene, bp.clone().setY(1.0), false, 4)
+            const at = bp.clone()
+            const henName = state.coopFlock.hens[i]?.name ?? 'The flock'
+            gsap.delayedCall(0.45, () => {
+              sfx.golden()
+              sparkleBurst(scene, at.clone().setY(1.0), true, 16)
+              fountainFrom(at.clone().setY(0.9), got.coins, true)
+              hud.showBanner('A golden egg! \u2728', `${henName} outdid herself — ${got.coins}c`)
+            })
+          } else {
+            sfx.pop()
+            sparkleBurst(scene, bp.clone().setY(1.0), false, 6)
+            fountainFrom(bp.clone().setY(0.9), got.coins, false)
+          }
           coopInterior.sync(state.coopFlock)
           saveNow()
         }
