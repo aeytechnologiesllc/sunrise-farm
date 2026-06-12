@@ -160,6 +160,15 @@ export class CarrySystem {
     return true
   }
 
+  /** put it back exactly where it was — every edit needs a way OUT (the
+   * owner lifted a building with no legal ground in reach and was stuck
+   * holding it). State never changed mid-carry, so "back" is just a
+   * landing at the home spot. */
+  cancel(homeX: number, homeZ: number, onLanded: () => void): boolean {
+    this.ghostAt.set(homeX, 0, homeZ)
+    return this.place(onLanded)
+  }
+
   /** the carried building breathes: gentle bob + sway overhead */
   frame(dt: number): void {
     if (!this.lifted) return

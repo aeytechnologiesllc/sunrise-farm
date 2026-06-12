@@ -114,14 +114,15 @@ const CSS = `
 #rotatecard span{font-size:13px;opacity:.85}
 #rotatex{position:absolute;top:4px;right:6px;border:none;background:none;color:#fffcf0;
   font-size:15px;opacity:.7;cursor:pointer;padding:4px 6px;font-family:inherit}
-/* landscape phones: everything compact so the FARM owns the screen */
+/* landscape phones: everything compact so the FARM owns the screen
+   (owner, twice: the verbs were eating the view — keep them modest) */
 @media (max-height: 500px){
-  .act{padding:7px 13px 7px 10px;font-size:14px;min-height:38px;gap:7px;
+  .act{padding:5px 11px 5px 9px;font-size:13px;min-height:34px;gap:6px;
     box-shadow:0 3px 10px rgba(60,40,10,.3),0 2px 0 #d8cdb2}
-  .act .em{font-size:18px}
-  .act .lbl small{font-size:10px}
-  #actions{bottom:calc(124px + env(safe-area-inset-bottom));
-    right:calc(10px + env(safe-area-inset-right));gap:6px}
+  .act .em{font-size:16px}
+  .act .lbl small{font-size:9.5px}
+  #actions{bottom:calc(112px + env(safe-area-inset-bottom));
+    right:calc(10px + env(safe-area-inset-right));gap:5px}
   .pill{font-size:13px;padding:4px 10px 4px 7px;gap:5px}
   .coin-ico{width:16px;height:16px}
   .wheat-ico{font-size:14px;line-height:16px}

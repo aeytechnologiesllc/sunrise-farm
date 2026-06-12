@@ -1891,6 +1891,22 @@ async function boot(): Promise<void> {
     return true
   }
 
+  const cancelCarry = (): void => {
+    const id = carry.carrying
+    if (!id) return
+    touch()
+    const home = placeOf(state, id)
+    carry.cancel(home.x, home.z, () => {
+      // nothing changed — no relayout, just a landing where it lived
+      sfx.crate()
+      navigator.vibrate?.(12)
+      sparkleBurst(scene, new Vector3(home.x, 0.6, home.z), false, 6)
+      const g = carry.entries().find(([cid]) => cid === id)?.[1]
+      const occ = (g?.getObjectByName('occ-proxy') ?? g) as Mesh | undefined
+      if (occ && !OCCLUDERS.includes(occ)) OCCLUDERS.push(occ)
+    })
+  }
+
   const setDown = (): void => {
     const id = carry.carrying
     if (!id || !carryCheck.ok) return
@@ -1981,6 +1997,7 @@ async function boot(): Promise<void> {
     // (roomBusy: nor act through the door-transition's dip to black)
     if (sleepActive || construction.active || roomBusy) return
     if (id === 'setdown') setDown()
+    else if (id === 'carryback') cancelCarry()
     else if (id.startsWith('move-')) tryLift(id.slice(5) as PlaceId)
     else if (carry.carrying) return // a building in your arms is a full-time job
     else if (id === 'fence-edit') fenceEditor.open()
@@ -2519,6 +2536,14 @@ async function boot(): Promise<void> {
         label: 'Set it down',
         sub: carryCheck.ok ? 'right here' : (why[carryCheck.reason ?? 'building'] ?? 'not here'),
         locked: !carryCheck.ok,
+      })
+      // every edit needs a way OUT — with no legal ground in reach the
+      // farmer was stuck holding his own coop forever
+      actions.push({
+        id: 'carryback',
+        emoji: '\u{21A9}\u{FE0F}',
+        label: 'Put it back',
+        sub: 'right where it was',
       })
     } else if (fenceEditor.active) {
       // the editor panel owns the screen — no contextual buttons under it
@@ -3092,17 +3117,31 @@ async function boot(): Promise<void> {
   const viewH = (): number => Math.round(visualViewport?.height ?? innerHeight)
   let sizedW = 0
   let sizedH = 0
+  let lastRealloc = 0
   const resize = (): void => {
     // iOS can report 0/stale sizes right after rotation (and a hidden tab
     // reports 0 at boot) — a zero here would bake NaN into the camera's
     // projection matrix and silently kill every raycast (the fence editor
     // died this way in QA). Keep the last good size instead.
     if (viewW() < 2 || viewH() < 2) return
+    // a rotation makes iOS walk through several intermediate sizes while
+    // the viewport settles, and EVERY size change reallocates the whole
+    // post chain (a guaranteed hitch). No-ops bail; real changes apply at
+    // most ~3x/second — the drift check re-converges within 500ms anyway.
+    if (viewW() === sizedW && viewH() === sizedH) return
+    const now = performance.now()
+    if (now - lastRealloc < 350) return
+    lastRealloc = now
     sizedW = viewW()
     sizedH = viewH()
     cam.resize(sizedW, sizedH)
     renderer.setSize(sizedW, sizedH, false)
     composer.setSize(sizedW, sizedH)
+    // the realloc hitch itself must not read as load: reset the frame
+    // average and hold the DPR governor still while the dust settles —
+    // rotation used to fire realloc -> panic down-step -> realloc -> ...
+    frameAvg = 16
+    dprSettleAt = Math.max(dprSettleAt, now + 2200)
     // composer.setSize stamps INLINE px width/height on the canvas (inline
     // beats the stylesheet pin in index.html) — re-assert fill so a stale
     // measurement can never leave a background bar
