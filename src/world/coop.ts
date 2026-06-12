@@ -435,6 +435,47 @@ interface HenState {
 
 /** 3-4 hens living around the coop: hidden inside on seeded timers, down the
  * ramp, pecking and wandering the run yard, back up and gone again. */
+/** Owned wings show on the OUTSIDE too: tier 1 grows a second nest-box bump
+ * on the left wall, tier 2 adds a little roof cupola with a vent. Children
+ * of the coop group, so carrying the building takes the bragging along.
+ * Idempotent: rebuilds from scratch each call (openings are rare). */
+export function buildCoopAnnex(group: Group, tier: number): void {
+  const old = group.getObjectByName('coop-annex')
+  if (old) {
+    old.traverse((o) => {
+      if (o instanceof Mesh) o.geometry.dispose()
+    })
+    group.remove(old)
+  }
+  if (tier <= 0) return
+  const rng = mulberry32(0xa22e)
+  const annex = new Group()
+  annex.name = 'coop-annex'
+  const plankMat = new MeshStandardMaterial({ map: toTexture(coopPlankCanvas(rng), true), roughness: 0.9 })
+  const shingleMat = new MeshStandardMaterial({ map: toTexture(coopShingleCanvas(rng), true), roughness: 0.95 })
+  const planks: BufferGeometry[] = []
+  const lids: BufferGeometry[] = []
+  const bodyY0 = FLOOR_TOP - 0.04
+  // tier 1: the east-wing bump (mirror of the authored right-wall nest box)
+  planks.push(uvScale(box(0.46, 0.42, 0.72, -1.42, 0.99, -0.12), 0.7 / TILE, 0.42 / TILE))
+  const lid1 = box(0.52, 0.05, 0.8, -1.44, 1.23, -0.12)
+  lid1.rotateZ(0.18)
+  lids.push(uvScale(lid1, 0.6, 0.8))
+  if (tier >= 2) {
+    // tier 2: a cupola riding the high edge of the shed roof
+    const topY = bodyY0 + WALL_H + 0.04 + RISE
+    planks.push(uvScale(box(0.4, 0.34, 0.4, 0, topY + 0.15, D / 2 - 0.5), 0.4, 0.34))
+    const cap = shedPrism(0.52, 0.16, 0.52)
+    cap.translate(0, topY + 0.32, D / 2 - 0.5)
+    lids.push(uvScale(cap, 0.5, 0.2))
+  }
+  const pm = fuse(planks, plankMat)
+  if (pm) annex.add(pm)
+  const lm = fuse(lids, shingleMat)
+  if (lm) annex.add(lm)
+  group.add(annex)
+}
+
 export class CoopHens {
   private root = new Group()
   private hens: HenState[] = []

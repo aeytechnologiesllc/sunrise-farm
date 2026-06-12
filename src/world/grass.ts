@@ -29,6 +29,8 @@ import { mulberry32 } from '../game/rng'
 
 export interface GrassField {
   update(t: number): void
+  /** hide the whole lawn (inside opaque interiors the farm doesn't render) */
+  setVisible(on: boolean): void
   /** zero-scale every blade inside the rect — the cheap commit-time pass
    * when a building lands on lawn (full re-scatter waits for the night) */
   hideIn(rect: { x0: number; z0: number; x1: number; z1: number }): void
@@ -265,6 +267,9 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   return {
     update(t: number): void {
       if (timeU) timeU.value = t
+    },
+    setVisible(on: boolean): void {
+      for (const c of chunks) c.mesh.visible = on
     },
     hideIn(rect): void {
       for (const c of chunks) {

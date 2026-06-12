@@ -6,6 +6,8 @@ import {
   FETCH_TREASURE,
   FETCH_TREASURE_CHANCE,
   GOLDEN_CROP_CHANCE,
+  GOLDEN_EGG_BASE,
+  GOLDEN_MULT,
   type GoodKind,
   HERD_COIN_PER_SHEEP,
   XP_GAIN,
@@ -19,9 +21,7 @@ import {
 import { nextTier, plotCount, type TierDef } from './expansion'
 import {
   canDeliver,
-  collectCoopEggs,
   collectMilk,
-  COOP_COIN_PER_HEN,
   DELIVERY_FEED_WHEAT,
   deliveryPay,
   MILK_COIN_PER_GOAT,
@@ -38,6 +38,19 @@ import {
   type ProjectDef,
   type ProjectId,
 } from './projects'
+import {
+  buyHen,
+  collectAllBoxes,
+  collectBox,
+  EGG_BOX_COIN,
+  henBuyStatus,
+  henCost,
+  openWing,
+  tickHenhouse,
+  WING_COST,
+  wingStatus,
+  type HenDef,
+} from './henhouse'
 import { mulberry32, type Rng } from './rng'
 import type { ChipId, GameState, PlotState } from './state'
 
@@ -159,7 +172,12 @@ export class Game {
     })
     if (pev.woolBecameReady) this.emit('woolReady', undefined)
     if (pev.milkBecameReady) this.emit('milkReady', undefined)
-    if (pev.eggsBecameReady) this.emit('coopReady', undefined)
+    // the henhouse boxes are the coop's truth now (eggsT keeps ticking only
+    // so a rolled-back client stays coherent)
+    if (this.hasProject('coop')) {
+      const hev = tickHenhouse(s.coopFlock, dt)
+      if (hev.readyBoxes.length) this.emit('coopReady', undefined)
+    }
     if (pev.deliveryReturned) {
       const coins = deliveryPay(this.rng.next())
       this.syncRng()
@@ -407,13 +425,75 @@ export class Game {
     return coins
   }
 
-  /** gather the coop's egg baskets: coins per hen, nesting timer restarts */
-  collectCoop(henCount: number): number {
-    if (henCount <= 0 || !collectCoopEggs(this.state.produce)) return 0
-    const coins = COOP_COIN_PER_HEN * henCount
+  /** how many nesting boxes hold an egg right now */
+  coopReadyCount(): number {
+    return this.state.coopFlock.boxes.filter((b) => b.ready).length
+  }
+
+  /** the outside one-tap: every ready box at flat value (never required to
+   * walk in — the inside walk-past is the additive golden-roll bonus) */
+  collectCoop(): number {
+    const n = collectAllBoxes(this.state.coopFlock)
+    if (n <= 0) return 0
+    const coins = EGG_BOX_COIN * n
     this.grantCoins(coins)
+    this.state.eggs += n
     this.grantXp(XP_GAIN.collectEgg)
     return coins
+  }
+
+  /** the inside walk-past: ONE box, with a golden roll (4x) — jackpot
+   * texture for visiting the henhouse */
+  collectBoxInside(i: number): { coins: number; golden: boolean } | null {
+    if (!collectBox(this.state.coopFlock, i)) return null
+    const golden = rollGolden(this.rng, GOLDEN_EGG_BASE)
+    this.syncRng()
+    const coins = EGG_BOX_COIN * (golden ? GOLDEN_MULT : 1)
+    this.grantCoins(coins)
+    this.state.eggs += 1
+    this.grantXp(XP_GAIN.collectEgg)
+    return { coins, golden }
+  }
+
+  /** the crate by the henhouse door: a new hen joins (capacity gates it) */
+  henBuyStatus(): ReturnType<typeof henBuyStatus> {
+    return henBuyStatus(this.state.coopFlock, this.state.coins)
+  }
+
+  buyHen(): HenDef | null {
+    if (this.henBuyStatus() !== 'ok') return null
+    const cost = henCost(this.state.coopFlock.hens.length)
+    this.state.coins -= cost
+    this.emit('coins', { total: this.state.coins, delta: -cost })
+    const hen = buyHen(this.state.coopFlock, (Math.floor(this.rng.next() * 0xffffffff)) >>> 0)
+    this.syncRng()
+    this.grantXp(XP_GAIN.feed)
+    return hen
+  }
+
+  /** open the next boarded wing — more boxes, more hens */
+  wingStatus(): ReturnType<typeof wingStatus> {
+    return wingStatus(this.state.coopFlock, this.state.level, this.state.coins)
+  }
+
+  openWing(): boolean {
+    if (this.wingStatus() !== 'ok') return false
+    const cost = WING_COST[this.state.coopFlock.tier]
+    this.state.coins -= cost
+    this.emit('coins', { total: this.state.coins, delta: -cost })
+    openWing(this.state.coopFlock)
+    this.grantXp(XP_GAIN.expand)
+    return true
+  }
+
+  /** toss a handful of wheat for the flock — they come running (the
+   * henhouse's 10-second delight; costs the wheat, pays in charm + a dab
+   * of XP, never coins — feeding must not out-earn farming) */
+  scatterFeed(): boolean {
+    if (this.state.wheat < 1) return false
+    this.state.wheat -= 1
+    this.grantXp(XP_GAIN.feed)
+    return true
   }
 
   /** milk every goat: coins per goat, milk timer restarts */

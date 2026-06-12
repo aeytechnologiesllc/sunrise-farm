@@ -8,6 +8,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  Group,
   ConeGeometry,
   CylinderGeometry,
   DoubleSide,
@@ -17,6 +18,7 @@ import {
   MeshDepthMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
+  Object3D,
   Quaternion,
   RGBADepthPacking,
   Scene,
@@ -144,7 +146,12 @@ function makeBush(bins: TreeBins, rng: Rng, x: number, z: number): void {
 }
 
 /** plant the whole forest + bush scatter; isClear says where NOT to grow */
-export function buildForest(scene: Scene, isClear: (x: number, z: number) => boolean): void {
+export function buildForest(scene: Scene, isClear: (x: number, z: number) => boolean): Group {
+  // everything lands in one group so interiors can hide the whole forest
+  const forestRoot = new Group()
+  scene.add(forestRoot)
+  const sceneProxy = { add: (o: Object3D) => forestRoot.add(o) } as unknown as Scene
+  scene = sceneProxy
   const rng = mulberry32(7771234)
   const bins: TreeBins = { bark: [], leafA: [], leafB: [], needle: [] }
 
@@ -210,4 +217,5 @@ export function buildForest(scene: Scene, isClear: (x: number, z: number) => boo
     })
   addMerged(bins.leafA, leafMat(leafTexA), leafTexA)
   addMerged(bins.leafB, leafMat(leafTexB), leafTexB)
+  return forestRoot
 }

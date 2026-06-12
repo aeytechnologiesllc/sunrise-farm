@@ -593,8 +593,8 @@ function nonIndexed(geo: BufferGeometry): BufferGeometry {
 
 // ---- meadow dressing --------------------------------------------------------------
 
-export function buildMeadow(scene: Scene, assets: Assets): GrassField {
-  buildForest(scene, forestClear)
+export function buildMeadow(scene: Scene, assets: Assets): { grass: GrassField; forest: Group } {
+  const forest = buildForest(scene, forestClear)
   const grass = buildGrass(scene, groundClear)
 
   const rng = mulberry32(1234)
@@ -628,7 +628,7 @@ export function buildMeadow(scene: Scene, assets: Assets): GrassField {
 
   buildBarn(scene)
   buildTownGate(scene)
-  return grass
+  return { grass, forest }
 }
 
 // ---- white picket fence, edge by edge (the player's to redraw) ---------------

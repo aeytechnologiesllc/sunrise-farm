@@ -344,7 +344,12 @@ export class FollowCamera {
       }
     } else if (this.occlusionTest) {
       const blocked = this.occlusionTest(t, place(dist, this.desired))
-      const want = blocked !== null ? Math.max(2.4, blocked - 0.5) : dist
+      // the comfortable floor is 2.4 — but a wall CLOSER than that (small
+      // interiors, hugging a barn) drops the shot to over-the-shoulder
+      // rather than parking the lens beyond an opaque wall. Always land
+      // at least 0.15 in FRONT of the hit; never closer than 0.4 to the
+      // focus (degenerate shot)
+      const want = blocked !== null ? Math.max(1.0, Math.min(2.4, blocked - 0.15), blocked - 0.5) : dist
       if (want < this.occlClamp) this.occlClamp = want
       else this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
       dist = Math.min(dist, this.occlClamp)

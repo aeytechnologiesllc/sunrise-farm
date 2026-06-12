@@ -2,6 +2,7 @@
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
 import { ringEdges, type FenceState } from './fence'
+import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
 import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
 import { GREENHOUSE_BEDS } from './projects'
@@ -84,6 +85,9 @@ export interface GameState {
   /** every fence edge on the farm, the player's to redraw (free). Absence
    * in an old save = unmigrated: the authored tier ring converts on load. */
   fences: FenceState
+  /** the henhouse: named hens, their nesting boxes, the wing tier. Eggs
+   * trickle per-box (the interior's truth model). */
+  coopFlock: CoopFlock
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -121,6 +125,7 @@ export function initialState(seed: number): GameState {
     ghPlots: [],
     layout: {},
     fences: ringEdges(0),
+    coopFlock: foundingFlock((seed ^ 0xc00b) >>> 0),
     chicken: {
       arrived: false,
       name: null,
@@ -170,6 +175,8 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       eggBecameReady = true
     }
   }
+  // the henhouse boxes trickle while away too (one egg per box, capped)
+  if (s.coopFlock && s.projects?.coop === true) catchUpHenhouse(s.coopFlock, el)
   // production keeps running while away; a delivery that finished offline
   // pays out flat (no seeded roll for absentee landlords)
   if (s.produce) {
@@ -211,6 +218,12 @@ export function deserialize(json: string | null): GameState | null {
     // one-time fence migration: the authored picket ring becomes player
     // fence (its presence IS the migrated flag)
     s.fences ??= ringEdges(clampTier(s.expansion ?? 0))
+    // henhouse migration: the founding four get boxes; a pending batch from
+    // the OLD single-latch coop becomes ready boxes (nobody loses eggs)
+    if (!s.coopFlock) {
+      s.coopFlock = foundingFlock(((s.chicken?.seed ?? 1) ^ 0xc00b) >>> 0)
+      if (s.produce?.eggsReady) for (const b of s.coopFlock.boxes) b.ready = true
+    }
     // the glasshouse grew from 4 beds to 8 — owners get the new beds on load
     if (s.projects.greenhouse) while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
     // grandfather PRE-LADDER saves exactly once: they already had the stand
