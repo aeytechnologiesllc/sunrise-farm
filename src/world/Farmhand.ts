@@ -50,6 +50,11 @@ export class FarmhandView {
   private wanderT = 4
   private home: Vector3
 
+  /** his post moved with the farm's new layout — future rests happen there */
+  setHome(v: Vector3): void {
+    this.home.copy(v)
+  }
+
   constructor(assets: Assets, scene: Scene, home: Vector3) {
     const model = assets.spawnSkinned('customerB')
     normalizeHeight(model, 1.56)

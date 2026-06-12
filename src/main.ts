@@ -38,7 +38,20 @@ import {
 } from './game/economy'
 import { Customers } from './game/customers'
 import { Game, type Suggestion } from './game/Game'
-import { DEFAULT_PLACES, deliveryRoute, layoutView, paddockRect, placeOf, type PlaceId } from './game/layout'
+import {
+  canPlace,
+  DEFAULT_PLACES,
+  deliveryRoute,
+  footprintOf,
+  layoutView,
+  paddockRect,
+  PLACE_IDS,
+  placeOf,
+  setPlace,
+  type PlaceCheck,
+  type PlaceId,
+} from './game/layout'
+import { CarrySystem, snapToGrid } from './world/carry'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
 import { Joystick } from './input/joystick'
 import { Hud, type ActionDef } from './ui/hud'
@@ -54,6 +67,7 @@ import { PlotView } from './world/Plot'
 import {
   bindLayout,
   buildClouds,
+  repaintGround,
   buildDeedSign,
   buildGround,
   buildLights,
@@ -106,6 +120,15 @@ import { buildCoopHouse, CoopHens } from './world/coop'
 import { AnimationMixer, type AnimationAction } from 'three'
 
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
+const PLACE_NAMES: Record<PlaceId, string> = {
+  stand: 'the Stand',
+  shop: 'the Shop',
+  coop: 'the Coop',
+  stable: 'the Stable',
+  greenhouse: 'the Greenhouse',
+  tractor: 'the Tractor',
+  farmhand: "the Farmhand's post",
+}
 const GOOD_EMOJI: Record<GoodKind, string> = {
   wheat: '\u{1F33E}',
   corn: '\u{1F33D}',
@@ -148,6 +171,11 @@ declare global {
       draws: () => number
       warp: (x: number, z: number) => void
       lookYaw: (y: number) => void
+      lift: (id: string) => boolean
+      placeAt: (x: number, z: number) => boolean
+      carry: () => { id: string; ghost: [number, number]; ok: boolean } | null
+      layout: () => Record<string, { x: number; z: number }>
+      actions: () => string[]
     }
     __step: (s: number) => void
   }
@@ -344,6 +372,13 @@ async function boot(): Promise<void> {
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
+
+  // ---- Move-in Day: carry & place ------------------------------------------
+  const carry = new CarrySystem(scene)
+  if (standGroup) carry.register('stand', standGroup)
+  if (tractor) carry.register('tractor', tractor.group)
+  /** the latest ghost validity — buttons + commit share one verdict */
+  let carryCheck: PlaceCheck = { ok: false }
 
   let wiping = false
   const saveNow = (): void => {
@@ -791,7 +826,7 @@ async function boot(): Promise<void> {
     // inGreenhouse can't happen via the button (near.home needs the real
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
-    if (sleepActive || construction.active || fetchCine || inGreenhouse || !dayCycle.atDusk) return
+    if (sleepActive || construction.active || fetchCine || inGreenhouse || carry.carrying || !dayCycle.atDusk) return
     sleepActive = true
     sleepStarted = engine.uTime.value
     touch()
@@ -882,10 +917,13 @@ async function boot(): Promise<void> {
     tl.call(quiet(() => showDayCard(state.day, summary)), undefined, 12.7)
     tl.call(() => hideDayCard(), undefined, 15.1)
     for (const at of [12.8, 13.7, 14.9]) tl.call(quiet(() => sfx.cricket()), undefined, at)
-    // deep night: the new day begins where no one can see the seam
+    // deep night: the new day begins where no one can see the seam — and
+    // the lawn re-scatters around any moved buildings (the one frame heavy
+    // grass pass, hidden in the dark)
     tl.call(() => {
       dayCycle.startNewDay()
       game.sleep()
+      grass.rebuild()
     }, undefined, 15.4)
     // dawn washes the stars away
     tl.to(nightDial, { k: 0, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 15.8)
@@ -1056,6 +1094,7 @@ async function boot(): Promise<void> {
     b.rotation.y = at.yaw
     scene.add(b)
     OCCLUDERS.push(b)
+    carry.register(def.id as PlaceId, b)
     if (pop) {
       b.scale.setScalar(0.01)
       gsap.to(b.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
@@ -1069,6 +1108,7 @@ async function boot(): Promise<void> {
       if (!state.projects.shop && !standGroup) {
         standGroup = buildStand(scene, assets)
         OCCLUDERS.push(standGroup)
+        carry.register('stand', standGroup)
         if (fresh) {
           standGroup.scale.setScalar(0.01)
           gsap.to(standGroup.scale, { x: 1, y: 1, z: 1, duration: 0.7, ease: 'back.out(1.5)' })
@@ -1098,6 +1138,7 @@ async function boot(): Promise<void> {
         scene.remove(standGroup)
         const i = OCCLUDERS.indexOf(standGroup)
         if (i >= 0) OCCLUDERS.splice(i, 1)
+        carry.unregister('stand')
         standGroup = null
       }
       addBuilding(buildShop, def, fresh)
@@ -1121,6 +1162,7 @@ async function boot(): Promise<void> {
       const fh = placeOf(state, 'farmhand')
       farmhand = new FarmhandView(assets, scene, new Vector3(fh.x, 0, fh.z))
       farmhand.onHarvest = (i) => doHarvest(i)
+      carry.register('farmhand', farmhand.group)
     }
   }
   for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
@@ -1211,7 +1253,10 @@ async function boot(): Promise<void> {
         fenceMesh = buildPicketFence(scene, state.expansion)
         if (fg) gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
         for (const v of newViews) gsap.to(v.group.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(1.6)' })
-        if (def.tractor && !tractor) tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
+        if (def.tractor && !tractor) {
+          tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
+          carry.register('tractor', tractor.group)
+        }
         if (def.sheep && game.hasProject('sheep')) for (let i = 0; i < def.sheep; i++) flock.addSheep()
         refreshProjectSigns()
         sparkleBurst(scene, center.clone().setY(1.2), true, 18)
@@ -1304,6 +1349,46 @@ async function boot(): Promise<void> {
     { capture: true },
   )
 
+  // ---- long-press on a building = pick it up (engine-clock timed) ----------
+  // A stationary hold is free input real estate: the camera only orbits on
+  // drag, sticks/HUD capture their own pointers. >8px of drift cancels.
+  const pressRay = new Raycaster()
+  let press: { id: number; x: number; y: number; at: number } | null = null
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    press = { id: e.pointerId, x: e.clientX, y: e.clientY, at: engine.uTime.value }
+  })
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) press = null
+  })
+  addEventListener('pointerup', () => {
+    press = null
+  })
+  addEventListener('pointercancel', () => {
+    press = null
+  })
+  /** fixed-tick: a held press matures into a lift if it's over a movable */
+  const checkLongPress = (): void => {
+    if (!press || engine.uTime.value - press.at < 0.55) return
+    const ndc = {
+      x: (press.x / innerWidth) * 2 - 1,
+      y: -(press.y / innerHeight) * 2 + 1,
+    }
+    press = null
+    pressRay.setFromCamera(ndc as never, cam.camera)
+    const ents = carry.entries()
+    const hits = pressRay.intersectObjects(ents.map(([, g]) => g), true)
+    if (!hits.length) return
+    let obj: typeof hits[0]['object'] | null = hits[0].object
+    while (obj) {
+      const ent = ents.find(([, g]) => g === obj)
+      if (ent) {
+        tryLift(ent[0])
+        return
+      }
+      obj = obj.parent
+    }
+  }
+
   // proximity snapshot shared between fixed step (logic) and taps (handlers)
   const near = {
     emptyPlot: -1,
@@ -1317,6 +1402,8 @@ async function boot(): Promise<void> {
     stable: false,
     coop: false,
     project: null as ProjectId | null,
+    /** nearest liftable building (the "Move" button fallback + E2E path) */
+    movable: null as PlaceId | null,
   }
   const stablePlace = placeOf(state, 'stable')
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
@@ -1337,6 +1424,103 @@ async function boot(): Promise<void> {
     ghExitSpot.set(gp.x, 0, gp.z).addScaledVector(ghDoorDir, 3.2)
   }
   recomputeGhDoor()
+
+  /** a building LANDED somewhere new: write the layout, then walk every
+   * system that captured its position at boot (the Phase-0 review's land-
+   * mine list — each item here answers one of them) */
+  const relayout = (id: PlaceId, x: number, z: number): void => {
+    setPlace(state, id, x, z)
+    bindLayout(layoutView(state)) // ground art + exclusion zones follow
+    const p = placeOf(state, id)
+    if (id === 'tractor') {
+      TRACTOR_SPOT.pos.set(p.x, 0, p.z)
+    } else if (id === 'coop') {
+      COOP_AT.set(p.x, 0, p.z)
+      coopHens?.moveTo(COOP_AT, p.yaw)
+    } else if (id === 'stable') {
+      STABLE_AT.set(p.x, 0, p.z)
+      // the paddock (and the horse's grazing world) ride along — Grazers
+      // hold the rect by REFERENCE, so mutating it re-aims her next wander
+      const pr = paddockRect(state)
+      HORSE_RECT.x0 = pr.x0 + 0.3
+      HORSE_RECT.z0 = pr.z0 + 0.3
+      HORSE_RECT.x1 = pr.x1 - 0.3
+      HORSE_RECT.z1 = pr.z1 - 0.3
+    } else if (id === 'greenhouse') {
+      recomputeGhDoor()
+    } else if (id === 'stand') {
+      marketToStand(p)
+      reflowQueue()
+    } else if (id === 'shop') {
+      marketToShop(p)
+      reflowQueue()
+    } else if (id === 'farmhand') {
+      farmhand?.setHome(new Vector3(p.x, 0, p.z))
+    }
+    // signs re-stake beside wherever their buildings stand now
+    for (const [sid, sgn] of projectSigns) {
+      scene.remove(sgn.group)
+      disposeMaterials(sgn.group)
+      projectSigns.delete(sid)
+    }
+    refreshProjectSigns()
+    // the ground takes its worn dirt along (one-off repaint, hidden under
+    // the landing squash); fresh lawn under the building hides instantly —
+    // the full re-scatter happens overnight behind the sleep dip-to-black
+    repaintGround()
+    const fp = footprintOf(id)
+    grass.hideIn({ x0: p.x - fp.w / 2 - 0.4, z0: p.z - fp.d / 2 - 0.4, x1: p.x + fp.w / 2 + 0.4, z1: p.z + fp.d / 2 + 0.4 })
+    saveNow()
+  }
+
+  /** may the player pick this up right now? (one scene at a time) */
+  const canLift = (id: PlaceId): boolean => {
+    if (carry.carrying || carry.settling) return false
+    if (sleepActive || construction.active || fetchCine || ghBusy || inGreenhouse || hud.modalOpen) return false
+    const owned =
+      id === 'tractor'
+        ? state.expansion >= 2
+        : id === 'stand'
+          ? state.projects.stand === true && state.projects.shop !== true
+          : state.projects[id] === true
+    if (!owned) return false
+    // Hazel can't come home to a missing stable
+    if (id === 'stable' && state.produce.deliveryT > 0) return false
+    const p = placeOf(state, id)
+    return player.pos.distanceTo(new Vector3(p.x, 0, p.z)) < 4.6
+  }
+
+  const tryLift = (id: PlaceId): boolean => {
+    if (!canLift(id)) return false
+    if (!carry.lift(id, player.group)) return false
+    touch()
+    sfx.crate()
+    navigator.vibrate?.(20)
+    // the carried building stops hiding the camera and stops occluding
+    const g = carry.entries().find(([cid]) => cid === id)?.[1]
+    if (g) {
+      const i = OCCLUDERS.indexOf(g)
+      if (i >= 0) OCCLUDERS.splice(i, 1)
+    }
+    return true
+  }
+
+  const setDown = (): void => {
+    const id = carry.carrying
+    if (!id || !carryCheck.ok) return
+    touch()
+    const lx = carry.ghostAt.x // capture NOW — the ghost moves on
+    const lz = carry.ghostAt.z
+    carry.place(() => {
+      relayout(id, lx, lz)
+      sfx.pop()
+      sfx.crate()
+      navigator.vibrate?.([18, 30, 18])
+      sparkleBurst(scene, new Vector3(lx, 0.6, lz), false, 10)
+      const g = carry.entries().find(([cid]) => cid === id)?.[1]
+      if (g && !OCCLUDERS.includes(g)) OCCLUDERS.push(g)
+    })
+  }
   let ghBusy = false
   const throughGhDoor = (enter: boolean): void => {
     if (ghBusy) return
@@ -1367,7 +1551,10 @@ async function boot(): Promise<void> {
     // belt-and-braces: a stale button can never start a second scene
     // (ghBusy: nor act through the door-transition's dip to black)
     if (sleepActive || construction.active || ghBusy) return
-    if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
+    if (id === 'setdown') setDown()
+    else if (id.startsWith('move-')) tryLift(id.slice(5) as PlaceId)
+    else if (carry.carrying) return // a building in your arms is a full-time job
+    else if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
     else if (id === 'shear' && near.pen) {
@@ -1510,6 +1697,8 @@ async function boot(): Promise<void> {
   let coinMismatchFor = 0
   let standT = 0
   let movedEver = false
+  /** the current action-button ids (dev driver / E2E introspection) */
+  let lastActions: string[] = []
   /** engine time when dusk parked (-1 while the sun is up) — chip cadence */
   let duskAt = -1
   engine.onUpdate((dt) => {
@@ -1518,6 +1707,16 @@ async function boot(): Promise<void> {
     customers.update(dt, game.stock())
     player.update(dt, joy.value, cam.yaw)
     fenceBlock()
+    // ---- carry & place: long-press lifts; the ghost glides ahead ----
+    checkLongPress()
+    if (carry.carrying) {
+      const fp = footprintOf(carry.carrying)
+      const ahead = Math.max(fp.w, fp.d) / 2 + 1.4
+      const gx = snapToGrid(player.pos.x + Math.sin(player.facing) * ahead)
+      const gz = snapToGrid(player.pos.z + Math.cos(player.facing) * ahead)
+      carryCheck = canPlace(state, carry.carrying, gx, gz)
+      carry.aimGhost(gx, gz, carryCheck.ok)
+    }
     chicken.update(dt)
     dog.update(dt, player.pos)
     flock.update(dt, player.pos, dog.group.position, state.expansion)
@@ -1551,9 +1750,11 @@ async function boot(): Promise<void> {
       !construction.active &&
       !dog.fetching &&
       // no wanderers while the player is under glass (or mid-door-cut) —
-      // an invitation you can't see is a nag waiting at the exit
+      // an invitation you can't see is a nag waiting at the exit. Nor with
+      // a building overhead: one job at a time.
       !inGreenhouse &&
-      !ghBusy
+      !ghBusy &&
+      !carry.carrying
     ) {
       herdTimer -= dt
       if (herdTimer <= 0) {
@@ -1646,17 +1847,34 @@ async function boot(): Promise<void> {
       }
       // glasshouse door, both directions (the swap itself is a blink in black).
       // Gated on WALKING INTO the doorway — brushing past the doorstep
-      // sideways or backing across it must never teleport anyone.
-      if (game.hasProject('greenhouse') && !construction.active && !fetchCine) {
+      // sideways or backing across it must never teleport anyone. Carrying
+      // a building through the door would teleport IT off-world: inert.
+      if (game.hasProject('greenhouse') && !construction.active && !fetchCine && !carry.carrying) {
         const inward = player.vel.x * ghDoorDir.x + player.vel.z * ghDoorDir.z
         if (!inGreenhouse && p.distanceTo(ghDoorOut) < 0.95 && inward < -0.4) throughGhDoor(true)
         // exit is the forgiving side: any unhurried step into the doorway
         // leaves — a room you can't get out of would break the cozy contract
         else if (inGreenhouse && p.distanceTo(ghInterior.exitPos) < 0.7 && player.vel.z > 0.2) throughGhDoor(false)
       }
+      // nearest building you could pick up (fallback button + discoverability)
+      near.movable = null
+      if (!carry.carrying && !carry.settling) {
+        let md = 3.4
+        for (const id of PLACE_IDS) {
+          if (!canLift(id)) continue
+          const pl = placeOf(state, id)
+          const d = p.distanceTo(new Vector3(pl.x, 0, pl.z))
+          if (d < md) {
+            md = d
+            near.movable = id
+          }
+        }
+      }
       near.chicken = chicken.settled && p.distanceTo(chicken.group.position) < CHICK_R
-      if (state.chicken.eggReady && chicken.settled && p.distanceTo(NEST_POS) < CHICK_R) collectEgg()
-      if (chicken.cratePending && p.distanceTo(chicken.crateWorldPos) < CRATE_R) {
+      // neither the egg pickup nor the crate ceremony fires with a building
+      // overhead — the ceremony opens a modal that would orphan the carry
+      if (state.chicken.eggReady && chicken.settled && !carry.carrying && p.distanceTo(NEST_POS) < CHICK_R) collectEgg()
+      if (chicken.cratePending && !carry.carrying && p.distanceTo(chicken.crateWorldPos) < CRATE_R) {
         cam.focusOn(CRATE_POS, 0.7)
         chicken.beginOpen(
           () => sfx.crate(),
@@ -1666,14 +1884,14 @@ async function boot(): Promise<void> {
           },
         )
       }
-      if (p.distanceTo(MARKET.pos) < STAND_R) tryServe()
+      if (!carry.carrying && p.distanceTo(MARKET.pos) < STAND_R) tryServe()
 
       // stand still on an empty plot for a moment -> wheat plants itself.
       // Only after the player has planted once BY CHOICE (an action the game
       // took for me is not mine — IKEA effect), and slow enough that reaching
       // for the corn button never loses a race to free wheat. Glasshouse beds
       // are exempt: those are CHOSEN plantings of rare crops, never wheat.
-      if (near.emptyPlot >= 0 && !game.isGreenhouse(near.emptyPlot) && player.speed < 0.3 && state.chipsDone.plant) {
+      if (near.emptyPlot >= 0 && !game.isGreenhouse(near.emptyPlot) && !carry.carrying && player.speed < 0.3 && state.chipsDone.plant) {
         standT += dt
         if (standT >= AUTOPLANT_AFTER) {
           standT = 0
@@ -1687,7 +1905,28 @@ async function boot(): Promise<void> {
     // ---- context action buttons (big, above the right thumb) ----
     // one scene at a time: no buttons exist while ANY cinematic is rolling
     const actions: ActionDef[] = []
-    if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !ghBusy) {
+    if (carry.carrying && !hud.modalOpen) {
+      // one verb while a building is in your arms (the spot speaks via color)
+      const why: Record<string, string> = {
+        land: "that's not your land yet",
+        road: 'the road has to stay clear',
+        field: 'crops will grow there',
+        pen: "that's the sheep's yard",
+        paddock: "that's Hazel's paddock",
+        building: 'too close to another building',
+        home: 'the family house has roots',
+        spot: 'something little lives there',
+        gate: 'keep the gateway walkable',
+        'hazel-out': "she's on the road",
+      }
+      actions.push({
+        id: 'setdown',
+        emoji: '\u{1F4E6}',
+        label: 'Set it down',
+        sub: carryCheck.ok ? 'right here' : (why[carryCheck.reason ?? 'building'] ?? 'not here'),
+        locked: !carryCheck.ok,
+      })
+    } else if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !ghBusy && !carry.settling) {
       if (near.emptyPlot >= 0) {
         if (game.isGreenhouse(near.emptyPlot)) {
           // the glasshouse ladder — rare crops, planted only under glass
@@ -1821,7 +2060,17 @@ async function boot(): Promise<void> {
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
       }
+      if (near.movable) {
+        // fallback for the long-press (and the discoverable path on desktop)
+        actions.push({
+          id: `move-${near.movable}`,
+          emoji: '\u{1F4E6}',
+          label: `Move ${PLACE_NAMES[near.movable]}`,
+          sub: 'carry it anywhere',
+        })
+      }
     }
+    lastActions = actions.map((a) => a.id)
     hud.setActions(actions, onAction)
 
     // ---- contextual top chip: top suggestion whose chip hasn't been retired ----
@@ -1870,6 +2119,15 @@ async function boot(): Promise<void> {
       ) {
         // first-ever wait: hand the player something to DO right away
         chipText = 'While the wheat grows — walk to Rex and throw his stick \u{1FAB5}'
+      } else if (
+        Object.keys(state.layout).length === 0 &&
+        !carry.carrying &&
+        state.harvests >= 8 &&
+        (state.projects.stand || state.projects.coop) &&
+        state.plots.some((p) => p.crop && p.crop.remaining > 0)
+      ) {
+        // the waiting window IS the rearranging window (until their first move)
+        chipText = 'While the crops grow — press and hold a building to pick it up \u{1F4E6}'
       } else if (sug) {
         const name = state.chicken.name ?? 'her'
         const texts: Record<Suggestion['kind'], string> = {
@@ -1986,6 +2244,7 @@ async function boot(): Promise<void> {
       }
     }
     ghInterior.update(dt)
+    carry.frame(dt)
     hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)
     const eveK = sleepActive
@@ -2278,6 +2537,23 @@ async function boot(): Promise<void> {
       prevPos.x = x
       prevPos.z = z
     },
+    // ---- carry & place (E2E drives the same paths the thumb does) ----
+    lift: (id: string) => tryLift(id as PlaceId),
+    placeAt: (x: number, z: number) => {
+      if (!carry.carrying) return false
+      const check = canPlace(state, carry.carrying, snapToGrid(x), snapToGrid(z))
+      carry.aimGhost(x, z, check.ok)
+      carryCheck = check
+      if (!check.ok) return false
+      setDown()
+      return true
+    },
+    carry: () =>
+      carry.carrying
+        ? { id: carry.carrying, ghost: [carry.ghostAt.x, carry.ghostAt.z] as [number, number], ok: carryCheck.ok }
+        : null,
+    layout: () => JSON.parse(JSON.stringify(state.layout)) as Record<string, { x: number; z: number }>,
+    actions: () => [...lastActions],
   }
   window.__step = window.__farm.step
 

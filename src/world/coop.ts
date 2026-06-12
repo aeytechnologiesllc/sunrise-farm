@@ -439,6 +439,12 @@ export class CoopHens {
   private root = new Group()
   private hens: HenState[] = []
 
+  /** the coop moved — the hens' whole world is root-relative, so they ride */
+  moveTo(at: Vector3, yaw: number): void {
+    this.root.position.copy(at)
+    this.root.rotation.y = yaw
+  }
+
   constructor(scene: Scene, at: Vector3, yaw: number, count: number, seed: number) {
     this.root.position.copy(at)
     this.root.rotation.y = yaw
