@@ -1630,6 +1630,10 @@ async function boot(): Promise<void> {
     stall: false,
     /** inside the farmhouse: close to the wife or the kiddo */
     family: false,
+    /** at a walk-in door, outside: which room could be entered */
+    roomDoor: null as RoomId | null,
+    /** at the doorway, inside: the exit button shows */
+    roomExit: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -1649,6 +1653,8 @@ async function boot(): Promise<void> {
     }
     /** opaque rooms hide the farm's heavy roots + pull both camera planes in */
     opaque: boolean
+    /** shown on the Enter/Exit buttons ("Enter the Henhouse") */
+    label: string
     /** may this door be ENTERED right now? (ownership / time of day) —
      * leaving is always allowed: a room you can't get out of breaks cozy */
     gate(): boolean
@@ -1678,6 +1684,7 @@ async function boot(): Promise<void> {
     gh: {
       interior: ghInterior,
       opaque: false, // glass: the farm stays visible, near plane stays 0.5
+      label: 'the Greenhouse',
       gate: () => game.hasProject('greenhouse'),
       placeId: 'greenhouse',
       doorLocalX: 0,
@@ -1692,6 +1699,7 @@ async function boot(): Promise<void> {
     coop: {
       interior: coopInterior,
       opaque: true,
+      label: 'the Henhouse',
       gate: () => game.hasProject('coop'),
       placeId: 'coop',
       doorLocalX: 0,
@@ -1711,6 +1719,7 @@ async function boot(): Promise<void> {
     stable: {
       interior: stableInterior,
       opaque: true,
+      label: 'the Stable',
       gate: () => game.hasProject('stable'),
       placeId: 'stable',
       doorLocalX: -1.8, // the door bay sits left of the open stall front
@@ -1731,6 +1740,7 @@ async function boot(): Promise<void> {
     home: {
       interior: farmhouseInterior,
       opaque: true,
+      label: 'the Farmhouse',
       // the dusk doorway belongs to supper (near.home claims it within
       // 3.2u); by day the house is the family's — walk right in
       gate: () => !dayCycle.atDusk && !sleepActive,
@@ -1998,6 +2008,8 @@ async function boot(): Promise<void> {
     if (sleepActive || construction.active || roomBusy) return
     if (id === 'setdown') setDown()
     else if (id === 'carryback') cancelCarry()
+    else if (id === 'enterroom' && near.roomDoor !== null) throughDoor(near.roomDoor, true)
+    else if (id === 'exitroom' && room !== null && near.roomExit) throughDoor(room, false)
     else if (id.startsWith('move-')) tryLift(id.slice(5) as PlaceId)
     else if (carry.carrying) return // a building in your arms is a full-time job
     else if (id === 'fence-edit') fenceEditor.open()
@@ -2402,27 +2414,24 @@ async function boot(): Promise<void> {
           near.project = id
         }
       }
-      // walk-in doors, ONE grammar for every room (the swap is a blink in
-      // black). Enter is gated on WALKING INTO the doorway — brushing past
-      // sideways or backing across must never teleport anyone; carrying a
-      // building through would teleport IT off-world: inert. Exit is the
-      // forgiving side: any unhurried step into the doorway leaves — a room
-      // you can't get out of would break the cozy contract.
+      // walk-in doors are BUTTONS now, not trip-wires (owner: ghosting
+      // through a wall reads wrong — "press enter, press exit, fast").
+      // The transition itself stays the quick 0.7s dip, never a cutscene.
+      near.roomDoor = null
+      near.roomExit = false
       if (!construction.active && !fetchCine && !carry.carrying) {
-        for (const id of ROOM_IDS) {
-          const def = ROOMS[id]
-          if (room === null) {
+        if (room === null) {
+          for (const id of ROOM_IDS) {
+            const def = ROOMS[id]
             // gate() guards ENTERING only — leaving is always allowed
             if (!def.gate()) continue
-            const inward = player.vel.x * def.door.dir.x + player.vel.z * def.door.dir.z
-            if (p.distanceTo(def.door.out) < 0.95 && inward < -0.4) {
-              throughDoor(id, true)
+            if (p.distanceTo(def.door.out) < 1.7) {
+              near.roomDoor = id
               break
             }
-          } else if (room === id && p.distanceTo(def.interior.exitPos) < 0.7 && player.vel.z > 0.2) {
-            throughDoor(id, false)
-            break
           }
+        } else if (p.distanceTo(ROOMS[room].interior.exitPos) < 1.5) {
+          near.roomExit = true
         }
       }
       // inside the henhouse: walking the box row collects as you pass, and
@@ -2548,6 +2557,22 @@ async function boot(): Promise<void> {
     } else if (fenceEditor.active) {
       // the editor panel owns the screen — no contextual buttons under it
     } else if (!hud.modalOpen && !sleepActive && !construction.active && !fetchCine && !roomBusy && !carry.settling) {
+      if (room === null && near.roomDoor !== null) {
+        actions.push({
+          id: 'enterroom',
+          emoji: '\u{1F6AA}',
+          label: `Enter ${ROOMS[near.roomDoor].label}`,
+          sub: 'step inside',
+        })
+      }
+      if (room !== null && near.roomExit) {
+        actions.push({
+          id: 'exitroom',
+          emoji: '\u{1F6AA}',
+          label: `Exit ${ROOMS[room].label}`,
+          sub: 'back to the farm',
+        })
+      }
       if (room === 'coop') {
         // the henhouse's own verbs — the farm's buttons stay outside
         if (near.crate) {
