@@ -612,13 +612,14 @@ async function boot(): Promise<void> {
       gsap.delayedCall(1.2, () =>
         hud.showBanner('While you were away \u{1F305}', 'Hazel came home from Millbrook — 34 coins in the saddlebag'),
       )
-    } else if (offline.readyPlots.length > 0 || state.coopFlock.boxes.some((b) => b.ready)) {
-      // a signed note beats a silent ledger: someone kept watch
+    } else if (offline.readyPlots.length > 0 || offline.offlineEggs > 0) {
+      // a signed note beats a silent ledger: someone kept watch. Only what
+      // ACTUALLY happened while away — never claim stale eggs as fresh
       const crops = offline.readyPlots.length
-      const eggsReady = game.hasProject('coop') ? state.coopFlock.boxes.filter((b) => b.ready).length : 0
+      const eggsLaid = offline.offlineEggs
       const bits = [
         crops > 0 ? `${crops} crop${crops === 1 ? '' : 's'} ripened` : null,
-        eggsReady > 0 ? `${eggsReady} egg${eggsReady === 1 ? '' : 's'} laid` : null,
+        eggsLaid > 0 ? `${eggsLaid} egg${eggsLaid === 1 ? '' : 's'} laid` : null,
       ].filter(Boolean)
       if (bits.length) {
         gsap.delayedCall(1.2, () =>

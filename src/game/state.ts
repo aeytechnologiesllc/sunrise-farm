@@ -155,6 +155,9 @@ export interface CatchUpResult {
   /** Hazel finished her run while the app was closed (flat 34c was banked) —
    * the welcome-back banner should SAY so instead of paying silently */
   offlineDelivery: boolean
+  /** henhouse eggs that became ready WHILE AWAY (not ones already waiting —
+   * the welcome-back note must never claim stale eggs were just laid) */
+  offlineEggs: number
 }
 
 /** Advance timers by elapsed real seconds. Each timer completes at most
@@ -183,7 +186,8 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
     }
   }
   // the henhouse boxes trickle while away too (one egg per box, capped)
-  if (s.coopFlock && s.projects?.coop === true) catchUpHenhouse(s.coopFlock, el)
+  let offlineEggs = 0
+  if (s.coopFlock && s.projects?.coop === true) offlineEggs = catchUpHenhouse(s.coopFlock, el)
   // production keeps running while away; a delivery that finished offline
   // pays out flat (no seeded roll for absentee landlords)
   if (s.produce) {
@@ -199,7 +203,7 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       offlineDelivery = true
     }
   }
-  return { readyPlots, eggBecameReady, offlineDelivery }
+  return { readyPlots, eggBecameReady, offlineDelivery, offlineEggs }
 }
 
 export function serialize(s: GameState): string {

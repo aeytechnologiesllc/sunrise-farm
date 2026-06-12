@@ -457,11 +457,11 @@ export class FollowCamera {
       if (want < this.occlClamp) {
         this.occlClamp = want
         this.clearT = 0
-      } else if (want > this.occlClamp + 0.3) {
+      } else if (want > this.occlClamp) {
+        // ease out only after a clear beat — and all the way out (a release
+        // band here once stranded the clamp 0.3 short of the zoom, forever)
         this.clearT += this.lastDt
         if (this.clearT >= 0.35) this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
-      } else {
-        this.clearT = 0
       }
       dist = Math.min(dist, this.occlClamp)
     }
