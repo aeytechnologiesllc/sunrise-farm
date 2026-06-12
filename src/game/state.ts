@@ -1,6 +1,7 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
+import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
 import { GREENHOUSE_BEDS } from './projects'
 
@@ -76,6 +77,9 @@ export interface GameState {
   plots: PlotState[]
   /** greenhouse planters — separate array so land expansions never reindex */
   ghPlots: PlotState[]
+  /** where moved buildings stand — SPARSE: only moved ones appear, so old
+   * clients render defaults and future default tweaks reach non-movers */
+  layout: LayoutState
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -111,6 +115,7 @@ export function initialState(seed: number): GameState {
     timers: { sow: 0, fetch: 0, herd: 45 },
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null })),
     ghPlots: [],
+    layout: {},
     chicken: {
       arrived: false,
       name: null,
@@ -197,6 +202,7 @@ export function deserialize(json: string | null): GameState | null {
     s.herdsDone ??= 0
     s.projects ??= {}
     s.ghPlots ??= []
+    s.layout ??= {}
     // the glasshouse grew from 4 beds to 8 — owners get the new beds on load
     if (s.projects.greenhouse) while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
     // grandfather PRE-LADDER saves exactly once: they already had the stand

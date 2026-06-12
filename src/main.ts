@@ -38,6 +38,7 @@ import {
 } from './game/economy'
 import { Customers } from './game/customers'
 import { Game, type Suggestion } from './game/Game'
+import { DEFAULT_PLACES, deliveryRoute, layoutView, paddockRect, placeOf, type PlaceId } from './game/layout'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
 import { Joystick } from './input/joystick'
 import { Hud, type ActionDef } from './ui/hud'
@@ -51,6 +52,7 @@ import { AmbientLife } from './world/fxAmbient'
 import { PlayerView } from './world/Player'
 import { PlotView } from './world/Plot'
 import {
+  bindLayout,
   buildClouds,
   buildDeedSign,
   buildGround,
@@ -65,18 +67,16 @@ import {
   groundClear,
   MARKET,
   marketToShop,
+  marketToStand,
   NEST_POS,
   OCCLUDERS,
   PLAYER_SPAWN,
-  TOWN_GATE_X,
   WORLD_BOUNDS,
 } from './world/scenery'
 import { fenceFor, gatesFor, PEN, plotPositions, sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
-  PADDOCK,
-  PROJECTS,
   SHOP_PREMIUM,
   SHOP_QUEUE_MAX,
   type ProjectDef,
@@ -208,6 +208,10 @@ async function boot(): Promise<void> {
   const state = loaded ?? initialState((Math.random() * 0xffffffff) >>> 0)
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
   const game = new Game(state)
+  // the saved LAYOUT drives where everything stands — scenery's ground art,
+  // exclusion zones, and every anchor below resolve through it
+  bindLayout(layoutView(state))
+  if (!state.projects.shop) marketToStand(placeOf(state, 'stand'))
 
   const lights = buildLights(scene)
   const sky = buildSky(scene)
@@ -307,7 +311,8 @@ async function boot(): Promise<void> {
   }
 
   // ---- land deeds + tractor -------------------------------------------------
-  const TRACTOR_SPOT = { pos: new Vector3(-7.2, 0, -6.6), yaw: -0.35 }
+  const tractorPlace = placeOf(state, 'tractor')
+  const TRACTOR_SPOT = { pos: new Vector3(tractorPlace.x, 0, tractorPlace.z), yaw: tractorPlace.yaw }
   let tractor: TractorView | null = state.expansion >= 2 ? new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw) : null
   let sowCooldown = state.timers.sow
   let deedSign: { group: ReturnType<typeof buildDeedSign>; at: Vector3 } | null = null
@@ -1026,17 +1031,29 @@ async function boot(): Promise<void> {
   const construction = new Construction({ scene, assets, cam, tickSfx: () => sfx.plant() })
   const grazers = new Grazers(assets, scene, 0xa11ce)
   /** the horse grazes her west paddock by the stable; goats join the pen */
-  const HORSE_RECT = { x0: PADDOCK.x0 + 0.3, z0: PADDOCK.z0 + 0.3, x1: PADDOCK.x1 - 0.3, z1: PADDOCK.z1 - 0.3 }
+  const paddock = paddockRect(state) // travels with the stable
+  const HORSE_RECT = { x0: paddock.x0 + 0.3, z0: paddock.z0 + 0.3, x1: paddock.x1 - 0.3, z1: paddock.z1 - 0.3 }
   const GOAT_RECT = { x0: PEN.x0 + 0.7, z0: PEN.z0 + 0.7, x1: PEN.x1 - 0.7, z1: PEN.z1 - 0.7 }
   let farmhand: FarmhandView | null = null
   let coopHens: CoopHens | null = null
-  const COOP_DEF = PROJECTS.find((p) => p.id === 'coop')!
-  const COOP_AT = new Vector3(COOP_DEF.site[0], 0, COOP_DEF.site[1])
+  const coopPlace = placeOf(state, 'coop')
+  const COOP_AT = new Vector3(coopPlace.x, 0, coopPlace.z)
+
+  /** where a project lives NOW: layout-resolved for movable buildings,
+   * the authored site for animal projects (pen/paddock dwellers). Hazel is
+   * an add-on to the stable, so her ceremony rides wherever it stands. */
+  const projectSite = (def: ProjectDef): { x: number; z: number } =>
+    def.id in DEFAULT_PLACES
+      ? placeOf(state, def.id as PlaceId)
+      : def.id === 'horse'
+        ? placeOf(state, 'stable')
+        : { x: def.site[0], z: def.site[1] }
 
   const addBuilding = (builder: (seed: number) => Group, def: ProjectDef, pop: boolean): Group => {
     const b = builder(0xb1d + def.cost)
-    b.position.set(def.site[0], 0, def.site[1])
-    b.rotation.y = def.yaw
+    const at = placeOf(state, def.id as PlaceId) // only buildings come here — all PlaceIds
+    b.position.set(at.x, 0, at.z)
+    b.rotation.y = at.yaw
     scene.add(b)
     OCCLUDERS.push(b)
     if (pop) {
@@ -1071,7 +1088,8 @@ async function boot(): Promise<void> {
       grazers.add('horse', HORSE_RECT, 1)
       if (fresh) {
         sfx.hooves()
-        sparkleBurst(scene, new Vector3(def.site[0], 1.0, def.site[1]), false, 10)
+        const at = projectSite(def)
+        sparkleBurst(scene, new Vector3(at.x, 1.0, at.z), false, 10)
       }
     } else if (def.id === 'goats') {
       grazers.add('goat', GOAT_RECT, 2)
@@ -1087,7 +1105,7 @@ async function boot(): Promise<void> {
       customers.queueMax = SHOP_QUEUE_MAX
       // the serving counter moves across the road — customers reroute to the
       // shop front, and anyone mid-queue walks over (a nice opening-day beat)
-      marketToShop(def.site)
+      marketToShop(placeOf(state, 'shop'))
       if (fresh) reflowQueue()
     } else if (def.id === 'coop') {
       addBuilding(buildCoopHouse, def, fresh)
@@ -1100,7 +1118,8 @@ async function boot(): Promise<void> {
           lastGlow.push('none')
         }
     } else if (def.id === 'farmhand') {
-      farmhand = new FarmhandView(assets, scene, new Vector3(def.site[0], 0, def.site[1]))
+      const fh = placeOf(state, 'farmhand')
+      farmhand = new FarmhandView(assets, scene, new Vector3(fh.x, 0, fh.z))
       farmhand.onHarvest = (i) => doHarvest(i)
     }
   }
@@ -1137,7 +1156,8 @@ async function boot(): Promise<void> {
     for (const def of avail) {
       if (projectSigns.has(def.id)) continue
       const [ox, oz] = SIGN_OFFSET[def.id] ?? [0, 0]
-      const at = new Vector3(def.site[0] + ox, 0, def.site[1] + oz)
+      const site = projectSite(def) // signs follow moved buildings
+      const at = new Vector3(site.x + ox, 0, site.z + oz)
       const group = buildDeedSign(def.name, def.cost, 'BUILD', '#2e6db4')
       group.position.copy(at)
       group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
@@ -1298,18 +1318,25 @@ async function boot(): Promise<void> {
     coop: false,
     project: null as ProjectId | null,
   }
-  const STABLE_DEF = PROJECTS.find((p) => p.id === 'stable')!
-  const STABLE_AT = new Vector3(STABLE_DEF.site[0], 0, STABLE_DEF.site[1])
+  const stablePlace = placeOf(state, 'stable')
+  const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
   const PEN_CENTER = new Vector3((PEN.x0 + PEN.x1) / 2, 0, (PEN.z0 + PEN.z1) / 2)
 
   // ---- the glasshouse door: walk up to it and the set fades up around you ----
   // (diner grammar — no button; the dip-to-black hides the off-world teleport)
-  const GH_DEF = PROJECTS.find((p) => p.id === 'greenhouse')!
-  const ghDoorDir = new Vector3(Math.sin(GH_DEF.yaw), 0, Math.cos(GH_DEF.yaw))
+  const ghDoorDir = new Vector3()
   /** just outside the shed door (its +z face sits 1.7u from the site center) */
-  const ghDoorOut = new Vector3(GH_DEF.site[0], 0, GH_DEF.site[1]).addScaledVector(ghDoorDir, 1.95)
+  const ghDoorOut = new Vector3()
   /** where leaving drops you — beyond the enter trigger so it can't re-fire */
-  const ghExitSpot = new Vector3(GH_DEF.site[0], 0, GH_DEF.site[1]).addScaledVector(ghDoorDir, 3.2)
+  const ghExitSpot = new Vector3()
+  /** door triggers follow the shed wherever the layout puts it */
+  const recomputeGhDoor = (): void => {
+    const gp = placeOf(state, 'greenhouse')
+    ghDoorDir.set(Math.sin(gp.yaw), 0, Math.cos(gp.yaw))
+    ghDoorOut.set(gp.x, 0, gp.z).addScaledVector(ghDoorDir, 1.95)
+    ghExitSpot.set(gp.x, 0, gp.z).addScaledVector(ghDoorDir, 3.2)
+  }
+  recomputeGhDoor()
   let ghBusy = false
   const throughGhDoor = (enter: boolean): void => {
     if (ghBusy) return
@@ -1328,7 +1355,7 @@ async function boot(): Promise<void> {
       // CUT the camera through the black — never fly it 170u across the map.
       // Walking in it faces up the aisle; walking out, back toward the farm.
       cam.snapTo(player.pos)
-      cam.yaw = enter ? 0 : Math.PI + GH_DEF.yaw
+      cam.yaw = enter ? 0 : Math.PI + placeOf(state, 'greenhouse').yaw
       letterbox.fade(false, 0.45)
       gsap.delayedCall(0.5, () => {
         ghBusy = false
@@ -1379,17 +1406,13 @@ async function boot(): Promise<void> {
         hud.setWheat(state.wheat)
         sfx.hooves()
         player.gesture(engine.uTime.value)
-        // she gallops from her west paddock across the farm, out the south
-        // gate, and off east down the road THROUGH the Millbrook gate — the
-        // whole farm watches her go (that run IS the delivery story)
+        // she gallops from her paddock across the farm, out the south gate,
+        // and off east down the road THROUGH the Millbrook gate — the whole
+        // farm watches her go (that run IS the delivery story). The route
+        // derives from wherever the stable stands TODAY.
         grazers.sendRun(
           'horse',
-          [
-            new Vector3(-8.2, 0, 0.6),
-            new Vector3(0.9, 0, 9.4),
-            new Vector3(0.9, 0, 11),
-            new Vector3(TOWN_GATE_X + 1.8, 0, 11.2),
-          ],
+          deliveryRoute(state).map(([wx, wz]) => new Vector3(wx, 0, wz)),
           DELIVERY_RUN_TIME - 12,
         )
         const s = cam.screenPos(STABLE_AT.clone().setY(1.6))
@@ -1406,8 +1429,9 @@ async function boot(): Promise<void> {
         refreshProjectSigns()
         sfx.crate()
         hud.dismissBanner() // a lingering event toast must not float over the scene
+        const buildAt = projectSite(def) // the crew digs at the LAYOUT site
         construction.play({
-          site: new Vector3(def.site[0], 0, def.site[1]),
+          site: new Vector3(buildAt.x, 0, buildAt.z),
           yaw: def.yaw,
           footprint: def.footprint,
           dig: def.kind !== 'building',

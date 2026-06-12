@@ -48,7 +48,10 @@ export interface TierDef {
   sheep?: number
 }
 
-const SOUTH_GATE: GateDef = { wall: 'S', center: 0.9, half: 1.7 }
+/** the south fence gate — exported because the customer path, Hazel's road
+ * waypoint, and the worn footpath all aim at THIS opening (it belongs to the
+ * fence, not to wherever the stand happens to stand) */
+export const SOUTH_GATE: GateDef = { wall: 'S', center: 0.9, half: 1.7 }
 const WEST_GATE: GateDef = { wall: 'W', center: 3.2, half: 1.5 }
 /** wider west opening once the pasture deed frees the west lot (tier 3+) */
 const PASTURE_WEST_GATE: GateDef = { wall: 'W', center: 5.2, half: 1.6 }

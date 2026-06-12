@@ -31,54 +31,81 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
-import { allFieldRects, fenceFor, gatesFor, inRect, PEN } from '../game/expansion'
-import { PROJECTS } from '../game/projects'
+import { allFieldRects, fenceFor, gatesFor, inRect, PEN, SOUTH_GATE } from '../game/expansion'
+import {
+  BARN_AT,
+  CRATE_AT,
+  DOG_AT,
+  NEST_AT,
+  ROAD_Z as GEO_ROAD_Z,
+  SPAWN_AT,
+  TOWN_GATE_X as GEO_TOWN_GATE_X,
+  WORLD_BOUNDS as GEO_WORLD_BOUNDS,
+} from '../game/geo'
+import { DEFAULT_PLACES, footprintOf, PLACE_IDS, type LayoutView, type Place } from '../game/layout'
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
 import { groundDetailCanvas, makeCanvas, toTexture, woodCanvas } from './textures'
 
-export const STAND_POS = new Vector3(0.5, 0, 7)
-export const NEST_POS = new Vector3(-4.5, 0, 1.5)
-export const CRATE_POS = new Vector3(-5.5, 0, 4.5)
-export const DOG_HOME = new Vector3(-1.5, 0, 5)
-export const BARN_POS = new Vector3(-11.5, 0, -3.5)
-export const PLAYER_SPAWN = new Vector3(-0.6, 0, 4.2)
+export const STAND_POS = new Vector3(DEFAULT_PLACES.stand.x, 0, DEFAULT_PLACES.stand.z)
+export const NEST_POS = new Vector3(NEST_AT[0], 0, NEST_AT[1])
+export const CRATE_POS = new Vector3(CRATE_AT[0], 0, CRATE_AT[1])
+export const DOG_HOME = new Vector3(DOG_AT[0], 0, DOG_AT[1])
+export const BARN_POS = new Vector3(BARN_AT[0], 0, BARN_AT[1])
+export const PLAYER_SPAWN = new Vector3(SPAWN_AT[0], 0, SPAWN_AT[1])
 /** the customer road runs east-west across the south of the farm */
-export const ROAD_Z = 11
+export const ROAD_Z = GEO_ROAD_Z
 /** the Millbrook gate — where the road leaves the farm for town. Past the
  * player bound (maxX 22) but inside the tree ring; the delivery horse gallops
  * east THROUGH the gate and must only despawn beyond this x. */
-export const TOWN_GATE_X = 23.6
-/** south gate in the picket fence (stand path + customer route) */
-export const GATE_SOUTH_X = STAND_POS.x + 0.4
-/** customers queue beside the stand's east edge — visible from the follow cam */
-export const QUEUE_SPOTS = [new Vector3(3.1, 0, 7.7), new Vector3(4.4, 0, 8.6)]
+export const TOWN_GATE_X = GEO_TOWN_GATE_X
+/** south gate in the picket fence (stand path + customer route). Belongs to
+ * the FENCE — it must not follow the stand when the stand moves. */
+export const GATE_SOUTH_X = SOUTH_GATE.center
+/** the CURRENT layout, bound by main after the save loads and re-bound on
+ * every relayout — scenery's ground art and exclusion zones read this */
+let LV: LayoutView = { ...DEFAULT_PLACES }
+export function bindLayout(lv: LayoutView): void {
+  LV = lv
+  rebuildPaths()
+}
+/** customers queue beside the stand's east edge — offsets from the stand */
+const QUEUE_OFFSETS: Array<[number, number]> = [
+  [2.6, 0.7],
+  [3.9, 1.6],
+]
 /** Where selling happens RIGHT NOW. Customer.ts and main.ts read MARKET
  * every frame (queue targets + serve range), so mutating it live-moves the
  * market with no rewiring. Boots at the roadside stand; the Farm Shop
- * completion calls marketToShop() to flip it across the road. STAND_POS and
- * QUEUE_SPOTS above stay frozen for legacy consumers. */
+ * completion calls marketToShop() to flip it across the road; moving the
+ * stand calls marketToStand() the same way. */
 export const MARKET = {
   pos: STAND_POS.clone(),
-  spots: QUEUE_SPOTS.map((s) => s.clone()),
+  spots: QUEUE_OFFSETS.map(([dx, dz]) => new Vector3(STAND_POS.x + dx, 0, STAND_POS.z + dz)),
   atShop: false,
+}
+/** the stand is the counter: serving + queue ride wherever it stands */
+export function marketToStand(place: Place): void {
+  MARKET.atShop = false
+  MARKET.pos.set(place.x, 0, place.z)
+  MARKET.spots = QUEUE_OFFSETS.map(([dx, dz]) => new Vector3(place.x + dx, 0, place.z + dz))
 }
 /** Farm Shop built: serving crosses the road. The counter point sits between
  * the shop's north face and the road (site z − 1.9), and three queue spots
  * line up on the road's south shoulder (site z − 2.4) so customers wait
  * facing the shop while the player walks over to serve them. */
-export function marketToShop(site: [number, number]): void {
+export function marketToShop(place: Place): void {
   MARKET.atShop = true
-  MARKET.pos.set(site[0], 0, site[1] - 1.9)
+  MARKET.pos.set(place.x, 0, place.z - 1.9)
   MARKET.spots = [
-    new Vector3(site[0] - 1.3, 0, site[1] - 2.4),
-    new Vector3(site[0], 0, site[1] - 2.4),
-    new Vector3(site[0] + 1.3, 0, site[1] - 2.4),
+    new Vector3(place.x - 1.3, 0, place.z - 2.4),
+    new Vector3(place.x, 0, place.z - 2.4),
+    new Vector3(place.x + 1.3, 0, place.z - 2.4),
   ]
 }
 // east fields run to the x=20.6 fence and the shop now sits ACROSS the road at z 15.6 — the player must reach both
-export const WORLD_BOUNDS = { minX: -19, maxX: 22, minZ: -13, maxZ: 18.5 }
+export const WORLD_BOUNDS = GEO_WORLD_BOUNDS
 
 const GROUND_SIZE = 96
 const GROUND_BASE = '#6f9e4a'
@@ -89,22 +116,31 @@ export const OCCLUDERS: Object3D[] = []
 
 // ---- exclusion zones (shared by grass + forest placement) --------------------
 
-const PATHS: Array<Array<[number, number]>> = [
-  [
-    [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
-    [STAND_POS.x - 0.2, STAND_POS.z - 0.6],
-    [STAND_POS.x + 0.3, ROAD_Z - 1.2],
-  ],
-  [
-    [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
-    [1.4, 2.4],
-    [3, 2],
-  ],
-  [
-    [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
-    [NEST_POS.x + 1.2, NEST_POS.z + 1],
-  ],
-]
+/** worn footpaths: spawn -> the CURRENT stand -> the fence gate; spawn ->
+ * yard; spawn -> nest. Rebuilt whenever the layout binds (the stand leg
+ * follows a moved stand; the gate leg aims at the FENCE gate, which is
+ * fixed). */
+let PATHS: Array<Array<[number, number]>> = []
+function rebuildPaths(): void {
+  const st = LV.stand
+  PATHS = [
+    [
+      [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
+      [st.x - 0.2, st.z - 0.6],
+      [GATE_SOUTH_X, ROAD_Z - 1.2],
+    ],
+    [
+      [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
+      [1.4, 2.4],
+      [3, 2],
+    ],
+    [
+      [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
+      [NEST_POS.x + 1.2, NEST_POS.z + 1],
+    ],
+  ]
+}
+rebuildPaths()
 
 function distToSeg(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
   const dx = bx - ax
@@ -125,20 +161,22 @@ function nearPath(x: number, z: number, r: number): boolean {
 export function groundClear(x: number, z: number): boolean {
   if (Math.abs(z - ROAD_Z) < 2.4) return true
   for (const f of allFieldRects()) if (inRect(x, z, f, 0.35)) return true
-  // every FUTURE building site stays clear from day one — nothing may ever
-  // be built on top of a tree, a bush, or through the lawn (owner's rule:
-  // the ground is ready before the crew arrives)
-  for (const p of PROJECTS) {
-    if (p.kind !== 'building') continue
+  // every building site — at its CURRENT layout position — stays clear
+  // (owner's rule: the ground is ready before the crew arrives)
+  for (const id of PLACE_IDS) {
+    if (id === 'tractor' || id === 'farmhand') continue // they stand ON the lawn
+    const pl = LV[id]
+    const fp = footprintOf(id)
     if (
-      x > p.site[0] - p.footprint.w / 2 - 0.4 &&
-      x < p.site[0] + p.footprint.w / 2 + 0.4 &&
-      z > p.site[1] - p.footprint.d / 2 - 0.4 &&
-      z < p.site[1] + p.footprint.d / 2 + 0.4
+      x > pl.x - fp.w / 2 - 0.4 &&
+      x < pl.x + fp.w / 2 + 0.4 &&
+      z > pl.z - fp.d / 2 - 0.4 &&
+      z < pl.z + fp.d / 2 + 0.4
     )
       return true
   }
-  if (x > -2.4 && x < 3.2 && z > 5.3 && z < 9.2) return true // stand + queue
+  const st = LV.stand
+  if (x > st.x - 2.9 && x < st.x + 2.7 && z > st.z - 1.7 && z < st.z + 2.2) return true // stand + queue
   const bx = BARN_POS.x + 1.5
   const bz = BARN_POS.z + 2.5
   if (((x - bx) / 4.2) ** 2 + ((z - bz) / 2.8) ** 2 < 1) return true // barn yard
@@ -257,9 +295,9 @@ function painter(canvas: HTMLCanvasElement): WorldPainter {
   }
 }
 
-function paintGround(rng: Rng): HTMLCanvasElement {
-  const c = document.createElement('canvas')
-  c.width = c.height = 2048
+function paintGround(rng: Rng, into?: HTMLCanvasElement): HTMLCanvasElement {
+  const c = into ?? document.createElement('canvas')
+  c.width = c.height = 2048 // re-assigning also clears on repaint
   const p = painter(c)
   const g = p.ctx
 
@@ -342,13 +380,14 @@ function paintGround(rng: Rng): HTMLCanvasElement {
 
   // worn-dirt apron at the farm-shop lot + a short trodden stub to the road
   // edge — same layered irregular language as the stand path above, but in
-  // road browns (bare churned dirt, not trodden grass). Derived from PROJECTS
-  // so the art tracks the shop site; painted only once the lot sits SOUTH of
-  // the road (the across-the-road layout) so the old site never gets a smear
-  const shop = PROJECTS.find((pr) => pr.id === 'shop')
-  if (shop && shop.site[1] > ROAD_Z) {
-    const [sx, sz] = shop.site
-    const frontZ = sz - shop.footprint.d / 2
+  // road browns (bare churned dirt, not trodden grass). Derived from the
+  // LAYOUT so the art tracks a moved shop; painted only while the shop sits
+  // SOUTH of the road so a moved-north shop never gets a road smear
+  const shopPl = LV.shop
+  if (shopPl.z > ROAD_Z) {
+    const sx = shopPl.x
+    const sz = shopPl.z
+    const frontZ = sz - footprintOf('shop').d / 2
     g.fillStyle = '#b69465'
     for (let i = 0; i < 9; i++) {
       g.globalAlpha = 0.09 + rng.next() * 0.1
@@ -437,8 +476,22 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
   g.closePath()
 }
 
+let groundCanvas: HTMLCanvasElement | null = null
+let groundTex: CanvasTexture | null = null
+
+/** repaint the macro ground in place (a moved building takes its worn dirt
+ * with it) — one-off canvas redraw + texture upload, fired at placement
+ * commit while the landing squash hides the hitch */
+export function repaintGround(): void {
+  if (!groundCanvas || !groundTex) return
+  paintGround(mulberry32(20260610), groundCanvas)
+  groundTex.needsUpdate = true
+}
+
 export function buildGround(scene: Scene): void {
-  const tex = new CanvasTexture(paintGround(mulberry32(20260610)))
+  groundCanvas = paintGround(mulberry32(20260610))
+  const tex = new CanvasTexture(groundCanvas)
+  groundTex = tex
   tex.colorSpace = SRGBColorSpace
   tex.anisotropy = 8
   // crisp tiling grain layered over the painted macro: the lawn stays
@@ -945,9 +998,12 @@ function buildTownGate(scene: Scene): void {
 // ---- roadside stand -----------------------------------------------------------------
 
 /** the humble roadside stand — returns its group so the Farm Shop project
- * can sweep it away when the real building goes up */
+ * can sweep it away when the real building goes up. Built ROOT-RELATIVE so
+ * the whole stand (crates, awning, queue art) moves as one piece; the root
+ * sits at the CURRENT layout place. */
 export function buildStand(scene: Scene, assets: Assets): Group {
   const root = new Group()
+  root.position.set(LV.stand.x, 0, LV.stand.z)
   scene.add(root)
   const place = (key: ModelKey, x: number, z: number, rot = 0, scale = 1, y = 0): Group => {
     const g = assets.spawn(key)
@@ -957,14 +1013,14 @@ export function buildStand(scene: Scene, assets: Assets): Group {
     root.add(g)
     return g
   }
-  place('boxLarge', STAND_POS.x, STAND_POS.z, 0, 2.4)
-  place('box', STAND_POS.x - 1.3, STAND_POS.z + 0.3, 0.4, 1.8)
-  place('barrel', STAND_POS.x + 1.4, STAND_POS.z + 0.1, 0, 1.8)
-  place('signpost', STAND_POS.x + 2.3, STAND_POS.z + 1.5, -0.6, 1.6)
-  place('egg', STAND_POS.x - 0.35, STAND_POS.z - 0.05, 0, 1.4, 1.06)
-  place('egg', STAND_POS.x - 0.12, STAND_POS.z + 0.22, 0.8, 1.4, 1.06)
-  place('cornItem', STAND_POS.x + 0.42, STAND_POS.z + 0.1, 0.4, 2.6, 1.06)
-  place('pumpkinItem', STAND_POS.x - 1.3, STAND_POS.z + 0.3, 0, 2.6, 0.84)
+  place('boxLarge', 0, 0, 0, 2.4)
+  place('box', -1.3, 0.3, 0.4, 1.8)
+  place('barrel', 1.4, 0.1, 0, 1.8)
+  place('signpost', 2.3, 1.5, -0.6, 1.6)
+  place('egg', -0.35, -0.05, 0, 1.4, 1.06)
+  place('egg', -0.12, 0.22, 0.8, 1.4, 1.06)
+  place('cornItem', 0.42, 0.1, 0.4, 2.6, 1.06)
+  place('pumpkinItem', -1.3, 0.3, 0, 2.6, 0.84)
 
   // striped awning (canvas texture) + posts
   const c = document.createElement('canvas')
@@ -982,7 +1038,7 @@ export function buildStand(scene: Scene, assets: Assets): Group {
     const pitch = new Mesh(new PlaneGeometry(3.8, 1.35, 8, 1), awningMat)
     const ap = pitch.geometry.getAttribute('position')
     for (let i = 0; i < ap.count; i++) if (ap.getY(i) < -0.6) ap.setY(i, -0.72 + (i % 2) * 0.06)
-    pitch.position.set(STAND_POS.x, 2.42, STAND_POS.z + 0.15 + dir * 0.58)
+    pitch.position.set(0, 2.42, 0.15 + dir * 0.58)
     pitch.rotation.x = -Math.PI / 2 + dir * 0.5
     pitch.castShadow = true
     root.add(pitch)
@@ -990,7 +1046,7 @@ export function buildStand(scene: Scene, assets: Assets): Group {
   const postGeos: BufferGeometry[] = []
   for (const [px, pz] of [[-1.6, -0.7], [1.6, -0.7], [-1.6, 1.0], [1.6, 1.0]] as Array<[number, number]>) {
     const p = new CylinderGeometry(0.055, 0.07, 2.5, 8)
-    p.translate(STAND_POS.x + px, 1.25, STAND_POS.z + pz)
+    p.translate(px, 1.25, pz)
     postGeos.push(p)
   }
   const posts = new Mesh(mergeGeometries(postGeos)!, new MeshStandardMaterial({ color: '#9a6b3f', roughness: 1 }))

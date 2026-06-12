@@ -28,6 +28,12 @@ import { mulberry32 } from '../game/rng'
 
 export interface GrassField {
   update(t: number): void
+  /** zero-scale every blade inside the rect — the cheap commit-time pass
+   * when a building lands on lawn (full re-scatter waits for the night) */
+  hideIn(rect: { x0: number; z0: number; x1: number; z1: number }): void
+  /** re-run placement against the CURRENT exclusion predicate (same seed,
+   * same look) — fired behind the sleep ritual's dip to black */
+  rebuild(): void
 }
 
 /** blade root width in object space (instances scale it 0.7..1.6) — fine
@@ -82,8 +88,6 @@ function bladeGeometry(): BufferGeometry {
 }
 
 export function buildGrass(scene: Scene, isClear: (x: number, z: number) => boolean): GrassField {
-  const rng = mulberry32(48151623)
-
   // phones get a thinner field; each blade is only 8 tris so even the
   // desktop count is lighter per pixel than the old alpha-cutout cards
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
@@ -152,6 +156,10 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   const up = new Vector3(0, 1, 0)
   const side = new Vector3(1, 0, 0)
   const col = new Color()
+  /** per-instance world x,z — the commit-time hide pass needs them */
+  const bladeAt = new Float32Array(COUNT * 2)
+  const scatter = (): number => {
+  const rng = mulberry32(48151623)
   let placed = 0
   let attempts = 0
   while (placed < COUNT && attempts < COUNT * 10) {
@@ -193,6 +201,8 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
       scl.set(sw, hy, hy)
       m.compose(pos, quat, scl)
       mesh.setMatrixAt(placed, m)
+      bladeAt[placed * 2] = x
+      bladeAt[placed * 2 + 1] = z
       col.setHSL(
         ch + (rng.next() - 0.5) * 0.01,
         cs + (rng.next() - 0.5) * 0.06,
@@ -203,11 +213,30 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
     }
   }
   mesh.count = placed
+  mesh.instanceMatrix.needsUpdate = true
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  return placed
+  }
+  scatter()
   scene.add(mesh)
 
+  const zero = new Matrix4().makeScale(0, 0, 0)
   return {
     update(t: number): void {
       if (timeU) timeU.value = t
+    },
+    hideIn(rect): void {
+      for (let i = 0; i < mesh.count; i++) {
+        const x = bladeAt[i * 2]
+        const z = bladeAt[i * 2 + 1]
+        if (x > rect.x0 && x < rect.x1 && z > rect.z0 && z < rect.z1) {
+          mesh.setMatrixAt(i, zero)
+        }
+      }
+      mesh.instanceMatrix.needsUpdate = true
+    },
+    rebuild(): void {
+      scatter()
     },
   }
 }
