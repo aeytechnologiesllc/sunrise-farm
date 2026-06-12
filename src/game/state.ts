@@ -91,6 +91,8 @@ export interface GameState {
   /** Hazel the delivery horse: hearts pay +1c each on LIVE returns. Named
    * `hazel`, not `horse` — projects.horse is her purchase flag. */
   hazel: { hearts: number; lastPetDay: string | null; lastFedDay: string | null }
+  /** the once-a-day hello inside the farmhouse (pure warmth, a dab of XP) */
+  familyGreetDay: string | null
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -130,6 +132,7 @@ export function initialState(seed: number): GameState {
     fences: ringEdges(0),
     coopFlock: foundingFlock((seed ^ 0xc00b) >>> 0),
     hazel: { hearts: 0, lastPetDay: null, lastFedDay: null },
+    familyGreetDay: null,
     chicken: {
       arrived: false,
       name: null,
@@ -224,6 +227,7 @@ export function deserialize(json: string | null): GameState | null {
     s.fences ??= ringEdges(clampTier(s.expansion ?? 0))
     // Hazel's affection arrived after the stable did — old saves start cold
     s.hazel ??= { hearts: 0, lastPetDay: null, lastFedDay: null }
+    s.familyGreetDay ??= null
     // henhouse migration: the founding four get boxes; a pending batch from
     // the OLD single-latch coop becomes ready boxes (nobody loses eggs)
     if (!s.coopFlock) {

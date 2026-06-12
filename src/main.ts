@@ -95,6 +95,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
+import { BARN_AT, BARN_ROT } from './game/geo'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
@@ -114,6 +115,7 @@ import { DayCycle } from './world/daycycle'
 import { FarmhandView } from './world/Farmhand'
 import { CoopInterior } from './world/coopInterior'
 import { STABLE_ANCHOR, StableInterior } from './world/stableInterior'
+import { FarmhouseInterior } from './world/farmhouseInterior'
 import { GreenhouseInterior } from './world/greenhouseInterior'
 import { Homestead } from './world/homestead'
 import { HomeInterior } from './world/interior'
@@ -133,7 +135,7 @@ const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Da
 
 /** every walk-in room (the registry in boot() holds each room's door,
  * bounds, camera volume and occluder shell) */
-type RoomId = 'gh' | 'coop' | 'stable'
+type RoomId = 'gh' | 'coop' | 'stable' | 'home'
 const PLACE_NAMES: Record<PlaceId, string> = {
   stand: 'the Stand',
   shop: 'the Shop',
@@ -314,6 +316,8 @@ async function boot(): Promise<void> {
   const coopInterior = new CoopInterior(scene)
   // the STABLE hall — Hazel's house; her stall mirrors the delivery state
   const stableInterior = new StableInterior(scene, assets)
+  // the FARMHOUSE by day — the family's room, the dusk supper untouched
+  const farmhouseInterior = new FarmhouseInterior(scene, assets)
   /** which walk-in room the player is inside (null = out on the farm).
    * ANY-room gates read `room !== null`, room-specific verbs read
    * `room === 'coop'` — a new room inherits every gate for free. */
@@ -1541,6 +1545,8 @@ async function boot(): Promise<void> {
     wing: false,
     /** inside the stable: at Hazel's stall gate */
     stall: false,
+    /** inside the farmhouse: close to the wife or the kiddo */
+    family: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -1560,9 +1566,16 @@ async function boot(): Promise<void> {
     }
     /** opaque rooms hide the farm's heavy roots + pull both camera planes in */
     opaque: boolean
-    /** may this door fire at all? (project ownership) */
+    /** may this door be ENTERED right now? (ownership / time of day) —
+     * leaving is always allowed: a room you can't get out of breaks cozy */
     gate(): boolean
-    placeId: PlaceId
+    /** movable rooms derive their door from the layout... */
+    placeId?: PlaceId
+    /** ...fixed rooms (the family house) pin it here instead */
+    fixedDoor?: { x: number; z: number; yaw: number }
+    /** the real hinged door swings as you pass (the homestead's pivot) */
+    onDoorStart?(): void
+    onSwap?(enter: boolean): void
     /** the door bay's local-x offset on the front face (the stable's door
      * sits at −1.8, not centered) */
     doorLocalX: number
@@ -1628,18 +1641,41 @@ async function boot(): Promise<void> {
         if (game.hasProject('horse') && home) sfx.hooves()
       },
     },
+    home: {
+      interior: farmhouseInterior,
+      opaque: true,
+      // the dusk doorway belongs to supper (near.home claims it within
+      // 3.2u); by day the house is the family's — walk right in
+      gate: () => !dayCycle.atDusk && !sleepActive,
+      fixedDoor: { x: BARN_AT[0], z: BARN_AT[1], yaw: BARN_ROT },
+      doorLocalX: 0,
+      doorGap: 3.0,
+      exitGap: 4.2,
+      bounds: () => farmhouseInterior.bounds,
+      camInset: -0.1,
+      camMaxY: 2.45, // under the 2.9 joists — tightness coupling earns its keep
+      zoom: { min: 4.0, max: 7.0 },
+      door: { dir: new Vector3(), out: new Vector3(), exitSpot: new Vector3() },
+      // the REAL hinged door swings for you both directions and settles
+      // shut behind the black (the sleep timeline owns it at dusk, not now)
+      onDoorStart: () => homestead.openDoor(0.35),
+      onSwap: () => homestead.closeDoor(0.5),
+    },
   }
   const ROOM_IDS = Object.keys(ROOMS) as RoomId[]
   /** door triggers follow their building wherever the layout puts it */
+  const roomYaw = (def: RoomDef): number =>
+    def.fixedDoor ? def.fixedDoor.yaw : placeOf(state, def.placeId!).yaw
   const recomputeDoor = (id: RoomId): void => {
     const def = ROOMS[id]
-    const at = placeOf(state, def.placeId)
+    const at = def.fixedDoor ?? placeOf(state, def.placeId!)
+    const yaw = def.fixedDoor ? def.fixedDoor.yaw : (at as { yaw: number }).yaw
     const d = def.door
-    d.dir.set(Math.sin(at.yaw), 0, Math.cos(at.yaw))
+    d.dir.set(Math.sin(yaw), 0, Math.cos(yaw))
     // the bay may sit off-center on the front face: slide along the
     // building's local +x first, then step out through the face
-    const bx = at.x + Math.cos(at.yaw) * def.doorLocalX
-    const bz = at.z - Math.sin(at.yaw) * def.doorLocalX
+    const bx = at.x + Math.cos(yaw) * def.doorLocalX
+    const bz = at.z - Math.sin(yaw) * def.doorLocalX
     d.out.set(bx, 0, bz).addScaledVector(d.dir, def.doorGap)
     d.exitSpot.set(bx, 0, bz).addScaledVector(d.dir, def.exitGap)
   }
@@ -1795,9 +1831,11 @@ async function boot(): Promise<void> {
     fenceEditor.close() // editing ends at any interior door
     touch()
     sfx.crate() // the old hinge
+    ROOMS[which].onDoorStart?.()
     letterbox.fade(true, 0.22)
     gsap.delayedCall(0.26, () => {
       const def = ROOMS[which]
+      def.onSwap?.(enter)
       room = enter ? which : null
       for (const id of ROOM_IDS) {
         const r = ROOMS[id]
@@ -1841,7 +1879,7 @@ async function boot(): Promise<void> {
       // CUT the camera through the black — never fly it 170u across the map.
       // Walking in it faces up the aisle; walking out, back toward the farm.
       cam.snapTo(player.pos)
-      cam.yaw = enter ? 0 : Math.PI + placeOf(state, def.placeId).yaw
+      cam.yaw = enter ? 0 : Math.PI + roomYaw(def)
       letterbox.fade(false, 0.45)
       gsap.delayedCall(0.5, () => {
         roomBusy = false
@@ -1950,6 +1988,17 @@ async function boot(): Promise<void> {
           heartBurst(scene, HAZEL_MUZZLE)
           sfx.heart()
         }
+        saveNow()
+      }
+    } else if (id === 'hug' && room === 'home' && near.family) {
+      if (game.greetFamily()) {
+        const at = player.pos.distanceTo(farmhouseInterior.kidPos) < player.pos.distanceTo(farmhouseInterior.wifePos)
+          ? farmhouseInterior.kidPos
+          : farmhouseInterior.wifePos
+        heartBurst(scene, at.clone().setY(1.3))
+        sfx.heart()
+        player.gesture(engine.uTime.value)
+        hud.showBanner('Family time \u{1F49B}', 'the best part of any day')
         saveNow()
       }
     } else if (id === 'milk' && near.pen) {
@@ -2237,8 +2286,9 @@ async function boot(): Promise<void> {
       if (!construction.active && !fetchCine && !carry.carrying) {
         for (const id of ROOM_IDS) {
           const def = ROOMS[id]
-          if (!def.gate()) continue
           if (room === null) {
+            // gate() guards ENTERING only — leaving is always allowed
+            if (!def.gate()) continue
             const inward = player.vel.x * def.door.dir.x + player.vel.z * def.door.dir.z
             if (p.distanceTo(def.door.out) < 0.95 && inward < -0.4) {
               throughDoor(id, true)
@@ -2273,6 +2323,10 @@ async function boot(): Promise<void> {
         near.wing = state.coopFlock.tier < MAX_COOP_TIER && p.distanceTo(coopInterior.wingBoardPos[state.coopFlock.tier]) < 2.4
       }
       near.stall = room === 'stable' && !roomBusy && p.distanceTo(STALL_GATE) < 2.1
+      near.family =
+        room === 'home' &&
+        !roomBusy &&
+        (p.distanceTo(farmhouseInterior.wifePos) < 1.9 || p.distanceTo(farmhouseInterior.kidPos) < 1.9)
       near.fence = nearestEdge(fences, p.x, p.z, 1.7)
       // nearest building you could pick up (fallback button + discoverability)
       near.movable = null
@@ -2407,6 +2461,14 @@ async function boot(): Promise<void> {
           label: 'A scoop of oats',
           sub: state.wheat >= 1 ? 'hearts pay +1c on her runs' : 'grow 1 wheat first',
           locked: state.wheat < 1,
+        })
+      }
+      if (room === 'home' && near.family && game.canGreetFamily()) {
+        actions.push({
+          id: 'hug',
+          emoji: '\u{1F49B}',
+          label: 'Say hello',
+          sub: 'family time — once a day',
         })
       }
       if (near.emptyPlot >= 0) {
@@ -2752,6 +2814,7 @@ async function boot(): Promise<void> {
     ghInterior.update(dt)
     coopInterior.update(dt)
     stableInterior.update(dt)
+    farmhouseInterior.update(dt)
     carry.frame(dt)
     hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)

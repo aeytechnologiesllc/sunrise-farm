@@ -326,6 +326,18 @@ export class Game {
     return true
   }
 
+  /** the once-a-day hello at home — no coins, a dab of XP; love is free */
+  canGreetFamily(): boolean {
+    return this.state.familyGreetDay !== this.todayFn()
+  }
+
+  greetFamily(): boolean {
+    if (!this.canGreetFamily()) return false
+    this.state.familyGreetDay = this.todayFn()
+    this.grantXp(XP_GAIN.pet)
+    return true
+  }
+
   /** a scoop of oats (costs 1 wheat) — pure affection; the first scoop of
    * the day also warms a heart. Only while she's HOME (cozy law: no
    * feeding an empty stall, no stacking hearts by spamming) */
