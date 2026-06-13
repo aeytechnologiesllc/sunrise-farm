@@ -5,7 +5,7 @@ import type { Contract, FestivalOrder } from './contracts'
 import type { DecorPlacement } from './decor'
 import { ringEdges, type FenceState, type FenceStyle } from './fence'
 import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
-import { WORLD_BOUNDS } from './geo'
+import { WORLD_BOUNDS, worldMaxX } from './geo'
 import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
 import { greenhouseBeds, type UpgradeId } from './upgrades'
@@ -293,7 +293,7 @@ export function deserialize(json: string | null): GameState | null {
       if (
         !pl ||
         pl.x < WORLD_BOUNDS.minX + 1 ||
-        pl.x > WORLD_BOUNDS.maxX - 1 ||
+        pl.x > worldMaxX(s.fieldParcels) - 1 ||
         pl.z < WORLD_BOUNDS.minZ + 1 ||
         pl.z > WORLD_BOUNDS.maxZ - 1
       ) {

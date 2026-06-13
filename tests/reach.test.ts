@@ -1,7 +1,7 @@
 /** Reachability pins: nothing places beyond the walkable world, and saves
  * that already stranded something get rescued on load. */
 import { describe, expect, it } from 'vitest'
-import { WORLD_BOUNDS } from '../src/game/geo'
+import { WORLD_BOUNDS, worldMaxX } from '../src/game/geo'
 import { canPlace } from '../src/game/layout'
 import { deserialize, initialState, serialize } from '../src/game/state'
 
@@ -35,5 +35,19 @@ describe('the stranded-save rescue', () => {
     const back = deserialize(serialize(s))!
     expect(back.layout.field0).toBeUndefined()
     expect(back.layout.stand).toEqual({ x: 4, z: 8 })
+  })
+
+  it('keeps an object parked east of the OLD static bound once the world grew there', () => {
+    // The rescue must track the live east edge, not the frozen WORLD_BOUNDS.maxX.
+    // With fieldParcels >= 3 the walkable world reaches worldMaxX(3) (~26.8), so a
+    // tractor parked at x=23 — legal, but east of the old static 21 — must survive
+    // a reload instead of being silently evicted back to its authored home.
+    const s = initialState(7)
+    s.fieldParcels = 3
+    const eastX = WORLD_BOUNDS.maxX + 2 // 23: past the old guard, inside the grown world
+    expect(eastX).toBeLessThan(worldMaxX(s.fieldParcels) - 1)
+    s.layout = { tractor: { x: eastX, z: 2 } }
+    const back = deserialize(serialize(s))!
+    expect(back.layout.tractor).toEqual({ x: eastX, z: 2 })
   })
 })
