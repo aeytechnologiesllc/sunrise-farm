@@ -1,6 +1,6 @@
 /** DOM HUD: coins odometer + fountain, wheat pouch, XP bar, contextual chip,
  * proximity action buttons, customer want bubbles, naming card, level banner,
- * countdown ring, nest pip, name tag, floating toasts.
+ * countdown ring, nest pip, name tag, floating toasts, card panel modal.
  * Purely presentational — game state is the single source of truth and the
  * displayed coin count self-heals toward it (never gated on tweens). */
 import gsap from 'gsap'
@@ -152,6 +152,48 @@ const CSS = `
   #fsbtn{width:34px;height:34px;font-size:14px;top:calc(max(6px,env(safe-area-inset-top)) + 42px)}
   .bubble{font-size:13px;padding:5px 10px}
 }
+#cardpanel-veil{position:absolute;inset:0;background:rgba(20,14,6,.5);
+  pointer-events:auto;display:flex;align-items:center;justify-content:center;opacity:0}
+#cardpanel-col{background:#fffcf0;border-radius:22px;padding:22px 20px 18px;
+  width:min(360px,88vw);box-shadow:0 12px 40px rgba(40,25,0,.45);
+  transform:scale(.9);position:relative}
+#cardpanel-head{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:14px}
+#cardpanel-head h2{margin:0;font-size:20px;color:#5d3a00;
+  font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif}
+#cardpanel-close{border:none;background:none;font-size:19px;color:#8a7a5a;
+  cursor:pointer;padding:2px 6px;line-height:1;font-family:inherit;touch-action:manipulation}
+#cardpanel-close:active{transform:scale(.9)}
+#cardpanel-list{max-height:70vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.cpcard{display:flex;align-items:center;gap:11px;background:rgba(255,252,240,.96);
+  border:1.5px solid #e8dfc8;border-radius:14px;padding:10px 12px;cursor:pointer;
+  touch-action:manipulation;position:relative;transition:background .12s}
+.cpcard:active{background:#f5eed8}
+.cpcard.cplocked{opacity:.55}
+.cpcard .cpe{font-size:24px;line-height:1;flex-shrink:0}
+.cpcard .cpbody{flex:1;min-width:0}
+.cpcard .cptitle{font-weight:800;font-size:15px;color:#3a2d1e;
+  font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.cpcard .cpsub{font-size:12px;font-weight:700;color:#8a7a5a;margin-top:1px}
+.cpcard .cpprice{flex-shrink:0;background:rgba(245,185,22,.18);border-radius:999px;
+  padding:3px 9px;font-size:13px;font-weight:800;color:#7a5c1e;white-space:nowrap;
+  align-self:flex-start;margin-top:1px}
+.cpcard .cplock{font-size:13px;position:absolute;top:7px;right:9px;opacity:.7}
+.cpbar{height:5px;border-radius:3px;background:#e4dcc8;margin-top:7px;overflow:hidden}
+.cpbar-fill{height:100%;border-radius:3px;background:#7ec850}
+@media (max-height: 500px){
+  #cardpanel-col{padding:12px 13px 10px;border-radius:16px}
+  #cardpanel-head{margin-bottom:8px}
+  #cardpanel-head h2{font-size:15px}
+  #cardpanel-list{max-height:62vh;gap:6px}
+  .cpcard{padding:7px 9px;border-radius:10px;gap:8px}
+  .cpcard .cpe{font-size:18px}
+  .cpcard .cptitle{font-size:12px}
+  .cpcard .cpsub{font-size:10px}
+  .cpcard .cpprice{font-size:11px;padding:2px 7px}
+  .cpbar{height:4px;margin-top:5px}
+}
 `
 
 /** big one-tap context button shown above the right thumb */
@@ -161,6 +203,20 @@ export interface ActionDef {
   label: string
   sub?: string
   locked?: boolean
+}
+
+/** one card in the showCardPanel modal list */
+export interface CardDef {
+  id: string
+  emoji: string
+  title: string
+  sub: string
+  /** 0..1 — draws a fill bar under the card row when present */
+  progress?: number
+  /** dims the card + shows a 🔒; still tappable so caller can explain */
+  locked?: boolean
+  /** optional right-aligned price chip, e.g. "600c" */
+  price?: string
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -223,6 +279,7 @@ export class Hud {
   private onAction: ((id: string) => void) | null = null
   private bubbles: HTMLDivElement[] = []
   private nameVeil: HTMLDivElement | null = null
+  private cardPanelVeil: HTMLDivElement | null = null
   private ring: HTMLDivElement
   private ringArc: SVGCircleElement
   private ringSec: HTMLDivElement
@@ -638,7 +695,135 @@ export class Hud {
   }
 
   get modalOpen(): boolean {
-    return this.nameVeil !== null
+    return this.nameVeil !== null || this.cardPanelVeil !== null
+  }
+
+  // ---- card panel modal -------------------------------------------------
+
+  /** Show a scrollable list of tappable cards in a cream modal column.
+   * While open, modalOpen returns true — the same guard that showNameCard uses
+   * so the game suppresses chips and world taps. Tapping outside the column
+   * or the ✕ button calls hideCardPanel(). */
+  showCardPanel(title: string, cards: CardDef[], onTap?: (id: string) => void): void {
+    this.hideCardPanel()
+
+    const veil = document.createElement('div')
+    veil.id = 'cardpanel-veil'
+
+    const col = document.createElement('div')
+    col.id = 'cardpanel-col'
+
+    const head = document.createElement('div')
+    head.id = 'cardpanel-head'
+
+    const h2 = document.createElement('h2')
+    h2.textContent = title
+
+    const closeBtn = document.createElement('button')
+    closeBtn.id = 'cardpanel-close'
+    closeBtn.textContent = '✕'
+    closeBtn.setAttribute('aria-label', 'Close')
+
+    head.append(h2, closeBtn)
+
+    const list = document.createElement('div')
+    list.id = 'cardpanel-list'
+
+    for (const card of cards) {
+      const row = document.createElement('div')
+      row.className = card.locked ? 'cpcard cplocked' : 'cpcard'
+
+      const em = document.createElement('span')
+      em.className = 'cpe'
+      em.textContent = card.emoji
+
+      const body = document.createElement('div')
+      body.className = 'cpbody'
+
+      const tspan = document.createElement('div')
+      tspan.className = 'cptitle'
+      tspan.textContent = card.title
+
+      const sspan = document.createElement('div')
+      sspan.className = 'cpsub'
+      sspan.textContent = card.sub
+
+      body.append(tspan, sspan)
+
+      if (card.progress !== undefined) {
+        const bar = document.createElement('div')
+        bar.className = 'cpbar'
+        const fill = document.createElement('div')
+        fill.className = 'cpbar-fill'
+        fill.style.width = `${Math.min(100, Math.max(0, card.progress * 100))}%`
+        bar.appendChild(fill)
+        body.appendChild(bar)
+      }
+
+      row.append(em, body)
+
+      if (card.price) {
+        const price = document.createElement('span')
+        price.className = 'cpprice'
+        price.textContent = card.price
+        row.appendChild(price)
+      }
+
+      if (card.locked) {
+        const lock = document.createElement('span')
+        lock.className = 'cplock'
+        lock.textContent = '🔒'
+        row.appendChild(lock)
+      }
+
+      const handleTap = (e: Event): void => {
+        e.stopPropagation()
+        onTap?.(card.id)
+      }
+      row.addEventListener('pointerdown', handleTap)
+
+      list.appendChild(row)
+    }
+
+    col.append(head, list)
+    veil.appendChild(col)
+    this.root.appendChild(veil)
+    this.cardPanelVeil = veil
+
+    // close on veil tap (outside column) — stop propagation on col itself
+    const onVeilDown = (e: Event): void => {
+      if (e.target === veil) this.hideCardPanel()
+    }
+    veil.addEventListener('pointerdown', onVeilDown)
+
+    const onClose = (): void => {
+      this.hideCardPanel()
+    }
+    closeBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+      onClose()
+    })
+
+    // store refs for cleanup
+    ;(veil as HTMLDivElement & { _cleanup: () => void })._cleanup = () => {
+      veil.removeEventListener('pointerdown', onVeilDown)
+    }
+
+    gsap.to(veil, { opacity: 1, duration: 0.25, ease: 'power2.out' })
+    gsap.to(col, { scale: 1, duration: 0.25, ease: 'back.out(1.8)' })
+  }
+
+  hideCardPanel(): void {
+    const veil = this.cardPanelVeil
+    if (!veil) return
+    this.cardPanelVeil = null
+    ;(veil as HTMLDivElement & { _cleanup?: () => void })._cleanup?.()
+    gsap.to(veil, {
+      opacity: 0,
+      duration: 0.2,
+      ease: 'power2.in',
+      onComplete: () => veil.remove(),
+    })
   }
 
   // ---- projected widgets (positioned every frame from world space) -------

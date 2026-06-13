@@ -836,6 +836,192 @@ export function buildDeedSign(title: string, cost: number, header = 'FOR SALE', 
   return group
 }
 
+// ---- Millbrook order board ----------------------------------------------------------
+
+/** A corkboard on two short wooden posts — ORDERS header plank + three pinned
+ * paper notes with faint ruled lines and thumbtack dots. Warm wood + cork-brown
+ * + cream paper. Merges to 4 draw calls (posts+frame wood, cork panel,
+ * paper notes, thumbtacks). Return the Group; caller positions & rotates it.
+ * Dimensions: ~1.6 w × 1.0 h panel face, posts ~0.9 tall. */
+export function buildOrderBoard(): Group {
+  const group = new Group()
+
+  // --- material 1: wood (posts + frame) ---
+  const woodRng = mulberry32(77331)
+  const woodTex = toTexture(woodCanvas(woodRng, '#8a6a42'), true)
+  const woodMat = new MeshStandardMaterial({ map: woodTex, roughness: 0.95 })
+
+  // two short posts
+  const postGeos: BufferGeometry[] = []
+  for (const sx of [-0.64, 0.64]) {
+    const post = new BoxGeometry(0.1, 0.9, 0.1)
+    post.translate(sx, 0.45, 0)
+    postGeos.push(post)
+  }
+  // thin outer frame around the cork panel (four planks)
+  const frameW = 1.68
+  const frameH = 1.04
+  const fT = 0.06   // frame thickness
+  const fD = 0.05   // frame depth
+  const fy = 1.08   // panel center y (posts go 0.9, panel sits slightly above)
+  // top rail
+  const ftop = new BoxGeometry(frameW, fT, fD)
+  ftop.translate(0, fy + frameH / 2, 0)
+  postGeos.push(ftop)
+  // bottom rail
+  const fbot = new BoxGeometry(frameW, fT, fD)
+  fbot.translate(0, fy - frameH / 2, 0)
+  postGeos.push(fbot)
+  // left stile
+  const fleft = new BoxGeometry(fT, frameH + fT, fD)
+  fleft.translate(-frameW / 2, fy, 0)
+  postGeos.push(fleft)
+  // right stile
+  const fright = new BoxGeometry(fT, frameH + fT, fD)
+  fright.translate(frameW / 2, fy, 0)
+  postGeos.push(fright)
+  // header plank strip at the top (narrower, slightly proud)
+  const hplank = new BoxGeometry(1.2, 0.17, 0.055)
+  hplank.translate(0, fy + frameH / 2 + 0.025, 0.005)
+  postGeos.push(hplank)
+
+  const woodMerged = mergeGeometries(postGeos)
+  if (woodMerged) {
+    const woodMesh = new Mesh(woodMerged, woodMat)
+    woodMesh.castShadow = true
+    woodMesh.receiveShadow = true
+    group.add(woodMesh)
+  }
+
+  // --- material 2: cork panel (canvas-textured) ---
+  const corkCanvas = document.createElement('canvas')
+  corkCanvas.width = 256
+  corkCanvas.height = 160
+  const cg = corkCanvas.getContext('2d')!
+  // cork base — warm tan with irregular lighter streaks
+  cg.fillStyle = '#b5895a'
+  cg.fillRect(0, 0, 256, 160)
+  // grain streaks
+  for (let i = 0; i < 80; i++) {
+    const x = (i / 80) * 256 + (((i * 37) % 17) - 8.5)
+    cg.strokeStyle = i % 3 === 0 ? 'rgba(90,62,30,0.25)' : 'rgba(200,160,90,0.18)'
+    cg.lineWidth = 0.7 + (i % 4) * 0.4
+    cg.beginPath()
+    cg.moveTo(x, 0)
+    cg.bezierCurveTo(x + 12, 54, x - 8, 106, x + 6, 160)
+    cg.stroke()
+  }
+  // "ORDERS" text on header strip area (top ~20% of the cork canvas maps to the header plank)
+  cg.fillStyle = '#f2ead6'
+  cg.font = '800 28px Trebuchet MS, sans-serif'
+  cg.textAlign = 'center'
+  cg.fillText('ORDERS', 128, 36)
+  const corkTex = new CanvasTexture(corkCanvas)
+  corkTex.colorSpace = SRGBColorSpace
+
+  const corkMesh = new Mesh(
+    new BoxGeometry(frameW - fT * 2, frameH - fT * 2, 0.03),
+    new MeshStandardMaterial({ map: corkTex, roughness: 0.98 }),
+  )
+  corkMesh.position.set(0, fy, -0.01)
+  corkMesh.receiveShadow = true
+  group.add(corkMesh)
+
+  // --- material 3: paper notes (canvas-textured, three notes merged) ---
+  const noteCanvas = document.createElement('canvas')
+  noteCanvas.width = 256
+  noteCanvas.height = 192
+  const ng = noteCanvas.getContext('2d')!
+  // cream paper background for all three notes packed in the atlas
+  // Each note occupies one third of the atlas height (64px each)
+  const noteData = [
+    { y: 0,   lines: 3 },
+    { y: 64,  lines: 4 },
+    { y: 128, lines: 3 },
+  ]
+  for (const nd of noteData) {
+    ng.fillStyle = '#fdf8ee'
+    ng.fillRect(4, nd.y + 4, 248, 56)
+    // faint ruled lines
+    ng.strokeStyle = 'rgba(180,160,120,0.45)'
+    ng.lineWidth = 1
+    for (let l = 0; l < nd.lines; l++) {
+      const ly = nd.y + 16 + l * 13
+      ng.beginPath()
+      ng.moveTo(16, ly)
+      ng.lineTo(240, ly)
+      ng.stroke()
+    }
+    // left margin pink rule
+    ng.strokeStyle = 'rgba(220,130,130,0.4)'
+    ng.lineWidth = 1.2
+    ng.beginPath()
+    ng.moveTo(28, nd.y + 4)
+    ng.lineTo(28, nd.y + 60)
+    ng.stroke()
+  }
+  const noteTex = new CanvasTexture(noteCanvas)
+  noteTex.colorSpace = SRGBColorSpace
+  const noteMat = new MeshStandardMaterial({ map: noteTex, roughness: 0.9 })
+
+  // three note rects staggered on the cork panel, local to group root
+  const noteLayout = [
+    { x: -0.35, y: fy + 0.28, r:  0.06, uw: 1, uvoy: 0      },
+    { x:  0.18, y: fy + 0.06, r: -0.05, uw: 1, uvoy: 64/192 },
+    { x: -0.15, y: fy - 0.26, r:  0.08, uw: 1, uvoy: 128/192 },
+  ]
+  const noteGeos: BufferGeometry[] = []
+  for (const n of noteLayout) {
+    const noteGeo = new BoxGeometry(0.52, 0.34, 0.012)
+    noteGeo.rotateZ(n.r)
+    noteGeo.translate(n.x, n.y, 0.015)
+    // remap UV so each note draws its own atlas strip
+    const uv = noteGeo.getAttribute('uv') as BufferAttribute
+    const uvArr = uv.array as Float32Array
+    const stripH = 1 / 3
+    // front face verts: indices 8-11 in a BoxGeometry's UV layout
+    // (BoxGeometry UV order: +x, -x, +y, -y, +z (front), -z)
+    // front face = face index 4 → vertices 16..19 in non-indexed, but
+    // BoxGeometry IS indexed so we remap ALL uvs to the full atlas and
+    // clamp the strip per-face by shifting v into the atlas row
+    for (let i = 0; i < uvArr.length; i += 2) {
+      uvArr[i + 1] = n.uvoy + uvArr[i + 1] * stripH
+    }
+    uv.needsUpdate = true
+    noteGeos.push(noteGeo)
+  }
+  const noteMerged = mergeGeometries(noteGeos)
+  if (noteMerged) {
+    const noteMesh = new Mesh(noteMerged, noteMat)
+    noteMesh.castShadow = true
+    group.add(noteMesh)
+  }
+
+  // --- material 4: thumbtacks (small cylinder dots, warm terracotta) ---
+  const tackMat = new MeshStandardMaterial({ color: '#c04a30', roughness: 0.5, metalness: 0.3 })
+  const tackGeos: BufferGeometry[] = []
+  for (const n of noteLayout) {
+    // tack pin: tiny cylinder
+    const pin = new CylinderGeometry(0.024, 0.024, 0.028, 8)
+    pin.rotateX(Math.PI / 2)
+    pin.translate(n.x, n.y + 0.13, 0.032)
+    tackGeos.push(pin)
+    // tack head: flat disk
+    const head = new CylinderGeometry(0.042, 0.042, 0.008, 10)
+    head.rotateX(Math.PI / 2)
+    head.translate(n.x, n.y + 0.13, 0.038)
+    tackGeos.push(head)
+  }
+  const tackMerged = mergeGeometries(tackGeos)
+  if (tackMerged) {
+    const tackMesh = new Mesh(tackMerged, tackMat)
+    tackMesh.castShadow = true
+    group.add(tackMesh)
+  }
+
+  return group
+}
+
 // ---- little red barn ---------------------------------------------------------------
 
 function buildBarn(scene: Scene): void {

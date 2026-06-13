@@ -80,6 +80,7 @@ import {
   buildClouds,
   repaintGround,
   buildDeedSign,
+  buildOrderBoard,
   buildGround,
   buildLights,
   buildMeadow,
@@ -615,10 +616,27 @@ async function boot(): Promise<void> {
       sfx.kaching()
     }
   })
+  game.on('contractDone', (e) => {
+    if (!sleepActive && !construction.active && !hud.modalOpen) {
+      hud.showBanner('Order filled! \u{1F4CB}', `${e.contract.sponsor} \u{2014} +${e.contract.payout}c`)
+      sfx.kaching()
+    }
+    saveNow()
+  })
+  game.on('festivalDone', (e) => {
+    if (!sleepActive && !construction.active && !hud.modalOpen) {
+      hud.showBanner('Festival ribbon! \u{1F380}', `the whole town celebrates \u{2014} +${e.payout}c`)
+      sfx.fanfare()
+      rareSlowMo()
+    }
+    saveNow()
+  })
   game.on('deliveryDone', (e) => {
     grazers.setHidden('horse', false) // back from town, whatever the path
     // the town board appears after the first delivery — refresh its state
     if (state.town.delivered <= TOWN_ACTS[0].needDelivered + 1) refreshTownSign()
+    // ...and so does the order board, the first time the town notices
+    ensureOrderBoard()
     // if the farmer is standing in her stall when she gets back, she
     // appears home — the room mirrors the delivery truth, always
     if (room === 'stable') stableInterior.sync({ horseOwned: game.hasProject('horse'), horseHome: true })
@@ -1506,6 +1524,53 @@ async function boot(): Promise<void> {
   }
   refreshTownSign()
 
+  // ---- the ORDER BOARD: daily contracts, beside the town board ------------
+  const ORDER_BOARD_AT = new Vector3(17.4, 0, 13.6)
+  let orderBoard: Group | null = null
+  // the board appears the moment the town first notices the farm (first
+  // delivery) and then stays — Millbrook always has work going forward
+  const ensureOrderBoard = (): void => {
+    if (orderBoard || state.town.delivered < 1) return
+    orderBoard = buildOrderBoard()
+    orderBoard.position.copy(ORDER_BOARD_AT)
+    orderBoard.rotation.y = Math.atan2(PLAYER_SPAWN.x - ORDER_BOARD_AT.x, PLAYER_SPAWN.z - ORDER_BOARD_AT.z)
+    scene.add(orderBoard)
+  }
+  ensureOrderBoard()
+
+  /** open the order-board modal: today's contracts + the weekly festival */
+  const openOrderPanel = (): void => {
+    const goodEmoji: Record<string, string> = {
+      wheat: '\u{1F33E}', corn: '\u{1F33D}', tomato: '\u{1F345}', pepper: '\u{1FAD1}',
+      eggplant: '\u{1F346}', egg: '\u{1F95A}', wool: '\u{1F411}', milk: '\u{1F95B}',
+    }
+    const cards = game.contractBoard().map((row, i) => ({
+      id: `c${i}`,
+      emoji: goodEmoji[row.contract.good] ?? '\u{1F4E6}',
+      title: row.contract.sponsor,
+      sub: row.done
+        ? `\u{2713} filled — earned +${row.contract.payout}c`
+        : `${Math.min(row.progress, row.contract.qty)}/${row.contract.qty} ${row.contract.good}  \u{00B7}  +${row.contract.payout}c`,
+      progress: Math.min(1, row.progress / row.contract.qty),
+    }))
+    const fest = game.festivalBoard()
+    if (fest) {
+      const need = fest.order.goods
+        .map((g, j) => `${Math.min(fest.progress[j] ?? 0, g.qty)}/${g.qty} ${g.good}`)
+        .join('  \u{00B7}  ')
+      const filled = fest.order.goods.reduce((a, g, j) => a + Math.min(fest.progress[j] ?? 0, g.qty), 0)
+      const total = fest.order.goods.reduce((a, g) => a + g.qty, 0)
+      cards.push({
+        id: 'festival',
+        emoji: '\u{1F388}',
+        title: fest.done ? 'Festival \u{2014} ribbon earned \u{1F380}' : 'The weekly Festival order',
+        sub: fest.done ? `+${fest.order.payout}c paid` : `${need}  \u{00B7}  +${fest.order.payout}c`,
+        progress: Math.min(1, filled / total),
+      })
+    }
+    hud.showCardPanel('The Order Board \u{1F4CB}', cards)
+  }
+
   // ---- buying land -----------------------------------------------------------
   /** the dig: a crew arrives, letterbox drops, shovels swing — then the new
    * field, fence ring, and whatever the deed brought reveal at the climax */
@@ -1721,6 +1786,8 @@ async function boot(): Promise<void> {
     roomExit: false,
     /** at the Millbrook board by the gate */
     town: false,
+    /** at the order board (daily contracts) by the gate */
+    orders: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -2103,6 +2170,7 @@ async function boot(): Promise<void> {
     else if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
+    else if (id === 'orders' && near.orders) openOrderPanel()
     else if (id === 'shear' && near.pen) {
       const coins = game.shearFlock(flock.sheep.length)
       if (coins > 0) {
@@ -2521,6 +2589,7 @@ async function boot(): Promise<void> {
       }
       near.deed = deedSign !== null && p.distanceTo(deedSign.at) < 2.5
       near.town = townSign !== null && p.distanceTo(TOWN_SIGN_AT) < 2.6
+      near.orders = orderBoard !== null && p.distanceTo(ORDER_BOARD_AT) < 2.4
       // ---- Millbrook breathes on the day clock ----
       customers.pace = state.town.built.cottages ? 0.7 : 1
       if (state.town.built.bakery && !sleepActive && !construction.active) {
@@ -2720,6 +2789,15 @@ async function boot(): Promise<void> {
           emoji: '\u{1F6AA}',
           label: `Exit ${ROOMS[room].label}`,
           sub: 'back to the farm',
+        })
+      }
+      if (near.orders && room === null) {
+        const open = game.contractBoard().filter((r) => !r.done).length
+        actions.push({
+          id: 'orders',
+          emoji: '\u{1F4CB}',
+          label: 'The Order Board',
+          sub: open > 0 ? `${open} order${open === 1 ? '' : 's'} waiting` : 'all filled today — back tomorrow',
         })
       }
       if (near.town && room === null) {

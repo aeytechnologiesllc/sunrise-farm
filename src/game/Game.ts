@@ -39,6 +39,14 @@ import {
   type ProjectId,
 } from './projects'
 import {
+  type Contract,
+  type ContractGood,
+  contractSlots,
+  type FestivalOrder,
+  rollContracts,
+  rollFestival,
+} from './contracts'
+import {
   buyHen,
   collectAllBoxes,
   collectBox,
@@ -98,6 +106,8 @@ export interface GameEvents {
   deliveryDone: { coins: number }
   townBuilt: { id: TownActId }
   bakerySold: { coins: number }
+  contractDone: { slot: number; contract: Contract }
+  festivalDone: { payout: number; ribbons: number }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -150,6 +160,7 @@ export class Game {
 
   update(dt: number): void {
     const s = this.state
+    this.ensureContractsFresh()
     for (let i = 0; i < this.plotTotal; i++) {
       const crop = this.plotAt(i)!.crop
       if (!crop || crop.remaining <= 0) continue
@@ -209,6 +220,89 @@ export class Game {
     }
   }
 
+  // ---- the order board: daily contracts + a weekly festival --------------
+  // The evergreen money sink. Contracts are NOT stored (deterministic rolls
+  // per save-seed + day); only PROGRESS lives on the save. noteProduce() ticks
+  // them as goods are made; a filled order pays out once.
+
+  /** which week of farm life this is (0-indexed) — the festival cadence */
+  private weekOf(): number {
+    return Math.floor((this.state.day - 1) / 7)
+  }
+
+  /** roll the day/week forward: a new day re-rolls the board (fresh progress);
+   * a new week re-rolls the festival. Also resizes the progress arrays if the
+   * slot count changed (the train station adds a 4th slot in a later arc). */
+  private ensureContractsFresh(): void {
+    const s = this.state
+    const slots = contractSlots(s)
+    if (s.contracts.day !== s.day || s.contracts.progress.length !== slots) {
+      s.contracts = { day: s.day, progress: new Array(slots).fill(0), done: new Array(slots).fill(false) }
+    }
+    if (s.town.built.cottages === true) {
+      const week = this.weekOf()
+      const fest = rollFestival(s.chicken.seed, week, s)
+      if (s.festival.week !== week || s.festival.progress.length !== fest.goods.length) {
+        s.festival = { week, progress: new Array(fest.goods.length).fill(0), done: false }
+      }
+    }
+  }
+
+  /** count a freshly-made good toward any matching open order — the single
+   * hook every production site calls (harvest/egg/coop/shear/milk). */
+  private noteProduce(good: ContractGood, qty: number): void {
+    if (qty <= 0) return
+    const s = this.state
+    this.ensureContractsFresh()
+    const list = rollContracts(s.chicken.seed, s.day, s)
+    for (let i = 0; i < list.length; i++) {
+      if (s.contracts.done[i] || list[i].good !== good) continue
+      s.contracts.progress[i] += qty
+      if (s.contracts.progress[i] >= list[i].qty) {
+        s.contracts.done[i] = true
+        this.grantCoins(list[i].payout)
+        this.grantXp(XP_GAIN.serve)
+        this.emit('contractDone', { slot: i, contract: list[i] })
+      }
+    }
+    if (s.town.built.cottages === true && !s.festival.done) {
+      const fest = rollFestival(s.chicken.seed, this.weekOf(), s)
+      let touched = false
+      for (let j = 0; j < fest.goods.length; j++) {
+        if (fest.goods[j].good === good) {
+          s.festival.progress[j] += qty
+          touched = true
+        }
+      }
+      if (touched && fest.goods.every((g, j) => (s.festival.progress[j] ?? 0) >= g.qty)) {
+        s.festival.done = true
+        s.festivalRibbons += 1
+        this.grantCoins(fest.payout)
+        this.grantXp(XP_GAIN.expand)
+        this.emit('festivalDone', { payout: fest.payout, ribbons: s.festivalRibbons })
+      }
+    }
+  }
+
+  /** today's board (for the HUD): the contracts and their live progress */
+  contractBoard(): { contract: Contract; progress: number; done: boolean }[] {
+    this.ensureContractsFresh()
+    const s = this.state
+    return rollContracts(s.chicken.seed, s.day, s).map((contract, i) => ({
+      contract,
+      progress: s.contracts.progress[i] ?? 0,
+      done: s.contracts.done[i] ?? false,
+    }))
+  }
+
+  /** this week's festival order + progress, or null before the cottages exist */
+  festivalBoard(): { order: FestivalOrder; progress: number[]; done: boolean } | null {
+    const s = this.state
+    if (s.town.built.cottages !== true) return null
+    this.ensureContractsFresh()
+    return { order: rollFestival(s.chicken.seed, this.weekOf(), s), progress: [...s.festival.progress], done: s.festival.done }
+  }
+
   // ---- actions ----------------------------------------------------------
 
   cropUnlocked(kind: CropKind): boolean {
@@ -243,6 +337,7 @@ export class Game {
     // bank the good as stand stock too (wheat doubles as feed) — customers
     // buying it later is a pure bonus on top of the auto-sell
     this.bank(kind, 1)
+    this.noteProduce(kind, 1)
     this.state.harvests += 1
     this.grantXp(XP_GAIN.harvest)
     this.retireChip('harvest')
@@ -283,6 +378,7 @@ export class Game {
     const coins = eggValue(golden)
     this.grantCoins(coins)
     this.state.eggs += 1
+    this.noteProduce('egg', 1)
     this.grantXp(XP_GAIN.collectEgg)
     this.retireChip('collect')
     return { golden, coins }
@@ -502,6 +598,7 @@ export class Game {
     // the wool works pays half again more (town additions only ever ADD)
     const coins = Math.round(WOOL_COIN_PER_SHEEP * sheepCount * woolMult(this.state))
     this.grantCoins(coins)
+    this.noteProduce('wool', sheepCount)
     this.grantXp(XP_GAIN.shear)
     return coins
   }
@@ -519,6 +616,7 @@ export class Game {
     const coins = EGG_BOX_COIN * n
     this.grantCoins(coins)
     this.state.eggs += n
+    this.noteProduce('egg', n)
     this.grantXp(XP_GAIN.collectEgg)
     return coins
   }
@@ -532,6 +630,7 @@ export class Game {
     const coins = EGG_BOX_COIN * (golden ? GOLDEN_MULT : 1)
     this.grantCoins(coins)
     this.state.eggs += 1
+    this.noteProduce('egg', 1)
     this.grantXp(XP_GAIN.collectEgg)
     return { coins, golden }
   }
@@ -582,6 +681,7 @@ export class Game {
     if (goatCount <= 0 || !collectMilk(this.state.produce)) return 0
     const coins = MILK_COIN_PER_GOAT * goatCount
     this.grantCoins(coins)
+    this.noteProduce('milk', goatCount)
     this.grantXp(XP_GAIN.milk)
     return coins
   }

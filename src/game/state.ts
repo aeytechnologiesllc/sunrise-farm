@@ -104,6 +104,14 @@ export interface GameState {
     /** the morning bus comes once per day */
     lastBusDay: string | null
   }
+  /** the ORDER BOARD: daily contracts (see game/contracts.ts). Contracts
+   * themselves are deterministic rolls per (seed, day) — only progress is
+   * saved. `day` marks which day this progress belongs to; a new day re-rolls. */
+  contracts: { day: number; progress: number[]; done: boolean[] }
+  /** the weekly festival order; `week` marks which week the progress is for */
+  festival: { week: number; progress: number[]; done: boolean }
+  /** ribbons earned from completed festivals — a permanent badge of plenty */
+  festivalRibbons: number
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -145,6 +153,9 @@ export function initialState(seed: number): GameState {
     hazel: { hearts: 0, lastPetDay: null, lastFedDay: null },
     familyGreetDay: null,
     town: { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null },
+    contracts: { day: 0, progress: [], done: [] },
+    festival: { week: -1, progress: [], done: false },
+    festivalRibbons: 0,
     chicken: {
       arrived: false,
       name: null,
@@ -261,6 +272,10 @@ export function deserialize(json: string | null): GameState | null {
     s.familyGreetDay ??= null
     // Millbrook arrived late — old saves start with an empty town square
     s.town ??= { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null }
+    // the order board grew in onto older saves empty; the first update() re-rolls
+    s.contracts ??= { day: 0, progress: [], done: [] }
+    s.festival ??= { week: -1, progress: [], done: false }
+    s.festivalRibbons ??= 0
     s.town.delivered ??= 0
     s.town.built ??= {}
     s.town.lastBakeryDay ??= null

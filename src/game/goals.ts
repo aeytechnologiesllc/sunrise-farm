@@ -2,6 +2,7 @@
  * Pure module: no three/DOM imports, no rng, no Date, no side effects.
  * Single entry point: nextGoal(s) → the highest-priority actionable goal. */
 
+import { contractSlots, rollContracts } from './contracts'
 import { CROPS } from './economy'
 import { nextTier, TIERS } from './expansion'
 import { availableProjects, PROJECTS, projectStatus } from './projects'
@@ -9,7 +10,7 @@ import type { GameState } from './state'
 import { nextTownAct, townStatus } from './town'
 
 export interface Goal {
-  kind: 'project' | 'deed' | 'townact' | 'delivery' | 'levelwall'
+  kind: 'project' | 'deed' | 'townact' | 'delivery' | 'levelwall' | 'contract'
   id: string
   /** <= 40 chars incl emoji — what the HUD shows */
   pill: string
@@ -247,6 +248,27 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 9. Nothing remains ────────────────────────────────────────────────────
+  // ─── 9. THE ORDER BOARD never runs dry — the evergreen endgame goal ───────
+  // Once the town knows the farm (first delivery), there are always daily
+  // orders to fill. This is what keeps a maxed-out farm from going silent.
+  {
+    if (s.town.delivered >= 1) {
+      const slots = contractSlots(s)
+      const list = rollContracts(s.chicken.seed, s.day, s)
+      let open = 0
+      for (let i = 0; i < slots; i++) if (!(s.contracts.done[i] ?? false)) open++
+      if (open > 0 && list.length > 0) {
+        return {
+          kind: 'contract',
+          id: 'orders',
+          pill: pill40('📋 ', `${open} order${open === 1 ? '' : 's'} on the board`, ''),
+          blocked: null,
+          at: [17.4, 13.6],
+        }
+      }
+    }
+  }
+
+  // ─── 10. Nothing remains ───────────────────────────────────────────────────
   return null
 }
