@@ -68,6 +68,56 @@ describe('the authored ring becomes player fence', () => {
   })
 })
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ENDLESS-FIELD REDESIGN MIGRATION: the owner's real save (expansion 2,
+// 12 crop plots, an OLD grown tier ring) must deserialize to fieldParcels=3
+// with all 12 crops intact AND its fence reset to the fixed homestead yard.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the endless-field redesign migration (the owner save)', () => {
+  function ownerSaveJson(): string {
+    // start from a real save shape, then make it look pre-redesign
+    const s = initialState(2026)
+    s.expansion = 2 // the owner owned the tier-2 field
+    // twelve plots, every one holding a crop the migration must not orphan
+    s.plots = Array.from({ length: 12 }, (_, i) => ({
+      crop: { kind: 'wheat' as const, total: 40, remaining: 10 + i, chimed: false },
+    }))
+    const raw = JSON.parse(serialize(s)) as Record<string, unknown>
+    // pre-redesign markers: no parcel count, no redesign flag, and an OLD grown
+    // fence ring (more edges than the fixed yard — the tier-3 ring)
+    delete raw.fieldParcels
+    delete raw.fieldRedesign
+    raw.fences = ringEdges(3) // whatever the old grown ring was — must be dropped
+    return JSON.stringify(raw)
+  }
+
+  it('expansion-2 / 12-plot save → fieldParcels 3, 12 crops intact, fence = yard', () => {
+    const back = deserialize(ownerSaveJson())!
+    // 12 plots / 4 per parcel, rounded up → 3 parcels
+    expect(back.fieldParcels).toBe(3)
+    // every crop survived (none orphaned, none invented)
+    expect(back.plots).toHaveLength(12)
+    for (let i = 0; i < 12; i++) {
+      expect(back.plots[i].crop).not.toBeNull()
+      expect(back.plots[i].crop!.remaining).toBe(10 + i)
+    }
+    // the fence reset exactly once to the FIXED homestead yard
+    expect(back.fieldRedesign).toBe(true)
+    expect(back.fences).toEqual(ringEdges(0)) // the yard ring (fenceFor is constant)
+    // expansion is RETAINED (not migrated/capped) — the sheep counter stands
+    expect(back.expansion).toBe(2)
+  })
+
+  it('is idempotent — a re-serialized migrated save does not move again', () => {
+    const once = deserialize(ownerSaveJson())!
+    const fencesAfterOne = JSON.stringify(once.fences)
+    const twice = deserialize(serialize(once))!
+    expect(twice.fieldParcels).toBe(3)
+    expect(twice.plots).toHaveLength(12)
+    expect(JSON.stringify(twice.fences)).toBe(fencesAfterOne)
+  })
+})
+
 describe('collision', () => {
   it('blocks a step across a fence edge, passes through a gate', () => {
     const sets = { edges: new Set([encodeEdge(2, 3, 1)]), gates: new Set<number>() }

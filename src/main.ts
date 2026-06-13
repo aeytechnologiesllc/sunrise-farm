@@ -42,7 +42,7 @@ import {
 } from './game/economy'
 import { Customers } from './game/customers'
 import { DECOR, decorDef, DECOR_MAX, type DecorId } from './game/decor'
-import { blockByEdges, encodeEdge, expandRing, FENCE_STYLES, nearestEdge, toSets, toState } from './game/fence'
+import { blockByEdges, encodeEdge, FENCE_STYLES, nearestEdge, toSets, toState } from './game/fence'
 import { Game, type Suggestion } from './game/Game'
 import {
   canPlace,
@@ -80,6 +80,7 @@ import { PlayerView } from './world/Player'
 import { PlotView } from './world/Plot'
 import {
   bindLayout,
+  bindParcels,
   buildClouds,
   repaintGround,
   buildDeedSign,
@@ -102,7 +103,7 @@ import {
   PLAYER_SPAWN,
   WORLD_BOUNDS,
 } from './world/scenery'
-import { BARN_AT, BARN_ROT } from './game/geo'
+import { BARN_AT, BARN_ROT, worldMaxX } from './game/geo'
 import { keeperName, tomorrowLines } from './game/tomorrow'
 import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS, woolMult } from './game/town'
 import { nextGoal } from './game/goals'
@@ -119,11 +120,10 @@ import {
 } from './game/upgrades'
 import { RideRig } from './world/riding'
 import { TownSet } from './world/townSet'
-import { sheepCount, TIERS, type TierDef } from './game/expansion'
+import { fieldParcel, sheepCount, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
-  landBlockedProjects,
   SHOP_PREMIUM,
   SHOP_QUEUE_MAX,
   type ProjectDef,
@@ -344,6 +344,8 @@ async function boot(): Promise<void> {
   // the saved LAYOUT drives where everything stands — scenery's ground art,
   // exclusion zones, and every anchor below resolve through it
   bindLayout(layoutView(state))
+  // the endless crop field's exclusion zones + fallow beds read the parcel count
+  bindParcels(state.fieldParcels)
   if (!state.projects.shop) marketToStand(placeOf(state, 'stand'))
 
   const lights = buildLights(scene)
@@ -407,18 +409,15 @@ async function boot(): Promise<void> {
     state.projects.shop || !state.projects.stand ? null : buildStand(scene, assets)
   if (standGroup) OCCLUDERS.push(standGroup)
   let fenceMesh: Mesh | null = null // built once the fence edge-set loads below
-  /** each owned tier's soil slab — a movable (the whole group translates) */
+  /** each owned crop-field parcel's soil slab, keyed by parcel index. The
+   * field is a FIXED place out east now — slabs are not movable; each land
+   * deed simply drops the next one in (see expandCeremony). */
   const fieldGroups = new Map<number, Group>()
-  for (let t = 0; t <= state.expansion; t++) {
-    const def = TIERS[t]
-    if (def.field) {
-      const g = buildField(def.field, def.plots, 0x6011 + t * 97)
-      const pl = placeOf(state, ('field' + t) as PlaceId)
-      const dpl = DEFAULT_PLACES[('field' + t) as PlaceId]
-      g.position.set(pl.x - dpl.x, 0, pl.z - dpl.z)
-      scene.add(g)
-      fieldGroups.set(t, g)
-    }
+  for (let n = 0; n < state.fieldParcels; n++) {
+    const parcel = fieldParcel(n)
+    const g = buildField(parcel.rect, parcel.plots, 0x6011 + n * 97)
+    scene.add(g)
+    fieldGroups.set(n, g)
   }
   const clouds = buildClouds(scene)
   const ambient = new AmbientLife(scene)
@@ -482,7 +481,9 @@ async function boot(): Promise<void> {
   // ---- land deeds + tractor -------------------------------------------------
   const tractorPlace = placeOf(state, 'tractor')
   const TRACTOR_SPOT = { pos: new Vector3(tractorPlace.x, 0, tractorPlace.z), yaw: tractorPlace.yaw }
-  let tractor: TractorView | null = state.expansion >= 2 ? new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw) : null
+  // the tractor is earned once the crop field is worth sowing all at once — the
+  // 3rd parcel (≈ the old expansion-2 timing, so existing saves keep theirs)
+  let tractor: TractorView | null = state.fieldParcels >= 3 ? new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw) : null
   let sowCooldown = state.timers.sow
   let deedSign: { group: ReturnType<typeof buildDeedSign>; at: Vector3 } | null = null
   const placeDeedSign = (): void => {
@@ -514,6 +515,8 @@ async function boot(): Promise<void> {
   // spawn at the default rect and ride the delta to wherever the pen stands
   flock.setPen(penRect(state))
   const player = new PlayerView(assets, scene, PLAYER_SPAWN, WORLD_BOUNDS)
+  // the east walk bound grows with the crop field — reach the last parcel's edge
+  player.setBounds({ ...WORLD_BOUNDS, maxX: worldMaxX(state.fieldParcels) })
   const customers = new Customers((state.chicken.seed ^ 0x9e3779b9) >>> 0)
   const customerViews = new Map<number, CustomerView>()
 
@@ -521,7 +524,7 @@ async function boot(): Promise<void> {
   const carry = new CarrySystem(scene)
   if (standGroup) carry.register('stand', standGroup)
   if (tractor) carry.register('tractor', tractor.group)
-  for (const [t, g] of fieldGroups) carry.register(('field' + t) as PlaceId, g)
+  // crop-field slabs are NOT carryable — the field is a fixed east place now
   /** the latest ghost validity — buttons + commit share one verdict */
   let carryCheck: PlaceCheck = { ok: false }
 
@@ -1658,11 +1661,6 @@ async function boot(): Promise<void> {
 
   // build-site signs for every project whose land exists
   const projectSigns = new Map<ProjectId, { group: Group; at: Vector3 }>()
-  // a teaser sign stands on a lot whose LAND the player hasn't bought yet, so
-  // a farmer who's planted everything still sees "the Stable goes HERE — buy
-  // this land" instead of a silent empty corner (the owner's level-38 player
-  // owned the coop and never knew the stable was even possible)
-  const teaserSigns = new Map<ProjectId, Group>()
   // upgrade/build signs can't stand inside the building they replace
   const SIGN_OFFSET: Partial<Record<ProjectId, [number, number]>> = {
     shop: [-2.8, -1.6], // beside the lot, clear of the queue spots at z-2.4
@@ -1699,28 +1697,9 @@ async function boot(): Promise<void> {
       scene.add(group)
       projectSigns.set(def.id, { group, at })
     }
-    // teasers: only the buildings the NEXT deed will unlock, so the lot the
-    // player should buy next reads its future out loud (no clutter — one
-    // deed's worth of promises at a time)
-    const teasers = landBlockedProjects(gate).filter((d) => d.requiresExpansion === state.expansion + 1)
-    for (const [id, group] of teaserSigns) {
-      if (!teasers.some((d) => d.id === id)) {
-        scene.remove(group)
-        disposeMaterials(group)
-        teaserSigns.delete(id)
-      }
-    }
-    for (const def of teasers) {
-      if (teaserSigns.has(def.id)) continue
-      const [ox, oz] = SIGN_OFFSET[def.id] ?? [0, 0]
-      const site = projectSite(def)
-      const at = new Vector3(site.x + ox, 0, site.z + oz)
-      const group = buildDeedSign(def.name, def.cost, 'NEEDS LAND', '#8a6d3b')
-      group.position.copy(at)
-      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
-      scene.add(group)
-      teaserSigns.set(def.id, group)
-    }
+    // (NEEDS-LAND teaser signs are gone — buildings are level/coins-gated only
+    // now, so a build sign appears the moment a project becomes buildable; no
+    // more "needs land" lots to tease.)
   }
   refreshProjectSigns()
 
@@ -1791,57 +1770,52 @@ async function boot(): Promise<void> {
     hud.showCardPanel('The Order Board \u{1F4CB}', cards)
   }
 
-  // ---- buying land -----------------------------------------------------------
-  /** the dig: a crew arrives, letterbox drops, shovels swing — then the new
-   * field, fence ring, and whatever the deed brought reveal at the climax */
+  // ---- buying land: the ENDLESS east field ----------------------------------
+  /** the dig: a crew arrives, letterbox drops, shovels swing — then the NEXT
+   * crop-field parcel reveals at the climax. expand() has already incremented
+   * state.fieldParcels and grown state.plots, so the synthetic deed's
+   * field/plots ARE the parcel just bought (index state.fieldParcels - 1). */
   const expandCeremony = (def: TierDef): void => {
     placeDeedSign()
-    const center = def.field
-      ? new Vector3((def.field.x0 + def.field.x1) / 2, 0, (def.field.z0 + def.field.z1) / 2)
-      : def.lot
-        ? new Vector3(def.lot[0], 0, def.lot[1])
-        : player.pos.clone()
-    // views are created NOW (hidden tiny) so plot indices match game state
-    // throughout the dig — the reveal only pops them to full size
+    const n = state.fieldParcels - 1
+    const rect = def.field! // synthetic field deed always carries its parcel rect
+    const center = new Vector3((rect.x0 + rect.x1) / 2, 0, (rect.z0 + rect.z1) / 2)
+    // the slab + plot views are created NOW (hidden tiny) so plot indices match
+    // game state throughout the dig — the reveal only pops them to full size.
+    // Field plots always sit at the TAIL of the field block (greenhouse beds
+    // follow after), so the new parcel's plots append before the gh planters.
     const newViews: PlotView[] = []
-    let fg: Group | null = null
-    if (def.field) {
-      fg = buildField(def.field, def.plots, 0x6011 + state.expansion * 97)
-      fg.scale.setScalar(0.001)
-      scene.add(fg)
-      fieldGroups.set(state.expansion, fg)
-      carry.register(('field' + state.expansion) as PlaceId, fg)
-      const insertAt = state.plots.length - def.plots.length
-      def.plots.forEach(([px, pz], k) => {
-        const v = mkPlot(px, pz)
-        v.group.scale.setScalar(0.001)
-        newViews.push(v)
-        plots.splice(insertAt + k, 0, v)
-        lastGlow.splice(insertAt + k, 0, 'none')
-      })
-    }
+    const fg = buildField(rect, def.plots, 0x6011 + n * 97)
+    fg.scale.setScalar(0.001)
+    scene.add(fg)
+    fieldGroups.set(n, fg)
+    const insertAt = n * def.plots.length
+    def.plots.forEach(([px, pz], k) => {
+      const v = mkPlot(px, pz)
+      v.group.scale.setScalar(0.001)
+      newViews.push(v)
+      plots.splice(insertAt + k, 0, v)
+      lastGlow.splice(insertAt + k, 0, 'none')
+    })
+    // the field grew east — extend the player's walk bound + the exclusion zones
+    bindParcels(state.fieldParcels)
+    player.setBounds({ ...WORLD_BOUNDS, maxX: worldMaxX(state.fieldParcels) })
     hud.dismissBanner() // a lingering event toast must not float over the scene
     construction.play({
       site: center,
       yaw: 0,
-      footprint: def.field
-        ? { w: def.field.x1 - def.field.x0, d: def.field.z1 - def.field.z0 }
-        : { w: 3, d: 3 },
+      footprint: { w: rect.x1 - rect.x0, d: rect.z1 - rect.z0 },
       cost: def.cost,
       dig: true,
       reveal: () => {
-        // the deed swaps the OLD default ring for the new one — fence the
-        // player drew elsewhere survives, pieces they removed stay gone
-        expandRing(fences, state.expansion - 1, state.expansion)
-        rebuildFenceMesh()
-        if (fg) gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
+        gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
         for (const v of newViews) gsap.to(v.group.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(1.6)' })
-        if (def.tractor && !tractor) {
+        repaintGround() // the fallow bed / grass exclusion now covers the new parcel
+        // the 3rd parcel earns the tractor — it drives in to help sow the field
+        if (!tractor && state.fieldParcels >= 3) {
           tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
           carry.register('tractor', tractor.group)
         }
-        if (def.sheep && game.hasProject('sheep')) for (let i = 0; i < def.sheep; i++) flock.addSheep()
-        refreshProjectSigns()
         sparkleBurst(scene, center.clone().setY(1.2), true, 18)
       },
       done: () => {
@@ -2270,7 +2244,7 @@ async function boot(): Promise<void> {
     if (fieldTierOf(id) >= 0) return false
     const owned =
       id === 'tractor'
-        ? state.expansion >= 2
+        ? state.fieldParcels >= 3
         : id === 'pen'
           ? state.projects.sheep === true
           : id === 'stand'
@@ -2378,7 +2352,9 @@ async function boot(): Promise<void> {
       prevPos.z = to.z
       lastCamPos.copy(to)
       camVelSmooth.set(0, 0, 0) // a teleport isn't motion — don't let it fling the look-ahead
-      const bounds = enter ? def.bounds() : WORLD_BOUNDS
+      // leaving a room restores the OUTDOOR walk box — east bound grown to
+      // reach the last crop-field parcel
+      const bounds = enter ? def.bounds() : { ...WORLD_BOUNDS, maxX: worldMaxX(state.fieldParcels) }
       player.setBounds(bounds)
       // the camera lives in its own per-room volume (aim box = the walk
       // bounds exactly, so the focus keeps a near-safe radius off walls)

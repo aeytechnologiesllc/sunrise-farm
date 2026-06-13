@@ -7,6 +7,7 @@ function host(): LayoutHost {
   return {
     layout: {},
     expansion: 4,
+    fieldParcels: 1,
     projects: { shop: true, coop: true, stable: true, horse: true, greenhouse: true, sheep: true, goats: true },
     produce: { deliveryT: 0 },
   }

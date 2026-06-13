@@ -23,8 +23,10 @@ export interface ProjectDef {
   cost: number
   /** player level gate */
   level: number
-  /** land tier gate (0..4), see src/game/expansion.ts — the deed is always
-   * bought BEFORE the building it hosts (storytelling: deed, then build) */
+  /** land gate, RETAINED for save/type compat but now always 0: the homestead
+   * yard is fixed and every building is gated only by level + coins + its
+   * prerequisite project. (The endless crop field is the only thing land buys
+   * now, and it's a separate place — see fieldParcels.) */
   requiresExpansion: number
   /** another project that must exist first */
   requires?: ProjectId
@@ -103,7 +105,7 @@ export const PROJECTS: ProjectDef[] = [
     flavor: 'Fresh straw, oiled hinges — an empty stall, waiting.',
     cost: 450,
     level: 6,
-    requiresExpansion: 3,
+    requiresExpansion: 0,
     site: [-12.3, -0.6],
     yaw: 1.35,
     footprint: { w: 5.4, d: 4.0 },
@@ -116,7 +118,7 @@ export const PROJECTS: ProjectDef[] = [
     flavor: 'Hoofbeats at sunrise — Hazel is home.',
     cost: 250,
     level: 6,
-    requiresExpansion: 3,
+    requiresExpansion: 0,
     requires: 'stable',
     site: [-12.3, -0.6],
     yaw: 0,
@@ -130,7 +132,7 @@ export const PROJECTS: ProjectDef[] = [
     flavor: 'No more roadside table. Real shelves, real prices.',
     cost: 550,
     level: 8,
-    requiresExpansion: 4,
+    requiresExpansion: 0,
     requires: 'stand',
     site: [2.5, 15.6],
     yaw: 3.14159,
@@ -144,7 +146,7 @@ export const PROJECTS: ProjectDef[] = [
     flavor: 'Glass and warmth — crops that never wait for weather.',
     cost: 800,
     level: 9,
-    requiresExpansion: 2,
+    requiresExpansion: 0,
     site: [-5.2, -2.0],
     yaw: 0.1,
     footprint: { w: 4.8, d: 3.4 },

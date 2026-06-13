@@ -1,6 +1,6 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
-import { clampTier, plotCount, PLOTS_PER } from './expansion'
+import { clampTier, fieldPlotCount, PLOTS_PER } from './expansion'
 import type { Contract, FestivalOrder } from './contracts'
 import type { DecorPlacement } from './decor'
 import { ringEdges, type FenceState, type FenceStyle } from './fence'
@@ -73,6 +73,10 @@ export interface GameState {
   /** the hired-farmhand feature was retired; saves that bought him get the
    * 1000c refunded exactly once (flag is true from birth on new saves) */
   farmhandRetired: boolean
+  /** the endless-field redesign: the homestead fence became a FIXED yard and
+   * the crop field moved out east as parcels. Pre-redesign saves reset their
+   * fence to the fixed yard ring exactly once on load (flag true from birth) */
+  fieldRedesign: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
   /** totals at dawn — the goodnight scene shows today's tally against these */
@@ -161,6 +165,7 @@ export function initialState(seed: number): GameState {
     ladder: true,
     horseSplit: true,
     farmhandRetired: true,
+    fieldRedesign: true,
     day: 1,
     dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
@@ -292,8 +297,19 @@ export function deserialize(json: string | null): GameState | null {
       }
     }
     // one-time fence migration: the authored picket ring becomes player
-    // fence (its presence IS the migrated flag)
-    s.fences ??= ringEdges(clampTier(s.expansion ?? 0))
+    // fence (its presence IS the migrated flag). ringEdges(0) now traces the
+    // FIXED homestead yard (fenceFor is constant), so an absent-fence save
+    // lands directly on the new yard.
+    s.fences ??= ringEdges(0)
+    // the endless-field redesign reset the homestead fence to a FIXED yard and
+    // moved the crop field out east. A save that already migrated its fence to
+    // the OLD grown tier ring must drop that ring for the new yard exactly once
+    // (player fence drawn elsewhere is rebuilt fresh from the yard ring — the
+    // grown ring's outer pickets no longer correspond to any owned land).
+    if (!s.fieldRedesign) {
+      s.fieldRedesign = true
+      s.fences = ringEdges(0)
+    }
     // Hazel's affection arrived after the stable did — old saves start cold
     s.hazel ??= { hearts: 0, lastPetDay: null, lastFedDay: null }
     s.familyGreetDay ??= null
@@ -373,7 +389,10 @@ export function deserialize(json: string | null): GameState | null {
     // seasoned saves resume mission cadence at the REAL cooldown, not the
     // friendly first-time delay (reloading must never speed up payouts)
     s.timers ??= { sow: 0, fetch: 0, herd: s.harvests > 0 ? 150 : 45 }
-    while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
+    // the crop field is parcel-driven now: top up to one plot per owned parcel
+    // (the fieldParcels ??= above already derived the count from the old array,
+    // rounding UP, so this only grows — never orphans a saved crop index)
+    while (s.plots.length < fieldPlotCount(s.fieldParcels)) s.plots.push({ crop: null })
     return s
   } catch {
     return null

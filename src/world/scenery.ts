@@ -31,7 +31,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
-import { fenceFor, inRect, PEN, SOUTH_GATE, TIERS } from '../game/expansion'
+import { EAST_GATE, fenceFor, fieldParcelRects, FIELD_X0, inRect, PEN, SOUTH_GATE } from '../game/expansion'
 import type { FenceStyle } from '../game/fence'
 import {
   BARN_AT,
@@ -70,6 +70,14 @@ export const GATE_SOUTH_X = SOUTH_GATE.center
 let LV: LayoutView = { ...DEFAULT_PLACES }
 export function bindLayout(lv: LayoutView): void {
   LV = lv
+  rebuildPaths()
+}
+/** how many crop-field parcels the save owns — drives the field exclusion
+ * zones (grass/forest never grow on soil) and the painted fallow beds. Bound
+ * at boot and after each land deed; the ground repaints to match. */
+let currentParcels = 1
+export function bindParcels(n: number): void {
+  currentParcels = Math.max(1, n)
   rebuildPaths()
 }
 /** customers queue beside the stand's east edge — offsets from the stand */
@@ -140,6 +148,15 @@ function rebuildPaths(): void {
       [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
       [NEST_POS.x + 1.2, NEST_POS.z + 1],
     ],
+    // the FIELD LANE: spawn out through the homestead's east gate (x=6.5,
+    // z=EAST_GATE.center) and down the short run of worn earth to the crop
+    // field's west edge (FIELD_X0). This is the new daily walk — home to field.
+    [
+      [PLAYER_SPAWN.x, PLAYER_SPAWN.z],
+      [4.6, EAST_GATE.center],
+      [fenceFor(0).maxX, EAST_GATE.center],
+      [FIELD_X0 + 0.4, EAST_GATE.center],
+    ],
   ]
 }
 rebuildPaths()
@@ -159,22 +176,10 @@ function nearPath(x: number, z: number, r: number): boolean {
   return false
 }
 
-/** every tier's field rect at its CURRENT slab position (unbought tiers
- * sit at their authored homes — LV holds defaults for them) */
+/** every OWNED crop-field parcel rect — the endless east strip. The field is
+ * a fixed place now (no movable slabs), so this is purely the parcel count. */
 function fieldRectsNow(): Array<{ x0: number; z0: number; x1: number; z1: number }> {
-  const out: Array<{ x0: number; z0: number; x1: number; z1: number }> = []
-  for (const id of PLACE_IDS) {
-    const t = fieldTierOf(id)
-    if (t < 0) continue
-    // index TIERS by tier, NOT the compacted allFieldRects() — the fieldless
-    // crossroad lot (tier 4) shifts that array under the farmstead tiers
-    const f = TIERS[t].field
-    if (!f) continue
-    const pl = LV[id]
-    const d = DEFAULT_PLACES[id]
-    out.push({ x0: f.x0 + pl.x - d.x, z0: f.z0 + pl.z - d.z, x1: f.x1 + pl.x - d.x, z1: f.z1 + pl.z - d.z })
-  }
-  return out
+  return fieldParcelRects(currentParcels)
 }
 
 /** true where grass tufts must NOT grow */
@@ -185,6 +190,7 @@ export function groundClear(x: number, z: number): boolean {
   // (owner's rule: the ground is ready before the crew arrives)
   for (const id of PLACE_IDS) {
     if (id === 'tractor') continue // it stands ON the lawn
+    if (fieldTierOf(id) >= 0) continue // vestigial field slabs: handled by fieldRectsNow above
     const pl = LV[id]
     const fp = footprintOf(id)
     if (

@@ -19,7 +19,15 @@ import {
   xpNeeded,
 } from './economy'
 import { canPlaceDecor, decorDef, type DecorId } from './decor'
-import { nextTier, plotCount, type TierDef } from './expansion'
+import {
+  fieldParcel,
+  fieldPlotCount,
+  HOMESTEAD_FENCE,
+  HOMESTEAD_GATES,
+  parcelCost,
+  parcelLevel,
+  type TierDef,
+} from './expansion'
 import { fenceStyleDef, type FenceStyle } from './fence'
 import {
   canDeliver,
@@ -519,29 +527,51 @@ export class Game {
     this.grantCoins(n)
   }
 
-  // ---- land expansion -----------------------------------------------------
+  // ---- land expansion: the ENDLESS east field -----------------------------
 
-  /** the deed on offer, if any */
-  nextDeed(): TierDef | null {
-    return nextTier(this.state.expansion)
+  /** the deed on offer — ALWAYS the next field parcel (the field extends east
+   * forever, so there is never a null deed). Synthesized as a TierDef so every
+   * existing consumer (the sign, the ceremony, the action sheet) is unchanged:
+   * its `field`/`plots` come straight from the parcel generator, its `fence`/
+   * `gates` are the now-fixed homestead yard, and its `sign` stands at the
+   * parcel's west edge (z 2.0). */
+  nextDeed(): TierDef {
+    const owned = this.state.fieldParcels
+    const parcel = fieldParcel(owned) // the NEXT parcel (0-indexed → owned)
+    return {
+      name: 'The East Field',
+      flavor: 'Another run of soil, east as far as you like.',
+      cost: parcelCost(owned),
+      level: parcelLevel(owned),
+      field: parcel.rect,
+      plots: parcel.plots,
+      fence: HOMESTEAD_FENCE,
+      gates: HOMESTEAD_GATES,
+      sign: [parcel.rect.x0 + 0.5, 2.0],
+      lot: undefined,
+      tractor: false,
+    }
   }
 
-  /** what's blocking the purchase ('ok' = buyable now) */
-  deedStatus(): 'ok' | 'level' | 'coins' | null {
+  /** what's blocking the purchase ('ok' = buyable now). Never null — the deed
+   * always exists. */
+  deedStatus(): 'ok' | 'level' | 'coins' {
     const def = this.nextDeed()
-    if (!def) return null
     if (this.state.level < def.level) return 'level'
     if (this.state.coins < def.cost) return 'coins'
     return 'ok'
   }
 
+  /** buy the next field parcel: extends the strip east, grows the plot array
+   * by one parcel's worth, grants expand XP. Returns the synthetic deed for
+   * the ceremony (built from the parcel JUST bought), or null if unaffordable. */
   expand(): TierDef | null {
+    if (this.deedStatus() !== 'ok') return null
     const def = this.nextDeed()
-    if (!def || this.deedStatus() !== 'ok') return null
     const s = this.state
     s.coins -= def.cost
-    s.expansion += 1
-    while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
+    s.fieldParcels += 1
+    while (s.plots.length < fieldPlotCount(s.fieldParcels)) s.plots.push({ crop: null })
     this.grantXp(XP_GAIN.expand)
     return def
   }

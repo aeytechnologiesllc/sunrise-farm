@@ -23,7 +23,7 @@ import {
   TOWN_GATE_X,
   WORLD_BOUNDS,
 } from './geo'
-import { fenceFor, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
+import { fenceFor, fieldParcel, fieldParcelRects, fieldPlotsAll, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
 import { PADDOCK, PROJECTS } from './projects'
 
 export type PlaceId =
@@ -54,6 +54,8 @@ export type LayoutState = Partial<Record<PlaceId, { x: number; z: number }>>
 export interface LayoutHost {
   layout?: LayoutState
   expansion: number
+  /** crop-field parcels owned — the endless east field's source of truth */
+  fieldParcels: number
   projects: Partial<Record<string, boolean>>
   produce?: { deliveryT: number }
 }
@@ -167,23 +169,12 @@ export function fieldRectFor(s: LayoutHost, tier: number): FieldRect {
   return { x0: f.x0 + p.x - d.x, z0: f.z0 + p.z - d.z, x1: f.x1 + p.x - d.x, z1: f.z1 + p.z - d.z }
 }
 
-/** cumulative plot centers for the OWNED tiers, each translated by its
- * slab's move — same order and length as expansion.plotPositions, so the
- * save's plot indices never change meaning */
+/** every field plot center, in index order — now driven ENTIRELY by the
+ * endless parcel count (the field is a fixed strip east of the homestead, no
+ * longer movable slabs). Index→sim mapping is preserved: parcel 0's plots are
+ * indices 0..3, parcel 1's are 4..7, and so on. */
 export function fieldPlotsFor(s: LayoutHost): Array<[number, number]> {
-  const out: Array<[number, number]> = []
-  for (let t = 0; t <= Math.min(s.expansion, TIERS.length - 1); t++) {
-    const tierDef = TIERS[t]
-    if (!tierDef.field) continue
-    if (!s.layout?.[('field' + t) as PlaceId]) {
-      for (const pl of tierDef.plots) out.push(pl) // unmoved: bit-exact
-      continue
-    }
-    const p = placeOf(s, ('field' + t) as PlaceId)
-    const d = DEFAULT_PLACES[('field' + t) as PlaceId]
-    for (const [px, pz] of tierDef.plots) out.push([px + p.x - d.x, pz + p.z - d.z])
-  }
-  return out
+  return fieldPlotsAll(s.fieldParcels)
 }
 
 /** the horse paddock TRAVELS WITH the stable: same rect, same relative
@@ -239,17 +230,20 @@ export function pointInBuilding(s: LayoutHost, x: number, z: number, skip: Place
  * farm's working parts). Edges along field BORDERS are fine — fencing your
  * crops in is the whole point. */
 export function fenceEdgeAllowed(s: LayoutHost, mx: number, mz: number): boolean {
-  // owned land: the ring (skirted) or the lot
+  // your land now: the fixed homestead yard, the crossroad lot, OR the owned
+  // crop-field strip out east (fence your crops in — the whole point)
   const ring = fenceFor(s.expansion)
   const inRing = mx > ring.minX - 0.6 && mx < ring.maxX + 0.6 && mz > ring.minZ - 0.6 && mz < ring.maxZ + 0.6
-  const inLot = s.expansion >= 4 && mx > LOT_RECT.x0 && mx < LOT_RECT.x1 && mz > LOT_RECT.z0 && mz < LOT_RECT.z1
-  if (!inRing && !inLot) return false
+  const inLot = mx > LOT_RECT.x0 && mx < LOT_RECT.x1 && mz > LOT_RECT.z0 && mz < LOT_RECT.z1
+  const inField = fieldParcelRects(s.fieldParcels).some(
+    (fr) => mx > fr.x0 - 0.6 && mx < fr.x1 + 0.6 && mz > fr.z0 - 0.6 && mz < fr.z1 + 0.6,
+  )
+  if (!inRing && !inLot && !inField) return false
   if (Math.abs(mz - ROAD_Z) < ROAD_CLEAR) return false
   if (pointInBuilding(s, mx, mz)) return false
-  // strictly INSIDE soil is off-limits; the border line itself is allowed
-  for (let t = 0; t < TIERS.length; t++) {
-    if (!TIERS[t].field) continue
-    const fr = t <= s.expansion ? fieldRectFor(s, t) : TIERS[t].field!
+  // strictly INSIDE soil is off-limits; the border line itself is allowed.
+  // The crop field is the endless east strip now — its OWNED parcels.
+  for (const fr of fieldParcelRects(s.fieldParcels)) {
     if (mx > fr.x0 + 0.05 && mx < fr.x1 - 0.05 && mz > fr.z0 + 0.05 && mz < fr.z1 - 0.05) return false
   }
   const pr = penRect(s)
@@ -434,9 +428,10 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
   const onLotSide = z > ROAD_Z + ROAD_CLEAR + 1.0
   if (!onLotSide && overRoad.some((b) => overlaps(b, roadBand))) return { ok: false, reason: 'road' }
 
-  // owned land: inside the tier fence ring (padded — the authored farm lets
-  // eaves breathe past the pickets), or on the lot once the crossroad deed
-  // is owned.
+  // your land now: inside the FIXED homestead yard (padded — the authored farm
+  // lets eaves breathe past the pickets), or on the crossroad lot across the
+  // road. Both are always available — buildings dropped the land gate; the
+  // crop field is the only thing land buys, and it lives east of here.
   const ring = fenceFor(s.expansion)
   const inRing = obbInsideRect(box, {
     x0: ring.minX - 1.0,
@@ -444,17 +439,15 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
     x1: ring.maxX + 1.0,
     z1: ring.maxZ + 1.0,
   })
-  const inLot = s.expansion >= 4 && obbInsideRect(box, LOT_RECT)
+  const inLot = obbInsideRect(box, LOT_RECT)
   if (!inRing && !inLot) return { ok: false, reason: 'land' }
   if (onLotSide && !inLot) return { ok: false, reason: inRing ? 'road' : 'land' }
 
-  // soil, present and future (mirrors the grass rule: fields stay
-  // buildable-free) — OWNED slabs at their current spots, unbought tiers
-  // at their authored homes
-  const selfTier = fieldTierOf(id)
-  for (let t = 0; t < TIERS.length; t++) {
-    if (!TIERS[t].field || t === selfTier) continue
-    const fr = t <= s.expansion ? fieldRectFor(s, t) : TIERS[t].field!
+  // crop soil stays buildable-free (mirrors the grass rule) — the endless east
+  // field's OWNED parcels. (The field lives out past the homestead's east gate
+  // now, so this rarely fires for homestead buildings, but the rule still holds
+  // for anything dragged east toward the lane.)
+  for (const fr of fieldParcelRects(s.fieldParcels)) {
     for (const b of bodies) if (overlaps(b, obbOfRect(fr, 0.3))) return { ok: false, reason: 'field' }
   }
 
@@ -477,8 +470,10 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
   for (const sp of SPOT_RADII) {
     if (obbNearPoint(snug, sp.at[0], sp.at[1], sp.r)) return { ok: false, reason: 'spot' }
   }
-  const next = TIERS[Math.min(TIERS.length - 1, s.expansion + 1)]
-  if (next?.sign && s.expansion < TIERS.length - 1 && obbNearPoint(snug, next.sign[0], next.sign[1], 1.2)) {
+  // the next deed's FOR-SALE sign stands at the next field parcel's west edge
+  // (endless: there is always one more) — keep its patch clear
+  const nextSign: [number, number] = [fieldParcel(s.fieldParcels).rect.x0 + 0.5, 2.0]
+  if (obbNearPoint(snug, nextSign[0], nextSign[1], 1.2)) {
     return { ok: false, reason: 'spot' }
   }
 

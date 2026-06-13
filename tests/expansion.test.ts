@@ -10,6 +10,7 @@ import {
   FIELD_Z0,
   FIELD_Z1,
   gatesFor,
+  HOMESTEAD_FENCE,
   inRect,
   MAX_TIER,
   nextTier,
@@ -73,25 +74,21 @@ describe('expansion tiers', () => {
     expect(TIERS[4].fence).toEqual(TIERS[3].fence)
   })
 
-  it('fence only ever grows (each tier contains the previous ring)', () => {
-    for (let t = 1; t <= MAX_TIER; t++) {
-      const a = fenceFor(t - 1)
-      const b = fenceFor(t)
-      expect(b.minX).toBeLessThanOrEqual(a.minX)
-      expect(b.maxX).toBeGreaterThanOrEqual(a.maxX)
-      expect(b.minZ).toBeLessThanOrEqual(a.minZ)
-      expect(b.maxZ).toBeGreaterThanOrEqual(a.maxZ)
+  it('the homestead fence is FIXED — the same cosy yard at every tier', () => {
+    // the redesign froze the fence: it no longer grows with deeds. fenceFor /
+    // gatesFor ignore the tier and always return the homestead yard.
+    const yard = { minX: -15.2, maxX: 6.5, minZ: -9.0, maxZ: 10.2 }
+    for (let t = 0; t <= MAX_TIER + 3; t++) {
+      expect(fenceFor(t)).toEqual(yard)
+      expect(fenceFor(t)).toBe(HOMESTEAD_FENCE) // the constant itself, not a copy
     }
   })
 
-  it('every plot lies inside its tier fence and inside a field rect', () => {
+  it('every TIERS plot still lies inside a TIERS field rect (the frozen table)', () => {
+    // TIERS is retained for save-compat + the sheep counter; its plots/fields
+    // are no longer the live crop field, but they must stay self-consistent.
     for (let t = 0; t <= MAX_TIER; t++) {
-      const f = fenceFor(t)
       for (const [x, z] of plotPositions(t)) {
-        expect(x).toBeGreaterThan(f.minX)
-        expect(x).toBeLessThan(f.maxX)
-        expect(z).toBeGreaterThan(f.minZ)
-        expect(z).toBeLessThan(f.maxZ)
         expect(allFieldRects().some((r) => inRect(x, z, r))).toBe(true)
       }
     }
@@ -128,11 +125,12 @@ describe('expansion tiers', () => {
     expect(nextTier(MAX_TIER)).toBeNull()
   })
 
-  it('every tier keeps a south gate and a west gate', () => {
-    for (let t = 0; t <= MAX_TIER; t++) {
+  it('the fixed yard keeps a south gate, a west gate, and an east field-lane gate', () => {
+    for (let t = 0; t <= MAX_TIER + 3; t++) {
       const walls = gatesFor(t).map((g) => g.wall)
-      expect(walls).toContain('S')
-      expect(walls).toContain('W')
+      expect(walls).toContain('S') // customer road
+      expect(walls).toContain('W') // pasture lot
+      expect(walls).toContain('E') // the lane out to the endless crop field
     }
   })
 

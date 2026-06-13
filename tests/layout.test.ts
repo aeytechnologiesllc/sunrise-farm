@@ -26,6 +26,7 @@ function fullHost(over: Partial<LayoutHost> = {}): LayoutHost {
   return {
     layout: {},
     expansion: 4,
+    fieldParcels: 1,
     projects: { stand: false, shop: true, coop: true, stable: true, horse: true, greenhouse: true, sheep: true, goats: true },
     produce: { deliveryT: 0 },
     ...over,
@@ -124,10 +125,15 @@ describe('canPlace — forbidden zones', () => {
     expect(canPlace(h, 'coop', 5, ROAD_Z + 1).reason).toBe('road')
   })
 
-  it('soil is sacred — every tier field, even unbought ones', () => {
-    expect(canPlace(fullHost({ expansion: 2, projects: { coop: true } }), 'coop', 18.4, 2).reason).toMatch(/field|land/)
-    expect(canPlace(h, 'coop', 3, 2).reason).toBe('field') // home field
-    expect(canPlace(h, 'coop', 13, 2).reason).toBe('field') // far east field
+  it('the crop field is a separate east place — not buildable homestead land', () => {
+    // the field now lives east of the homestead fence (parcel 0 spans x 8..13.6);
+    // a building dragged out toward it lands on un-owned ground ('land'), never
+    // on a homestead lawn. The old in-yard field positions are gone.
+    expect(canPlace(h, 'coop', 10, 2).reason).toBe('land') // inside parcel 0, east of the yard
+    expect(canPlace(h, 'coop', 18.4, 2).reason).toBe('land') // far east, well past the field
+    // and the FIXED homestead yard no longer hosts any crop soil — the centre
+    // of the yard near spawn is open buildable ground now
+    expect(canPlace(h, 'coop', 3, 2).ok).toBe(true)
   })
 
   it('the pen, the paddock, the homestead', () => {
@@ -172,10 +178,13 @@ describe('canPlace — forbidden zones', () => {
     expect(canPlace(h, 'coop', d.x + 0.5, d.z).reason).toBe('building')
   })
 
-  it('outside the deeds is not yours; the lot opens at tier 4', () => {
-    expect(canPlace(fullHost({ expansion: 0, projects: { stand: true } }), 'stand', 14, 2).reason).toBe('land')
-    expect(canPlace(fullHost({ expansion: 3 }), 'coop', 2.5, 15.6).reason).toMatch(/land|road/)
-    // the shop itself may shuffle within its lot once tier 4 is owned
+  it('outside your land is not yours; the homestead yard + crossroad lot are', () => {
+    // east of the homestead yard, out past the crop field, is un-owned ground
+    expect(canPlace(fullHost({ projects: { stand: true } }), 'stand', 14, 2).reason).toBe('land')
+    // the crossroad lot is ALWAYS placeable now (buildings dropped the land
+    // gate) — with the shop absent, a building fits on the open lot
+    expect(canPlace(fullHost({ projects: { stand: true } }), 'stand', 2.5, 15.6).ok).toBe(true)
+    // the shop itself may shuffle within its lot
     expect(canPlace(h, 'shop', 2.5, 15.8)).toEqual({ ok: true })
   })
 
@@ -184,9 +193,11 @@ describe('canPlace — forbidden zones', () => {
     expect(canPlace(out, 'stable', -12.3, -0.6).reason).toBe('hazel-out')
   })
 
-  it('open lawn is fine — east lawn and the far fence line', () => {
-    expect(canPlace(h, 'coop', 9, 6.9)).toEqual({ ok: true })
-    expect(canPlace(h, 'greenhouse', 18.5, 7.5)).toEqual({ ok: true })
+  it('open lawn inside the fixed homestead yard is fine', () => {
+    // the yard spans x[-15.2,6.5] z[-9,10.2]; these spots are clear of every
+    // building, the pen, the paddock, and the road band
+    expect(canPlace(h, 'coop', 2, 0)).toEqual({ ok: true }) // central-east lawn, clear of the east gate
+    expect(canPlace(h, 'coop', -3, -6)).toEqual({ ok: true }) // north lawn
   })
 })
 

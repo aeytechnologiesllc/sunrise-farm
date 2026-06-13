@@ -86,21 +86,21 @@ describe('project ladder', () => {
     }
   })
 
-  it('story order: the deed comes before the building, the stable before Hazel', () => {
+  it('buildings dropped the land gate; prerequisite chains stay (stable→Hazel, stand→shop)', () => {
+    // the redesign froze the homestead yard and freed every building from the
+    // land gate — requiresExpansion is 0 for all of them now. The PROJECT
+    // prerequisite chains (the story spine) are what remain.
+    for (const p of PROJECTS) expect(p.requiresExpansion).toBe(0)
     // horse: separate purchase AFTER the stable, on the same west lot
     const horse = byId('horse')
     expect(horse.requires).toBe('stable')
-    expect(horse.requiresExpansion).toBe(3)
     expect(horse.site).toEqual(byId('stable').site)
-    // stable: needs the pasture deed (tier 3 frees the west lot)
-    expect(byId('stable').requiresExpansion).toBe(3)
-    // shop: needs the crossroad-lot deed (tier 4) and the stand it replaces
-    const shop = byId('shop')
-    expect(shop.requiresExpansion).toBe(4)
-    expect(shop.requires).toBe('stand')
+    // shop: still replaces the stand it grows out of
+    expect(byId('shop').requires).toBe('stand')
   })
 
-  it('every site sits inside its tier fence (pen projects: the pen; lot tiers: the lot)', () => {
+  it('every site sits on real placeable land (pen, the crossroad lot, or the fixed yard)', () => {
+    const yard = fenceFor(0) // the FIXED homestead yard now
     for (const p of PROJECTS) {
       const [x, z] = p.site
       if (p.id === 'goats' || p.id === 'sheep') {
@@ -110,19 +110,17 @@ describe('project ladder', () => {
         expect(z).toBeLessThan(PEN.z1)
         continue
       }
-      const lot = TIERS[p.requiresExpansion].lot
-      if (lot) {
-        // this deed is a road-side lot OUTSIDE the fence ring — the building
-        // must stand exactly on the dig-ceremony site, across the road
-        expect(p.site).toEqual(lot)
+      if (p.id === 'shop') {
+        // the shop lives on the crossroad lot, across the road
+        expect(p.site).toEqual(TIERS[4].lot)
         expect(z).toBeGreaterThanOrEqual(13)
         continue
       }
-      const f = fenceFor(p.requiresExpansion)
-      expect(x).toBeGreaterThan(f.minX)
-      expect(x).toBeLessThan(f.maxX)
-      expect(z).toBeGreaterThan(f.minZ)
-      expect(z).toBeLessThan(f.maxZ)
+      // every other building sits inside the fixed homestead yard
+      expect(x).toBeGreaterThan(yard.minX)
+      expect(x).toBeLessThan(yard.maxX)
+      expect(z).toBeGreaterThan(yard.minZ)
+      expect(z).toBeLessThan(yard.maxZ)
     }
   })
 
@@ -158,7 +156,9 @@ describe('project ladder', () => {
   it('projectStatus reports every gate with the right precedence', () => {
     const stable = byId('stable')
     expect(projectStatus(stable, gate({ projects: { stable: true } }))).toBe('owned')
-    expect(projectStatus(stable, gate({ expansion: 0, level: 1, coins: 0 }))).toBe('land')
+    // the land gate is GONE — even at expansion 0 the stable is never 'land',
+    // only level/coins/prereq stand between the player and the build
+    expect(projectStatus(stable, gate({ expansion: 0, level: stable.level, coins: stable.cost }))).toBe('ok')
     expect(projectStatus(stable, gate({ level: stable.level - 1, coins: 0 }))).toBe('level')
     expect(projectStatus(stable, gate({ coins: stable.cost - 1 }))).toBe('coins')
     expect(projectStatus(stable, gate({ coins: stable.cost, level: stable.level }))).toBe('ok')
@@ -175,36 +175,17 @@ describe('project ladder', () => {
     expect(projectStatus(shop, gate({ projects: { stand: true } }))).toBe('ok')
   })
 
-  it('availableProjects respects the land gate and omits owned projects', () => {
-    const atTier0 = availableProjects(gate({ expansion: 0 }))
-    expect(atTier0.map((p) => p.id)).toEqual(['stand', 'sheep', 'goats', 'coop'])
-
-    const atTier2 = availableProjects(gate({ expansion: 2 }))
-    expect(atTier2.map((p) => p.id)).toEqual([
-      'stand',
-      'sheep',
-      'goats',
-      'coop',
-      'greenhouse',
-    ])
-
-    const atTier3 = availableProjects(gate({ expansion: 3 }))
-    expect(atTier3.map((p) => p.id)).toEqual([
-      'stand',
-      'sheep',
-      'goats',
-      'coop',
-      'stable',
-      'horse',
-      'greenhouse',
-    ])
-
-    const atTier4 = availableProjects(gate({ expansion: 4 }))
-    expect(atTier4.map((p) => p.id)).toEqual(PROJECTS.map((p) => p.id))
+  it('availableProjects omits owned projects and no longer land-gates (every project at any tier)', () => {
+    // the land gate is gone — every unowned project is available regardless of
+    // expansion (level/coins blockers still show ON its sign, so they stay goals)
+    for (const expansion of [0, 2, 3, 4]) {
+      const all = availableProjects(gate({ expansion }))
+      expect(all.map((p) => p.id)).toEqual(PROJECTS.map((p) => p.id))
+    }
 
     const owned = availableProjects(
       gate({
-        expansion: 4,
+        expansion: 0,
         projects: { stand: true, sheep: true, goats: true, coop: true, shop: true },
       }),
     )

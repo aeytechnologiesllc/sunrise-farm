@@ -8,6 +8,14 @@ export const ROAD_Z = 11
 export const TOWN_GATE_X = 23.6
 export const WORLD_BOUNDS = { minX: -19, maxX: 22, minZ: -13, maxZ: 18.5 }
 
+/** the player's east walk bound GROWS with the crop field: it must always be
+ * possible to walk to the far edge of the last parcel (field strip ends at
+ * x = 8 + parcels*5.6). Never shrinks below the authored 22 (the town gate
+ * approach east of the homestead). Mirrors expansion.PARCEL_W / FIELD_X0. */
+export function worldMaxX(parcels: number): number {
+  return Math.max(22, 8 + Math.max(1, parcels) * 5.6 + 2)
+}
+
 export const SPAWN_AT: [number, number] = [-0.6, 4.2]
 export const NEST_AT: [number, number] = [-4.5, 1.5]
 export const CRATE_AT: [number, number] = [-5.5, 4.5]

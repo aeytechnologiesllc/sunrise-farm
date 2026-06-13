@@ -189,12 +189,17 @@ export function plotCount(tier: number): number {
   return plotPositions(tier).length
 }
 
-export function fenceFor(tier: number): FenceRect {
-  return TIERS[clampTier(tier)].fence
+/** The homestead fence is now FIXED — the cosy yard near spawn that holds
+ * every building/animal. It no longer grows with deeds (the crop field, the
+ * thing that grows, is a SEPARATE place east of here). Declared after
+ * EAST_GATE/PASTURE_WEST_GATE below; referenced through these forwarders so
+ * the rest of the codebase keeps calling fenceFor()/gatesFor() unchanged. */
+export function fenceFor(_tier: number): FenceRect {
+  return HOMESTEAD_FENCE
 }
 
-export function gatesFor(tier: number): GateDef[] {
-  return TIERS[clampTier(tier)].gates
+export function gatesFor(_tier: number): GateDef[] {
+  return HOMESTEAD_GATES
 }
 
 /** field rects unlocked at `tier` */
@@ -249,6 +254,15 @@ export const FIELD_Z1 = 4.8
 export const PLOTS_PER = 4
 /** the gate in the homestead's east fence that opens onto the field lane */
 export const EAST_GATE: GateDef = { wall: 'E', center: 2.0, half: 1.4 }
+
+/** THE FIXED HOMESTEAD YARD — the cosy ring near spawn that encloses every
+ * homestead building (home, stand, stable, coop, greenhouse, pen, tractor).
+ * It never grows; the crop field is its own endless place out east. The east
+ * wall sits at x=6.5 with EAST_GATE opening onto the short lane to the field
+ * (which begins at FIELD_X0=8.0). Declared AFTER the gate consts it lists to
+ * avoid TS "used before declaration". */
+export const HOMESTEAD_FENCE: FenceRect = { minX: -15.2, maxX: 6.5, minZ: -9.0, maxZ: 10.2 }
+export const HOMESTEAD_GATES: GateDef[] = [SOUTH_GATE, PASTURE_WEST_GATE, EAST_GATE]
 
 /** parcel n (0-indexed): its soil rect + the 4 world-space plot centers inside
  * it. Plot offsets match the legacy within-tier order (TL, TR, BL, BR). */

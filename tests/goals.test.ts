@@ -14,56 +14,45 @@ function make(mut: (s: GameState) => void): GameState {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bridge case: coop owned, expansion === 2 (Old Pasture NOT bought), level 8,
-// modest coins → the ONLY affordable/level-met path is the stable, but it
-// needs expansion 3 → goal must point at "The Old Pasture" deed.
-// We set coins just below the deed cost (480) so priority-2 (affordable deed)
-// does NOT fire; the bridge case (priority-4) fires instead.
+// The old "bridge case" (a deed standing between the player and the stable) is
+// GONE: buildings dropped the land gate, so the stable is now just a level/coins
+// -gated project. A player who's level-met but coins-short on the stable sees it
+// surface directly as a coins-blocked PROJECT goal — no deed detour.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('bridge case — stable blocked by missing Old Pasture deed', () => {
-  function bridgeSave(): GameState {
+describe('the stable surfaces as a direct project goal (no land bridge anymore)', () => {
+  function stableSave(): GameState {
     return make((s) => {
       s.level = 8
-      s.expansion = 2
-      s.coins = 200 // too few for Old Pasture (480c) → deed is NOT affordable
-      // own everything that expansion-2 already allows AND is affordable at level 8
+      s.coins = 200 // short of the stable (450c) → coins-blocked, not affordable
+      // own everything affordable/level-met below the stable
       s.projects.stand = true
       s.projects.sheep = true
       s.projects.goats = true
       s.projects.coop = true
-      // greenhouse (requiresExpansion 2, level 9) → level-blocked, won't fire as #1
-      // stable: requiresExpansion 3, level 6 — level met, expansion NOT met → bridge
+      // stable: level 6 (met), 450c (short) → coins-blocked PROJECT goal
     })
   }
 
-  it('returns a deed goal pointing at The Old Pasture', () => {
-    const s = bridgeSave()
+  it('returns a coins-blocked PROJECT goal for the stable (no deed)', () => {
+    const s = stableSave()
     const g = nextGoal(s)
     expect(g).not.toBeNull()
-    expect(g!.kind).toBe('deed')
-    // The Old Pasture is TIERS[3]
-    expect(g!.id).toBe('tier3')
-    // pill contains the deed name
-    expect(g!.pill).toContain('Old Pasture')
-    // player can't afford the deed → blocked coins
+    expect(g!.kind).toBe('project')
+    expect(g!.id).toBe('stable')
     expect(g!.blocked).toBe('coins')
-    // sign position for The Old Pasture from expansion.ts
-    expect(g!.at).toEqual([-7.4, 5.6])
+    expect(g!.pill).toContain('Stable')
   })
 
-  it('bridge case wins over a town act that is only coins-blocked', () => {
-    // set up a state where the bakery would also be coins-blocked so that
-    // the bridge goal fires before any town-act fallback
-    const s = bridgeSave()
+  it('the cheapest coins-blocked goal wins (stable beats a pricier town act)', () => {
+    const s = stableSave()
     s.town.delivered = 3 // meet bakery delivery gate
     s.wheat = 999
-    s.coins = 200 // short of both Old Pasture (480) and bakery (600)
+    s.coins = 200 // short of both the stable (450) and the bakery (600)
     const g = nextGoal(s)
     expect(g).not.toBeNull()
-    // bridge case is priority 4; coins-blocked townact is priority 6
-    // but bridge is a STORY priority (stable path), so it fires first
-    expect(g!.kind).toBe('deed')
-    expect(g!.id).toBe('tier3')
+    // the stable (450c) is cheaper than the bakery → it surfaces first
+    expect(g!.kind).toBe('project')
+    expect(g!.id).toBe('stable')
   })
 })
 
@@ -414,42 +403,18 @@ describe('whale save — nextGoal is never null', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // landBlockedProjects helper
 // ─────────────────────────────────────────────────────────────────────────────
-describe('landBlockedProjects', () => {
-  it('returns projects blocked by missing land (not level, not coins)', () => {
+describe('landBlockedProjects — the land gate is gone', () => {
+  it('is always empty now (no project is blocked by land — every requiresExpansion is 0)', () => {
+    // a low-expansion save with money + level still has NO land-blocked projects:
+    // buildings are gated only by level/coins/prerequisite now
     const s = {
       level: 10,
       coins: 9999,
-      expansion: 2,
+      expansion: 0,
       projects: { stand: true, sheep: true, goats: true, coop: true } as Partial<Record<string, boolean>>,
     }
-    const blocked = landBlockedProjects(s)
-    // stable requires expansion 3, level 6; player is level 10, expansion 2 → blocked
-    const ids = blocked.map((p) => p.id)
-    expect(ids).toContain('stable')
-    // horse: requiresExpansion 3, requires stable — stable not owned, so horse should NOT appear
-    expect(ids).not.toContain('horse')
-    // shop: requiresExpansion 4 — also blocked by land
-    expect(ids).toContain('shop')
-    // greenhouse: requiresExpansion 2, level 9 — land met (expansion 2), so NOT land-blocked
-    expect(ids).not.toContain('greenhouse')
-  })
-
-  it('horse appears only once the stable is owned', () => {
-    const s = {
-      level: 10,
-      coins: 9999,
-      expansion: 2,
-      projects: {
-        stand: true,
-        sheep: true,
-        goats: true,
-        coop: true,
-        stable: true,
-      } as Partial<Record<string, boolean>>,
-    }
-    const blocked = landBlockedProjects(s)
-    // stable is owned — horse's prerequisite is met, expansion 2 < 3, level met → should appear
-    const ids = blocked.map((p) => p.id)
-    expect(ids).toContain('horse')
+    expect(landBlockedProjects(s)).toEqual([])
+    // even at expansion 0 with nothing owned, still empty
+    expect(landBlockedProjects({ level: 1, coins: 0, expansion: 0, projects: {} })).toEqual([])
   })
 })

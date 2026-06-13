@@ -4,22 +4,24 @@
  *
  * Priority chain (highest → lowest):
  *  1. Affordable project (level + coins met)
- *  2. Affordable deed (level + coins met)
- *  3. Affordable town act (status === 'ok')
- *  4. Bridge case — stable blocked by missing deed
- *  5. First-delivery nudge (horse owned, delivered === 0)
- *  6. Coins-blocked project / deed / town act (cheapest)
- *  7. Wheat-blocked town act
- *  8. Affordable building upgrade (upgradeStatus === 'ok', cheapest)
- *  9. Affordable fence skin (level met, coins met, not yet owned)
- * 10. Affordable decor (level met, coins met, decor.length < DECOR_MAX)
+ *  2. Affordable town act (status === 'ok')
+ *  3. (was the stable bridge case — gone; buildings are level-gated now)
+ *  4. First-delivery / more-delivery nudge (horse owned)
+ *  5. Coins-blocked project / town act (cheapest) — the endless field deed is
+ *     deliberately NOT here (infinite; it would drown the finite goals)
+ *  6. Wheat-blocked town act
+ *  7. Affordable building upgrade (upgradeStatus === 'ok', cheapest)
+ *  8. Affordable fence skin (level met, coins met, not yet owned)
+ *  9. Affordable decor (level met, coins met, decor.length < DECOR_MAX)
+ * 10. Affordable land deed — the next ENDLESS field parcel (the evergreen
+ *     money sink, surfaced once finite content is exhausted)
  * 11. Level wall (lowest level gate above s.level across ALL content)
  * 12. Order board (s.town.delivered >= 1) — evergreen endgame goal
  * 13. Gentle harvest nudge ('🌾 Tend your farm') — compass never goes dark */
 
 import { contractSlots } from './contracts'
 import { CROPS } from './economy'
-import { nextTier, TIERS } from './expansion'
+import { fieldParcel, parcelCost, parcelLevel } from './expansion'
 import { DECOR, DECOR_MAX } from './decor'
 import { FENCE_STYLES } from './fence'
 import { availableProjects, PROJECTS, projectStatus } from './projects'
@@ -53,6 +55,14 @@ function pill40(prefix: string, name: string, suffix: string): string {
 /** The town board always shows at the same world position. */
 const TOWN_BOARD: [number, number] = [19.4, 13.2]
 
+/** the next field-parcel deed (always exists — the field is endless): its
+ * cost, level gate, and the FOR-SALE sign world position (parcel west edge). */
+function nextDeedInfo(s: GameState): { cost: number; level: number; at: [number, number] } {
+  const owned = s.fieldParcels
+  const parcel = fieldParcel(owned)
+  return { cost: parcelCost(owned), level: parcelLevel(owned), at: [parcel.rect.x0 + 0.5, 2.0] }
+}
+
 export function nextGoal(s: GameState): Goal | null {
   // ─── 1. Cheapest AFFORDABLE project (level met, coins met) ────────────────
   {
@@ -71,25 +81,7 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 2. AFFORDABLE land deed (level met, coins met) ───────────────────────
-  {
-    const next = nextTier(s.expansion)
-    if (next) {
-      const tierIndex = s.expansion + 1
-      const t = TIERS[tierIndex]
-      if (t && s.level >= t.level && s.coins >= t.cost) {
-        return {
-          kind: 'deed',
-          id: `tier${tierIndex}`,
-          pill: pill40('🪧 ', t.name, ` — ${t.cost}c`),
-          blocked: null,
-          at: t.sign ?? undefined,
-        }
-      }
-    }
-  }
-
-  // ─── 3. AFFORDABLE town act (status === 'ok') ─────────────────────────────
+  // ─── 2. AFFORDABLE town act (status === 'ok') ─────────────────────────────
   {
     const act = nextTownAct(s)
     if (act) {
@@ -106,36 +98,10 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 4. THE BRIDGE CASE: stable is unowned, level met, but expansion short ─
-  {
-    const stableDef = PROJECTS.find((p) => p.id === 'stable')
-    if (
-      stableDef &&
-      !s.projects.stable &&
-      s.level >= stableDef.level &&
-      s.expansion < stableDef.requiresExpansion &&
-      // only when the NEXT deed is the one that unblocks the stable — otherwise
-      // we'd point at a deed the player can't buy yet (deeds are sequential)
-      s.expansion + 1 === stableDef.requiresExpansion
-    ) {
-      // find the deed tier that unblocks the stable
-      const tierIndex = stableDef.requiresExpansion
-      const t = TIERS[tierIndex]
-      // determine what blocks the deed for the player
-      let blocked: Goal['blocked'] = null
-      if (s.level < t.level) blocked = 'level'
-      else if (s.coins < t.cost) blocked = 'coins'
-
-      const hint = ` (stable needs it) — ${t.cost}c`
-      return {
-        kind: 'deed',
-        id: `tier${tierIndex}`,
-        pill: pill40('🪧 ', t.name, hint.length <= 24 ? hint : ` — ${t.cost}c`),
-        blocked,
-        at: t.sign ?? undefined,
-      }
-    }
-  }
+  // ─── 4. (removed) the stable bridge case — buildings are level-gated only
+  // now, so the stable surfaces directly as an affordable/coins-blocked
+  // project (priorities 1 and 6); there is no land deed standing between the
+  // player and the build anymore.
 
   // ─── 5. Horse owned + delivered === 0 ─────────────────────────────────────
   {
@@ -187,24 +153,9 @@ export function nextGoal(s: GameState): Goal | null {
       }
     }
 
-    // deed: level met but coins short
-    const next = nextTier(s.expansion)
-    if (next) {
-      const tierIndex = s.expansion + 1
-      const t = TIERS[tierIndex]
-      if (t && s.level >= t.level && s.coins < t.cost) {
-        if (bestCost === null || t.cost < bestCost) {
-          bestCost = t.cost
-          bestGoal = {
-            kind: 'deed',
-            id: `tier${tierIndex}`,
-            pill: pill40('🪧 ', t.name, ` — ${t.cost}c`),
-            blocked: 'coins',
-            at: t.sign ?? undefined,
-          }
-        }
-      }
-    }
+    // (the endless field deed is NOT in this coins-blocked race: it's infinite,
+    // so it would crowd out every finite cosmetic/upgrade below. It surfaces as
+    // its own AFFORDABLE goal once finite content is exhausted — see priority 9.)
 
     // town act: level/delivery met but coins short
     const act = nextTownAct(s)
@@ -291,6 +242,24 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
+  // ─── 10b. AFFORDABLE land deed — the ENDLESS east field ───────────────────
+  // Placed BELOW the finite cosmetics on purpose: the field is infinite, so if
+  // it sat near the top it would crowd out every one-time unlock. Once the
+  // finite content is owned/unaffordable and the player has coins for land, the
+  // compass invites them to extend the field — the evergreen money sink.
+  {
+    const d = nextDeedInfo(s)
+    if (s.level >= d.level && s.coins >= d.cost) {
+      return {
+        kind: 'deed',
+        id: `parcel${s.fieldParcels}`,
+        pill: pill40('🪧 ', 'The East Field', ` — ${d.cost}c`),
+        blocked: null,
+        at: d.at,
+      }
+    }
+  }
+
   // ─── 11. LEVEL WALL ───────────────────────────────────────────────────────
   {
     // collect every level gate strictly above s.level from unowned things
@@ -303,12 +272,10 @@ export function nextGoal(s: GameState): Goal | null {
       }
     }
 
-    // from deeds (not yet bought, level > s.level)
-    for (let i = s.expansion + 1; i < TIERS.length; i++) {
-      const t = TIERS[i]
-      if (t.level > s.level) {
-        walls.push({ level: t.level, label: t.name })
-      }
+    // from the next field-parcel deed (level-gated above the player)
+    {
+      const d = nextDeedInfo(s)
+      if (d.level > s.level) walls.push({ level: d.level, label: 'The East Field' })
     }
 
     // from town acts (not yet built, level would be a delivery block, but we

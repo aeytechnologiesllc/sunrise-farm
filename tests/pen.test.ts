@@ -8,6 +8,7 @@ function host(): LayoutHost {
   return {
     layout: {},
     expansion: 4,
+    fieldParcels: 1,
     projects: { shop: true, coop: true, stable: true, horse: true, greenhouse: true, sheep: true, goats: true },
     produce: { deliveryT: 0 },
   }
@@ -60,35 +61,25 @@ describe('the pen travels', () => {
   })
 })
 
-describe('field slabs travel', () => {
-  it('fieldRectFor/fieldPlotsFor at the default layout match the authored tables', async () => {
-    const { fieldRectFor, fieldPlotsFor } = await import('../src/game/layout')
-    const { TIERS, plotPositions } = await import('../src/game/expansion')
-    const h = host()
-    for (let t = 0; t <= 3; t++) {
-      if (!TIERS[t].field) continue
-      expect(fieldRectFor(h, t)).toEqual(TIERS[t].field)
-    }
-    expect(fieldPlotsFor(h)).toEqual(plotPositions(4))
+describe('the endless field — plots track the parcel count', () => {
+  it('fieldPlotsFor returns one parcel grid per owned parcel, in index order', async () => {
+    const { fieldPlotsFor } = await import('../src/game/layout')
+    const { fieldPlotsAll, fieldParcel } = await import('../src/game/expansion')
+    // a fresh host owns 1 parcel → 4 plots, exactly parcel 0's grid
+    expect(fieldPlotsFor({ ...host(), fieldParcels: 1 })).toEqual(fieldParcel(0).plots)
+    // owning 3 parcels → 12 plots, parcel 0's indices stay indices 0..3
+    const three = fieldPlotsFor({ ...host(), fieldParcels: 3 })
+    expect(three).toEqual(fieldPlotsAll(3))
+    expect(three).toHaveLength(12)
+    expect(three.slice(0, 4)).toEqual(fieldParcel(0).plots)
   })
 
-  it('a moved slab shifts ONLY its own plots, order and length intact', async () => {
-    const { fieldPlotsFor, setPlace, DEFAULT_PLACES } = await import('../src/game/layout')
-    const { plotPositions, TIERS } = await import('../src/game/expansion')
-    const h = host()
-    setPlace(h, 'field1', DEFAULT_PLACES.field1.x + 3, DEFAULT_PLACES.field1.z - 6)
-    const moved = fieldPlotsFor(h)
-    const legacy = plotPositions(4)
-    expect(moved.length).toBe(legacy.length)
-    const t1start = TIERS[0].plots.length
-    const t1end = t1start + TIERS[1].plots.length
-    for (let i = 0; i < moved.length; i++) {
-      if (i >= t1start && i < t1end) {
-        expect(moved[i][0]).toBeCloseTo(legacy[i][0] + 3, 10)
-        expect(moved[i][1]).toBeCloseTo(legacy[i][1] - 6, 10)
-      } else {
-        expect(moved[i]).toEqual(legacy[i])
-      }
-    }
+  it('the field is a FIXED east place — slabs no longer move with the layout', async () => {
+    const { fieldPlotsFor } = await import('../src/game/layout')
+    const { fieldPlotsAll } = await import('../src/game/expansion')
+    // a stray (vestigial) field-slab override in the layout must NOT shift any
+    // plot: the field is parcel-driven now, decoupled from the saved layout
+    const h = { ...host(), fieldParcels: 2, layout: { field1: { x: 99, z: 99 } } }
+    expect(fieldPlotsFor(h)).toEqual(fieldPlotsAll(2))
   })
 })

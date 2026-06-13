@@ -2,7 +2,7 @@
  * order, the wool-works multiplier, farmstead tiers, and save migration. */
 import { describe, expect, it } from 'vitest'
 import { Game } from '../src/game/Game'
-import { nextTier, plotCount, TIERS } from '../src/game/expansion'
+import { nextTier, TIERS } from '../src/game/expansion'
 import { deserialize, initialState, serialize, type GameState } from '../src/game/state'
 import {
   BAKERY_RATE,
@@ -244,19 +244,23 @@ describe('the farmstead deeds (Act 4 land)', () => {
     expect(TIERS[6].sheep).toBe(2)
   })
 
-  it('buying Old Tom adds his two plots through the normal deed flow', () => {
+  it('buying a deed now extends the ENDLESS east field by one parcel (4 plots)', () => {
+    // the deed flow no longer walks the finite TIERS — it buys the next field
+    // parcel. expand() spends parcelCost, bumps fieldParcels, grows the plot
+    // array by one parcel, and returns the synthetic "East Field" deed.
     let s = initialState(8)
-    s.expansion = 4
-    s.level = 13
-    s.coins = 2000
-    s = deserialize(serialize(s))! // pads plots to the owned tier
+    s.level = 30
+    s.coins = 5000
+    s = deserialize(serialize(s))!
     const before = s.plots.length
-    expect(before).toBe(plotCount(4))
+    const parcelsBefore = s.fieldParcels
     const g = new Game(s)
     const def = g.expand()
-    expect(def?.name).toBe("Old Tom's Farmstead")
-    expect(s.expansion).toBe(5)
-    expect(s.plots.length).toBe(before + 2)
+    expect(def?.name).toBe('The East Field')
+    expect(s.fieldParcels).toBe(parcelsBefore + 1)
+    expect(s.plots.length).toBe(before + 4) // one parcel = 4 plots
+    // expansion (the frozen sheep counter) is untouched by buying field land
+    expect(s.expansion).toBe(initialState(8).expansion)
   })
 })
 
