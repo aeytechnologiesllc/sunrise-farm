@@ -702,7 +702,7 @@ async function boot(): Promise<void> {
   const LEVEL_NEWS: Record<number, string> = {
     2: 'The roadside stand is on sale! \u{1F3D5}',
     3: 'Sheep join the flock — and your field can stretch east \u{1F411}',
-    5: 'Goat friends — and the Tractor rolls in as your field grows \u{1F69C}',
+    5: 'Goat friends join the pen — fresh milk money \u{1F410}',
     6: 'Big day: the Coop, a Stable — and Hazel \u{1F434}',
     8: 'A real Farm Shop unlocks across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
@@ -1808,6 +1808,9 @@ async function boot(): Promise<void> {
       cost: def.cost,
       dig: true,
       reveal: () => {
+        // blades scattered into this once-unowned parcel must not poke through
+        // the fresh soil slab (the scatter only excluded OWNED parcels at boot)
+        if (def.field) grass.hideIn(def.field)
         gsap.to(fg.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.4)' })
         for (const v of newViews) gsap.to(v.group.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(1.6)' })
         repaintGround() // the fallow bed / grass exclusion now covers the new parcel

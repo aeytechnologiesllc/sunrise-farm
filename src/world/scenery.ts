@@ -31,7 +31,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
-import { EAST_GATE, fenceFor, fieldParcelRects, FIELD_X0, inRect, PEN, SOUTH_GATE } from '../game/expansion'
+import { EAST_GATE, fenceFor, fieldParcelRects, FIELD_X0, FIELD_Z0, FIELD_Z1, inRect, PEN, SOUTH_GATE } from '../game/expansion'
 import type { FenceStyle } from '../game/fence'
 import {
   BARN_AT,
@@ -217,6 +217,10 @@ export function groundClear(x: number, z: number): boolean {
  * (eventual) fenced play space and the pen */
 export function forestClear(x: number, z: number): boolean {
   if (groundClear(x, z)) return true
+  // the endless crop field's east corridor is ALWAYS future soil — the forest is
+  // baked ONCE, so no tree/bush may ever stand where a parcel will one day reveal
+  // (owned-only fieldRectsNow can't see future parcels; this blanket guard does)
+  if (x >= FIELD_X0 - 0.4 && z >= FIELD_Z0 - 0.4 && z <= FIELD_Z1 + 0.4) return true
   const f = fenceFor(99) // max-tier ring
   if (x > f.minX - 1.4 && x < f.maxX + 1.4 && z > f.minZ - 1.4 && z < f.maxZ + 1.4) return true
   if (inRect(x, z, PEN, 1.2)) return true // the DEFAULT pen yard stays tree-free
