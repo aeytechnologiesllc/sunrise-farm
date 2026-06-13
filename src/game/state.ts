@@ -1,7 +1,8 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
-import { ringEdges, type FenceState } from './fence'
+import type { DecorPlacement } from './decor'
+import { ringEdges, type FenceState, type FenceStyle } from './fence'
 import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
 import { WORLD_BOUNDS } from './geo'
 import type { LayoutState } from './layout'
@@ -114,6 +115,11 @@ export interface GameState {
   festivalRibbons: number
   /** building upgrades owned (see game/upgrades.ts) */
   upgrades: Partial<Record<UpgradeId, boolean>>
+  /** decorations the player has placed (see game/decor.ts) — capped at DECOR_MAX */
+  decor: DecorPlacement[]
+  /** the active fence skin, and which skins the player owns ('classic' is free) */
+  fenceStyle: FenceStyle
+  fenceStyles: Partial<Record<FenceStyle, boolean>>
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -159,6 +165,9 @@ export function initialState(seed: number): GameState {
     festival: { week: -1, progress: [], done: false },
     festivalRibbons: 0,
     upgrades: {},
+    decor: [],
+    fenceStyle: 'classic',
+    fenceStyles: {},
     chicken: {
       arrived: false,
       name: null,
@@ -280,6 +289,11 @@ export function deserialize(json: string | null): GameState | null {
     s.festival ??= { week: -1, progress: [], done: false }
     s.festivalRibbons ??= 0
     s.upgrades ??= {}
+    // the decoration shop + fence skins arrived in the Long Season — old saves
+    // start with a bare farm and only the free cream picket
+    s.decor ??= []
+    s.fenceStyle ??= 'classic'
+    s.fenceStyles ??= {}
     s.town.delivered ??= 0
     s.town.built ??= {}
     s.town.lastBakeryDay ??= null

@@ -18,7 +18,9 @@ import {
   sellValue,
   xpNeeded,
 } from './economy'
+import { canPlaceDecor, decorDef, type DecorId } from './decor'
 import { nextTier, plotCount, type TierDef } from './expansion'
+import { fenceStyleDef, type FenceStyle } from './fence'
 import {
   canDeliver,
   collectMilk,
@@ -115,6 +117,8 @@ export interface GameEvents {
   contractDone: { slot: number; contract: Contract }
   festivalDone: { payout: number; ribbons: number }
   upgraded: { def: UpgradeDef }
+  decorChanged: undefined
+  fenceStyleBought: { id: FenceStyle }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -580,6 +584,76 @@ export class Game {
 
   hasUpgrade(id: UpgradeId): boolean {
     return this.state.upgrades[id] === true
+  }
+
+  // ---- the decoration shop --------------------------------------------------
+
+  /** can the player afford + legally place this decoration here? */
+  canBuyDecor(id: DecorId, x: number, z: number): boolean {
+    const s = this.state
+    const def = decorDef(id)
+    return s.level >= def.level && s.coins >= def.cost && canPlaceDecor(s, x, z).ok
+  }
+
+  /** buy + place a decoration at (x,z,rot). Deducts coins, appends to s.decor,
+   * stamps the day (saplings grow from it). Returns false if not allowed. */
+  placeDecor(id: DecorId, x: number, z: number, rot: number): boolean {
+    if (!this.canBuyDecor(id, x, z)) return false
+    const s = this.state
+    const def = decorDef(id)
+    s.coins -= def.cost
+    this.emit('coins', { total: s.coins, delta: -def.cost })
+    s.decor.push({ item: id, x, z, rot, d: s.day })
+    this.grantXp(XP_GAIN.plant)
+    this.emit('decorChanged', undefined)
+    return true
+  }
+
+  /** pick up the nearest decoration within `r` (refunds nothing — it's removed
+   * from the world so the player can re-arrange). Returns true if one went. */
+  removeDecorNear(x: number, z: number, r: number): boolean {
+    const s = this.state
+    let best = -1
+    let bestD = r * r
+    for (let i = 0; i < s.decor.length; i++) {
+      const p = s.decor[i]
+      const d = (p.x - x) ** 2 + (p.z - z) ** 2
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    if (best < 0) return false
+    s.decor.splice(best, 1)
+    this.emit('decorChanged', undefined)
+    return true
+  }
+
+  /** buy a fence skin (and switch to it). 'classic' is always owned. */
+  buyFenceStyle(id: FenceStyle): boolean {
+    const s = this.state
+    const def = fenceStyleDef(id)
+    if (!def || s.fenceStyles[id] || s.level < def.level || s.coins < def.cost) return false
+    s.coins -= def.cost
+    this.emit('coins', { total: s.coins, delta: -def.cost })
+    s.fenceStyles[id] = true
+    s.fenceStyle = id
+    this.grantXp(XP_GAIN.expand)
+    this.emit('fenceStyleBought', { id })
+    return true
+  }
+
+  /** the skins the player owns, classic always first */
+  ownedFenceStyles(): FenceStyle[] {
+    const owned: FenceStyle[] = ['classic']
+    for (const id of ['picket', 'cedar', 'stone'] as const) {
+      if (this.state.fenceStyles[id]) owned.push(id)
+    }
+    return owned
+  }
+
+  setFenceStyle(id: FenceStyle): void {
+    if (id === 'classic' || this.state.fenceStyles[id]) this.state.fenceStyle = id
   }
 
   hasProject(id: ProjectId): boolean {

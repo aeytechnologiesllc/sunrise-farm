@@ -34,6 +34,26 @@ export interface FenceState {
   gates: number[]
 }
 
+/** the four fence skins; the geometry for each lives in world/scenery.ts.
+ * 'classic' (the cream picket) is owned from birth — the rest are bought in
+ * the shop catalog and then chosen in the fence editor's Style picker. */
+export type FenceStyle = 'classic' | 'picket' | 'cedar' | 'stone'
+export interface FenceStyleDef {
+  id: FenceStyle
+  name: string
+  emoji: string
+  cost: number
+  level: number
+}
+export const FENCE_STYLES: FenceStyleDef[] = [
+  { id: 'picket', name: 'White Picket', emoji: '\u{1F90D}', cost: 600, level: 9 },
+  { id: 'cedar', name: 'Cedar Rail', emoji: '\u{1F7EB}', cost: 900, level: 12 },
+  { id: 'stone', name: 'Drystone Wall', emoji: '\u{1FAA8}', cost: 1400, level: 14 },
+]
+export function fenceStyleDef(id: FenceStyle): FenceStyleDef | null {
+  return FENCE_STYLES.find((s) => s.id === id) ?? null
+}
+
 /** the saved arrays -> fast lookup sets (rebuilt on load + after edits) */
 export interface FenceSets {
   edges: Set<number>

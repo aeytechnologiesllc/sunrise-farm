@@ -49,7 +49,17 @@ const PANEL_CSS = `
   background:rgba(58,45,30,.88);color:#fff7e0;border-radius:999px;padding:6px 14px;
   font:800 13px 'Trebuchet MS','Segoe UI',system-ui,sans-serif;white-space:nowrap;
   transition:opacity .15s}
-@media (max-width:760px){.etool{padding:7px 10px 7px 8px;font-size:12px}.etool .em{font-size:16px}}
+#style-picker{position:fixed;top:calc(106px + env(safe-area-inset-top));left:50%;
+  transform:translateX(-50%);display:none;flex-wrap:nowrap;gap:6px;z-index:31;
+  pointer-events:auto}
+.spick{pointer-events:auto;display:flex;align-items:center;gap:5px;border:none;
+  background:rgba(255,252,240,.96);border-radius:999px;padding:7px 12px 7px 9px;
+  font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;font-weight:800;
+  font-size:13px;color:#3a2d1e;box-shadow:0 3px 10px rgba(60,40,10,.28);cursor:pointer}
+.spick .em{font-size:16px;line-height:1}
+.spick.active{background:#7ec850;color:#fff;box-shadow:0 3px 10px rgba(40,80,10,.4)}
+@media (max-width:760px){.etool{padding:7px 10px 7px 8px;font-size:12px}.etool .em{font-size:16px}
+  .spick{padding:6px 9px 6px 7px;font-size:12px}.spick .em{font-size:15px}}
 `
 
 export interface EditorToolDef {
@@ -123,6 +133,12 @@ export interface FenceEditorOpts {
   /** entering/leaving edit mode (main pulls the camera back for overview) */
   onOpen?: () => void
   onClose?: () => void
+  /** returns the style ids the player currently owns (always includes 'classic') */
+  ownedStyles?: () => string[]
+  /** returns the currently-active style id */
+  activeStyle?: () => string
+  /** owner persists the choice + rebuilds the fence mesh */
+  onStyle?: (id: string) => void
 }
 
 export class FenceEditor {
@@ -139,6 +155,7 @@ export class FenceEditor {
   private previewMatNo = new MeshBasicMaterial({ color: NO_TINT, transparent: true, opacity: 0.75 })
   private pendingRun: Array<{ key: number; ok: boolean; exists: boolean }> = []
   private dirty = false
+  private stylePicker: HTMLDivElement
   private lastRebuild = 0
   /** the 1u ground grid, visible only while editing — you can't draw on
    * lines you can't see (the phone playtest's first complaint) */
@@ -150,12 +167,17 @@ export class FenceEditor {
   constructor(private opts: FenceEditorOpts) {
     this.panel = new ToolPanel(
       [
-        { id: 'draw', emoji: '\u{1FAB5}', label: 'Draw' },
-        { id: 'gate', emoji: '\u{1F6AA}', label: 'Gateway' },
+        { id: 'draw',   emoji: '\u{1FAB5}', label: 'Draw' },
+        { id: 'gate',   emoji: '\u{1F6AA}', label: 'Gateway' },
         { id: 'remove', emoji: '\u{1F528}', label: 'Remove' },
-        { id: 'style', emoji: '\u{1F3A8}', label: 'Styles soon', locked: true },
+        { id: 'style',  emoji: '\u{1F3A8}', label: 'Style' },
       ],
       (id) => {
+        if (id === 'style') {
+          this.handleStylePick()
+          return
+        }
+        this.stylePicker.style.display = 'none'
         this.tool = id as typeof this.tool
         this.panel.setActive(id)
       },
@@ -195,6 +217,9 @@ export class FenceEditor {
     this.status = document.createElement('div')
     this.status.id = 'editor-status'
     document.body.appendChild(this.status)
+    this.stylePicker = document.createElement('div')
+    this.stylePicker.id = 'style-picker'
+    document.body.appendChild(this.stylePicker)
     // capture phase: while the editor is open, the first finger is a TOOL —
     // the camera drag and the long-press lift never see it
     opts.dom.addEventListener('pointerdown', this.down, { capture: true })
@@ -219,6 +244,7 @@ export class FenceEditor {
     this.active = false
     this.panel.hide()
     this.grid.visible = false
+    this.stylePicker.style.display = 'none'
     this.status.style.opacity = '0'
     this.endDrag()
     if (this.dirty) {
@@ -240,6 +266,48 @@ export class FenceEditor {
     if (this.statusHideAt && performance.now() > this.statusHideAt) {
       this.statusHideAt = 0
       this.status.style.opacity = '0'
+    }
+  }
+
+  /** the fence-skin chips, by id (matches FenceStyle in scenery.ts) */
+  private static readonly STYLE_META: Record<string, { emoji: string; label: string }> = {
+    classic: { emoji: '\u{1FAB5}', label: 'Cream' },
+    picket: { emoji: '\u{1F90D}', label: 'Picket' },
+    cedar: { emoji: '\u{1F7EB}', label: 'Cedar' },
+    stone: { emoji: '\u{1FAA8}', label: 'Stone' },
+  }
+
+  /** the Style chip toggles a little row of owned skins; tapping one repaints
+   * the whole fence in that style. Locked skins live in the shop catalog, so
+   * here we only ever show what the player already owns (always >= classic). */
+  private handleStylePick(): void {
+    const open = this.stylePicker.style.display === 'flex'
+    if (open) {
+      this.stylePicker.style.display = 'none'
+      this.panel.setActive(this.tool)
+      return
+    }
+    this.renderStylePicker()
+    this.stylePicker.style.display = 'flex'
+    this.panel.setActive('style')
+  }
+
+  private renderStylePicker(): void {
+    const owned = this.opts.ownedStyles?.() ?? ['classic']
+    const active = this.opts.activeStyle?.() ?? 'classic'
+    this.stylePicker.replaceChildren()
+    for (const id of owned) {
+      const meta = FenceEditor.STYLE_META[id] ?? { emoji: '\u{1F3A8}', label: id }
+      const b = document.createElement('button')
+      b.className = 'spick' + (id === active ? ' active' : '')
+      b.innerHTML = `<span class="em">${meta.emoji}</span>${meta.label}`
+      b.onclick = (e) => {
+        e.stopPropagation()
+        this.opts.onStyle?.(id)
+        this.say(`fences repainted: ${meta.label.toLowerCase()}`)
+        this.renderStylePicker()
+      }
+      this.stylePicker.appendChild(b)
     }
   }
 

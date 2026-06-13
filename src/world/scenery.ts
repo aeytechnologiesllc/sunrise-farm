@@ -32,6 +32,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
 import { fenceFor, inRect, PEN, SOUTH_GATE, TIERS } from '../game/expansion'
+import type { FenceStyle } from '../game/fence'
 import {
   BARN_AT,
   CRATE_AT,
@@ -636,19 +637,110 @@ export function buildMeadow(scene: Scene, assets: Assets): { grass: GrassField; 
 
 // ---- white picket fence, edge by edge (the player's to redraw) ---------------
 
-/** Render the whole fence network from the saved edge set: each unit edge
- * gets pickets + two rails; posts stand at every used grid vertex (deduped).
- * A GATE edge renders as an open little frame — taller flanking posts and a
- * header bar, no pickets — so openings read on purpose, not as missing
- * fence. One merged mesh, one draw call, rebuilt only when the fence edits. */
-export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: Iterable<number>): Mesh | null {
-  const geos: BufferGeometry[] = []
-  const picket = new BoxGeometry(0.09, 0.62, 0.05)
-  const rail = new BoxGeometry(1, 0.07, 0.045)
-  const post = new BoxGeometry(0.12, 0.78, 0.12)
-  // gate frame: posts tall enough that the lintel clears the farmer's hat
-  // (1.6u tall) — the old 1.0u header crossed at chest height and the
-  // farmer clipped straight through it
+/** The four purchasable fence skins.
+ * - classic : cream posts + rails + two pickets per edge (existing look)
+ * - picket  : bright-white, taller, pointed pickets, slightly wider spacing
+ * - cedar   : chunky split-rail — two thick horizontal rails on stout posts, no pickets
+ * - stone   : low drystone wall blocks, slightly irregular heights via seeded rng
+ * Gates are always a wooden swing-frame and read against every style.
+ * The FenceStyle type + the purchasable catalog live in game/fence.ts. */
+
+// ---- per-style canvas textures (lazy-cached at first use) -------------------
+
+let _cedarTex: ReturnType<typeof toTexture> | null = null
+function cedarWoodTex(): ReturnType<typeof toTexture> {
+  if (_cedarTex) return _cedarTex
+  // warm reddish-brown cedar: vertical fiber grain, slightly open-pored
+  const rng = mulberry32(0xce4a3b)
+  const { c, g } = makeCanvas(128, 128)
+  g.fillStyle = '#9a6040'
+  g.fillRect(0, 0, 128, 128)
+  for (let i = 0; i < 300; i++) {
+    const x = rng.next() * 128
+    const y = rng.next() * 128 - 20
+    const len = 18 + rng.next() * 56
+    const tone = rng.next()
+    g.strokeStyle = tone > 0.6 ? '#b87848' : tone > 0.28 ? '#7a4830' : '#c48858'
+    g.globalAlpha = 0.18 + rng.next() * 0.36
+    g.lineWidth = 0.9 + rng.next() * 2.2
+    const wob = (rng.next() - 0.5) * 6
+    for (const ox of [-128, 0, 128]) {
+      g.beginPath()
+      g.moveTo(x + ox, y)
+      g.quadraticCurveTo(x + ox + wob, y + len / 2, x + ox + (rng.next() - 0.5) * 4, y + len)
+      g.stroke()
+    }
+  }
+  // resin pockets
+  for (let i = 0; i < 6; i++) {
+    const x = 8 + rng.next() * 112
+    const y = 8 + rng.next() * 112
+    g.globalAlpha = 0.45
+    g.fillStyle = '#c87040'
+    g.beginPath()
+    g.ellipse(x, y, 2 + rng.next() * 3, 1.2 + rng.next() * 1.6, rng.next() * Math.PI, 0, Math.PI * 2)
+    g.fill()
+  }
+  g.globalAlpha = 1
+  _cedarTex = toTexture(c, true)
+  return _cedarTex
+}
+
+let _stoneTex: ReturnType<typeof toTexture> | null = null
+function stoneTex(): ReturnType<typeof toTexture> {
+  if (_stoneTex) return _stoneTex
+  // cool blue-grey drystone: flat mortar base with subtle face speckle
+  const rng = mulberry32(0x57031e)
+  const { c, g } = makeCanvas(128, 128)
+  g.fillStyle = '#828c94'
+  g.fillRect(0, 0, 128, 128)
+  // face speckle — flecks of lighter and darker mineral
+  for (let i = 0; i < 480; i++) {
+    const x = rng.next() * 128
+    const y = rng.next() * 128
+    const r = 0.8 + rng.next() * 2.4
+    const tone = rng.next()
+    g.fillStyle = tone > 0.55 ? '#9fa8af' : tone > 0.25 ? '#6b7278' : '#b2babe'
+    g.globalAlpha = 0.25 + rng.next() * 0.45
+    g.beginPath()
+    g.ellipse(x, y, r, r * (0.5 + rng.next() * 0.7), rng.next() * Math.PI, 0, Math.PI * 2)
+    g.fill()
+  }
+  // mortar lines — horizontal seams every ~32px, vertically offset per row
+  g.strokeStyle = '#5a6068'
+  g.lineWidth = 1.4
+  g.globalAlpha = 0.6
+  for (let row = 0; row < 4; row++) {
+    const y = row * 32 + 0.5
+    g.beginPath(); g.moveTo(0, y); g.lineTo(128, y); g.stroke()
+    // vertical breaks staggered each row
+    const off = row % 2 === 0 ? 0 : 16
+    for (let col = 0; col < 4; col++) {
+      const x = off + col * 32 + 16
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 32); g.stroke()
+    }
+  }
+  g.globalAlpha = 1
+  _stoneTex = toTexture(c, true)
+  return _stoneTex
+}
+
+/** Render the whole fence network from the saved edge set.
+ * @param style  Visual skin to apply — defaults to 'classic' (the cream picket
+ *               look) so every existing caller works unchanged.
+ *
+ * Draw-call budget:
+ *   classic / picket / cedar — 1 draw call (all geometry + 1 colour material)
+ *   stone                    — 2 draw calls (stone body + wooden gate overlay)
+ *   Gates always render as the wooden swing-frame that reads against any style.
+ */
+export function buildFenceEdges(
+  scene: Scene,
+  edges: Iterable<number>,
+  gates: Iterable<number>,
+  style: FenceStyle = 'classic',
+): Mesh | null {
+  // gate geometry is shared across all styles — wooden swing-frame
   const gatePost = new BoxGeometry(0.13, 2.05, 0.13)
   const posts = new Set<string>()
   const gatePosts = new Set<string>()
@@ -659,65 +751,190 @@ export function buildFenceEdges(scene: Scene, edges: Iterable<number>, gates: It
     return { cx: Math.floor(cell / 256) - 64, cz: (cell % 256) - 64, axis }
   }
 
+  // ---- style-specific edge geometry -----------------------------------------
+
+  // stone uses a seeded RNG for block-height variation — key on (cx+cz) so
+  // the same edge always looks identical no matter the rebuild order
+  function stoneBlockHeightFor(cx: number, cz: number): number {
+    const rng = mulberry32((cx * 73856093) ^ (cz * 19349663))
+    rng.next() // discard seed artefact
+    return 0.54 + rng.next() * 0.14 // 0.54 – 0.68u
+  }
+
+  const fenceGeos: BufferGeometry[] = []  // style body
+  const gateGeos: BufferGeometry[] = []   // gate overlay (wooden, always)
+
   for (const key of edges) {
     const { cx, cz, axis } = decode(key)
     const rot = axis === 1 ? Math.PI / 2 : 0
     const mx = axis === 0 ? cx + 0.5 : cx
     const mz = axis === 0 ? cz : cz + 0.5
-    for (const t of [-0.25, 0.25]) {
-      const g = picket.clone()
-      g.rotateY(rot)
-      g.translate(axis === 0 ? mx + t : mx, 0.34, axis === 0 ? mz : mz + t)
-      geos.push(g)
+
+    if (style === 'classic') {
+      // cream posts + two pickets per edge + two rails — the original look
+      const picket = new BoxGeometry(0.09, 0.62, 0.05)
+      const rail   = new BoxGeometry(1,    0.07, 0.045)
+      for (const t of [-0.25, 0.25]) {
+        const gp = picket.clone()
+        gp.rotateY(rot)
+        gp.translate(axis === 0 ? mx + t : mx, 0.34, axis === 0 ? mz : mz + t)
+        fenceGeos.push(gp)
+      }
+      for (const y of [0.2, 0.48]) {
+        const r = rail.clone()
+        r.rotateY(rot)
+        r.translate(mx, y, mz)
+        fenceGeos.push(r)
+      }
+
+    } else if (style === 'picket') {
+      // bright-white, taller, four narrower pickets per edge — pointed tops
+      // achieved by a tall slender box sitting slightly above its base so the
+      // bottom rail bisects it mid-height, giving the classic pointed silhouette
+      const picketW = 0.07
+      const picketH = 0.82
+      const rail1   = new BoxGeometry(1, 0.065, 0.04)
+      const rail2   = new BoxGeometry(1, 0.065, 0.04)
+      const offsets = [-0.34, -0.12, 0.12, 0.34]
+      for (const t of offsets) {
+        const gp = new BoxGeometry(picketW, picketH, 0.045)
+        gp.rotateY(rot)
+        gp.translate(axis === 0 ? mx + t : mx, 0.44, axis === 0 ? mz : mz + t)
+        fenceGeos.push(gp)
+      }
+      for (const [r, y] of [[rail1, 0.22], [rail2, 0.56]] as const) {
+        r.rotateY(rot)
+        r.translate(mx, y, mz)
+        fenceGeos.push(r)
+      }
+
+    } else if (style === 'cedar') {
+      // split-rail ranch: two chunky horizontal rails, no pickets
+      const railTop = new BoxGeometry(1.02, 0.10, 0.085)
+      const railBot = new BoxGeometry(1.02, 0.10, 0.085)
+      railTop.rotateY(rot); railTop.translate(mx, 0.62, mz); fenceGeos.push(railTop)
+      railBot.rotateY(rot); railBot.translate(mx, 0.28, mz); fenceGeos.push(railBot)
+
+    } else if (style === 'stone') {
+      // one chunky drystone block per edge, slightly varying height
+      const bh = stoneBlockHeightFor(cx, cz)
+      const block = new BoxGeometry(1.02, bh, 0.26)
+      block.translate(mx, bh / 2, mz)
+      fenceGeos.push(block)
     }
-    for (const y of [0.2, 0.48]) {
-      const r = rail.clone()
-      r.rotateY(rot)
-      r.translate(mx, y, mz)
-      geos.push(r)
-    }
+
     posts.add(`${cx},${cz}`)
     posts.add(axis === 0 ? `${cx + 1},${cz}` : `${cx},${cz + 1}`)
   }
+
+  // ---- gates — wooden swing-frame, same for every style ---------------------
   for (const key of gates) {
     const { cx, cz, axis } = decode(key)
     const rot = axis === 1 ? Math.PI / 2 : 0
     const mx = axis === 0 ? cx + 0.5 : cx
     const mz = axis === 0 ? cz : cz + 0.5
-    // the lintel rides ABOVE head height — you walk under a gate, never
-    // through it — with little corner braces for the ranch-frame read
     const h = new BoxGeometry(1.06, 0.08, 0.08)
     h.rotateY(rot)
     h.translate(mx, 1.98, mz)
-    geos.push(h)
+    gateGeos.push(h)
     for (const side of [-0.5, 0.5]) {
       const brace = new BoxGeometry(0.2, 0.07, 0.06)
       brace.rotateZ(side > 0 ? 0.8 : -0.8)
       brace.rotateY(rot)
       brace.translate(axis === 0 ? mx + side * 0.86 : mx, 1.84, axis === 0 ? mz : mz + side * 0.86)
-      geos.push(brace)
+      gateGeos.push(brace)
     }
     gatePosts.add(`${cx},${cz}`)
     gatePosts.add(axis === 0 ? `${cx + 1},${cz}` : `${cx},${cz + 1}`)
   }
+
+  // ---- posts — style-specific dimensions ------------------------------------
+  // Stone uses wider, shorter piers; cedar uses chunky square posts; picket
+  // and classic share the same slender post geometry (just colour differs).
   for (const k of gatePosts) {
     posts.delete(k) // the taller gate post wins the corner
     const [x, z] = k.split(',').map(Number)
     const p = gatePost.clone()
     p.translate(x, 1.02, z)
-    geos.push(p)
+    gateGeos.push(p)
   }
-  for (const k of posts) {
-    const [x, z] = k.split(',').map(Number)
-    const p = post.clone()
-    p.translate(x, 0.39, z)
-    geos.push(p)
+
+  if (style === 'stone') {
+    for (const k of posts) {
+      const [x, z] = k.split(',').map(Number)
+      // stone pier: same grey block texture, slightly wider and a touch taller
+      const pier = new BoxGeometry(0.30, 0.76, 0.30)
+      pier.translate(x, 0.38, z)
+      fenceGeos.push(pier)
+    }
+  } else if (style === 'cedar') {
+    for (const k of posts) {
+      const [x, z] = k.split(',').map(Number)
+      const p = new BoxGeometry(0.16, 0.85, 0.16)
+      p.translate(x, 0.42, z)
+      fenceGeos.push(p)
+    }
+  } else {
+    // classic + picket share a slender post
+    for (const k of posts) {
+      const [x, z] = k.split(',').map(Number)
+      const p = new BoxGeometry(0.12, 0.78, 0.12)
+      p.translate(x, 0.39, z)
+      fenceGeos.push(p)
+    }
   }
+
   // a fully demolished farm is a legal farm — nothing to merge, nothing drawn
-  if (geos.length === 0) return null
-  const merged = mergeGeometries(geos)
+  if (fenceGeos.length === 0 && gateGeos.length === 0) return null
+
+  // ---- material selection ---------------------------------------------------
+  let mat: MeshStandardMaterial
+  if (style === 'cedar') {
+    mat = new MeshStandardMaterial({ map: cedarWoodTex(), roughness: 0.92 })
+  } else if (style === 'stone') {
+    mat = new MeshStandardMaterial({ map: stoneTex(), roughness: 0.96 })
+  } else if (style === 'picket') {
+    mat = new MeshStandardMaterial({ color: '#f5f2eb', roughness: 0.80 })
+  } else {
+    // classic — original cream
+    mat = new MeshStandardMaterial({ color: '#f4eedd', roughness: 0.85 })
+  }
+
+  // ---- merge and emit -------------------------------------------------------
+  // stone gates use a separate wooden overlay so they look like actual wood,
+  // not a stone lintel. For other styles the gate geometry folds into the
+  // single merged body (same visual material throughout).
+  let rootMesh: Mesh | null = null
+
+  if (style === 'stone' && gateGeos.length > 0) {
+    // draw call 1: stone body (fence + stone posts)
+    if (fenceGeos.length > 0) {
+      const mFence = mergeGeometries(fenceGeos)
+      if (mFence) {
+        const m = new Mesh(mFence, mat)
+        m.castShadow = true; m.receiveShadow = true
+        scene.add(m)
+        rootMesh = m
+      }
+    }
+    // draw call 2: wooden gate overlay
+    const woodMat = new MeshStandardMaterial({ map: cedarWoodTex(), roughness: 0.90 })
+    const mGate = mergeGeometries(gateGeos)
+    if (mGate) {
+      const gm = new Mesh(mGate, woodMat)
+      gm.castShadow = true; gm.receiveShadow = true
+      scene.add(gm)
+      if (!rootMesh) rootMesh = gm
+    }
+    return rootMesh
+  }
+
+  // all other styles: merge everything into 1 draw call
+  const allGeos = [...fenceGeos, ...gateGeos]
+  if (allGeos.length === 0) return null
+  const merged = mergeGeometries(allGeos)
   if (!merged) return null
-  const mesh = new Mesh(merged, new MeshStandardMaterial({ color: '#f4eedd', roughness: 0.85 }))
+  const mesh = new Mesh(merged, mat)
   mesh.castShadow = true
   mesh.receiveShadow = true
   scene.add(mesh)

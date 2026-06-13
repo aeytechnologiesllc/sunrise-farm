@@ -12,6 +12,7 @@ import {
   BoxGeometry,
   Color,
   CylinderGeometry,
+  CircleGeometry,
   Group,
   Mesh,
   MeshBasicMaterial,
@@ -40,7 +41,8 @@ import {
   type GoodKind,
 } from './game/economy'
 import { Customers } from './game/customers'
-import { blockByEdges, encodeEdge, expandRing, nearestEdge, toSets, toState } from './game/fence'
+import { DECOR, decorDef, type DecorId } from './game/decor'
+import { blockByEdges, encodeEdge, expandRing, FENCE_STYLES, nearestEdge, toSets, toState } from './game/fence'
 import { Game, type Suggestion } from './game/Game'
 import {
   canPlace,
@@ -62,6 +64,7 @@ import {
 } from './game/layout'
 import { FenceEditor } from './ui/fenceEditor'
 import { CarrySystem, snapToGrid } from './world/carry'
+import { DecorSet } from './world/decorSet'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
 import { Joystick } from './input/joystick'
 import { Hud, type ActionDef } from './ui/hud'
@@ -515,7 +518,7 @@ async function boot(): Promise<void> {
 
   // ---- the fence is yours: free to draw, free to tear down ------------------
   const fences = toSets(state.fences)
-  fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates)
+  fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates, state.fenceStyle)
   const fenceEditor = new FenceEditor({
     dom: renderer.domElement,
     camera: cam.camera,
@@ -523,6 +526,12 @@ async function boot(): Promise<void> {
     fences,
     allowed: (mx, mz) => fenceEdgeAllowed(state, mx, mz),
     onChange: () => rebuildFenceMesh(),
+    ownedStyles: () => game.ownedFenceStyles(),
+    activeStyle: () => state.fenceStyle,
+    onStyle: (id) => {
+      game.setFenceStyle(id as typeof state.fenceStyle)
+      rebuildFenceMesh()
+    },
     onFx: (x, z, kind) => {
       if (kind === 'remove') sfx.pop()
       else if (kind === 'build') sfx.plant()
@@ -531,7 +540,7 @@ async function boot(): Promise<void> {
       sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
     },
     canOpen: () =>
-      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen && !riding,
+      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen && !riding && !placingDecor,
     // editing wants OVERVIEW: pull back to see the line you're drawing
     // (the tight landscape ride is for walking, not surveying)
     onOpen: () => {
@@ -555,9 +564,106 @@ async function boot(): Promise<void> {
       fenceMesh.geometry.dispose()
       disposeMaterials(fenceMesh)
     }
-    fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates)
+    fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates, state.fenceStyle)
     state.fences = toState(fences)
     saveNow()
+  }
+
+  // ---- the decoration shop: place repeatable cosmetics, repaint fences ------
+  const decorSet = new DecorSet(scene)
+  decorSet.refresh(state.decor, state.day)
+  game.on('decorChanged', () => decorSet.refresh(state.decor, state.day))
+  // placement: a ghost glides ahead of the farmer; a pad shows whether the
+  // spot is legal (the reach guard rejects anywhere you couldn't walk back to)
+  let placingDecor: DecorId | null = null
+  let decorGhost: Group | null = null
+  let decorOk = false
+  const decorAim = new Vector3()
+  const decorPad = new Mesh(
+    new CircleGeometry(0.7, 24).rotateX(-Math.PI / 2),
+    new MeshBasicMaterial({ color: 0x5ac85a, transparent: true, opacity: 0.5, depthWrite: false }),
+  )
+  decorPad.position.y = 0.03
+  decorPad.visible = false
+  decorPad.renderOrder = 2
+  scene.add(decorPad)
+  const cancelDecorPlace = (): void => {
+    if (decorGhost) {
+      scene.remove(decorGhost)
+      decorGhost.traverse((o) => {
+        if (o instanceof Mesh) o.geometry.dispose()
+      })
+      decorGhost = null
+    }
+    decorPad.visible = false
+    placingDecor = null
+  }
+  const startPlacingDecor = (id: DecorId): void => {
+    cancelDecorPlace()
+    placingDecor = id
+    decorGhost = decorSet.buildOne(id, 0)
+    scene.add(decorGhost)
+    decorPad.visible = true
+    hud.showChip('Walk to aim it \u{2014} then Place it')
+  }
+  const commitDecor = (): void => {
+    if (!placingDecor || !decorOk) return
+    game.placeDecor(placingDecor, decorAim.x, decorAim.z, player.facing)
+    sfx.plant()
+    sparkleBurst(scene, new Vector3(decorAim.x, 0.3, decorAim.z), false, 5)
+    cancelDecorPlace()
+    hud.showChip(null)
+  }
+  /** the shop catalog: decorations to place + fence skins to buy */
+  const openCatalog = (): void => {
+    const decorCards = DECOR.map((d) => ({
+      id: `d:${d.id}`,
+      emoji: d.emoji,
+      title: d.name,
+      sub: state.level < d.level ? `unlocks at level ${d.level}` : d.blurb,
+      price: `${d.cost}c`,
+      locked: state.level < d.level || state.coins < d.cost,
+    }))
+    const styleCards = FENCE_STYLES.map((s) => {
+      const owned = game.ownedFenceStyles().includes(s.id)
+      return {
+        id: `f:${s.id}`,
+        emoji: s.emoji,
+        title: `${s.name} fence`,
+        sub: owned
+          ? '\u{2713} owned \u{2014} pick it in the fence editor'
+          : state.level < s.level
+            ? `unlocks at level ${s.level}`
+            : 'a fresh look for every fence',
+        price: owned ? '' : `${s.cost}c`,
+        locked: owned || state.level < s.level || state.coins < s.cost,
+      }
+    })
+    hud.showCardPanel('The Catalog \u{1F380}', [...decorCards, ...styleCards], (cardId) => {
+      if (cardId.startsWith('d:')) {
+        const id = cardId.slice(2) as DecorId
+        const d = decorDef(id)
+        if (state.level < d.level) return hud.floatText(hud.coinPillPos(), `level ${d.level} \u{1F512}`)
+        if (state.decor.length >= 24) return hud.floatText(hud.coinPillPos(), 'the farm is full')
+        if (state.coins < d.cost) return hud.floatText(hud.coinPillPos(), 'not enough coins')
+        hud.hideCardPanel()
+        startPlacingDecor(id)
+      } else if (cardId.startsWith('f:')) {
+        const id = cardId.slice(2) as typeof state.fenceStyle
+        if (game.ownedFenceStyles().includes(id)) {
+          hud.hideCardPanel()
+          return
+        }
+        if (game.buyFenceStyle(id)) {
+          rebuildFenceMesh()
+          sfx.kaching()
+          hud.hideCardPanel()
+          hud.showBanner('New fence skin! \u{1F380}', 'pick it in the fence editor \u{1F6E0}')
+        } else {
+          hud.floatText(hud.coinPillPos(), 'not yet')
+        }
+      }
+    })
   }
 
 
@@ -1113,6 +1219,7 @@ async function boot(): Promise<void> {
     // auto-walking 170u toward a homestead the room bounds will never reach
     if (sleepActive || construction.active || fetchCine || room !== null || roomBusy || carry.carrying || !dayCycle.atDusk) return
     dismountHazel() // you don't sleep in the saddle
+    cancelDecorPlace() // and you don't leave a decoration floating overnight
     fenceEditor.close() // the day's fencing is done at dusk
     sleepActive = true
     sleepStarted = engine.uTime.value
@@ -1820,7 +1927,7 @@ async function boot(): Promise<void> {
   })
   /** fixed-tick: a held press matures into a lift if it's over a movable */
   const checkLongPress = (): void => {
-    if (riding) return // no picking buildings up from the saddle
+    if (riding || placingDecor) return // not while mounted or arranging decor
     if (!press || engine.uTime.value - press.at < 0.55) return
     const ndc = {
       x: (press.x / innerWidth) * 2 - 1,
@@ -1878,6 +1985,8 @@ async function boot(): Promise<void> {
     upgrade: null as UpgradeId | null,
     /** by Hazel's paddock with the tack room owned — can mount up */
     ride: false,
+    /** at the Farm Shop with the catalog open to browse decor + fence skins */
+    catalog: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -2304,6 +2413,9 @@ async function boot(): Promise<void> {
     else if (id === 'orders' && near.orders) openOrderPanel()
     else if (id === 'ride' && near.ride) mountHazel()
     else if (id === 'hopoff' && riding) dismountHazel()
+    else if (id === 'catalog' && near.catalog) openCatalog()
+    else if (id === 'decorplace' && placingDecor) commitDecor()
+    else if (id === 'decorcancel') cancelDecorPlace()
     else if (id === 'upgrade' && near.upgrade) {
       const at = upgradeSigns.get(near.upgrade)?.at
       const def = game.buyUpgrade(near.upgrade)
@@ -2610,6 +2722,14 @@ async function boot(): Promise<void> {
       carryCheck = canPlace(state, carry.carrying, gx, gz)
       carry.aimGhost(gx, gz, carryCheck.ok)
     }
+    if (placingDecor && decorGhost) {
+      decorAim.set(player.pos.x + Math.sin(player.facing) * 2.0, 0, player.pos.z + Math.cos(player.facing) * 2.0)
+      decorGhost.position.copy(decorAim)
+      decorGhost.rotation.y = player.facing
+      decorOk = game.canBuyDecor(placingDecor, decorAim.x, decorAim.z)
+      decorPad.position.set(decorAim.x, 0.03, decorAim.z)
+      ;(decorPad.material as MeshBasicMaterial).color.setHex(decorOk ? 0x5ac85a : 0xd05a5a)
+    }
     chicken.update(dt)
     dog.update(dt, player.pos)
     flock.update(dt, player.pos, dog.group.position, state.expansion, fences)
@@ -2778,6 +2898,8 @@ async function boot(): Promise<void> {
       near.coop = game.hasProject('coop') && p.distanceTo(COOP_AT) < 3.6
       near.ride =
         !riding && canRideHazel(state) && state.produce.deliveryT <= 0 && p.distanceTo(PADDOCK_CENTER) < 3.6
+      near.catalog =
+        !placingDecor && !riding && game.hasProject('shop') && MARKET.atShop && p.distanceTo(MARKET.pos) < 3.4
       near.project = null
       let signD = 2.6
       for (const [id, s] of projectSigns) {
@@ -2901,6 +3023,16 @@ async function boot(): Promise<void> {
     if (riding) {
       // up on Hazel: the only verb is to get back down (riding owns the rest)
       actions.push({ id: 'hopoff', emoji: '\u{1F434}', label: 'Hop down', sub: 'back on your own feet' })
+    } else if (placingDecor && !hud.modalOpen) {
+      // arranging a decoration — set it down where the pad is green, or bail
+      actions.push({
+        id: 'decorplace',
+        emoji: '\u{1F33C}',
+        label: 'Place it here',
+        sub: decorOk ? 'set it down' : "can't place there",
+        locked: !decorOk,
+      })
+      actions.push({ id: 'decorcancel', emoji: '\u{274C}', label: 'Cancel', sub: 'never mind' })
     } else if (carry.carrying && !hud.modalOpen) {
       // one verb while a building is in your arms (the spot speaks via color)
       const why: Record<string, string> = {
@@ -3194,6 +3326,9 @@ async function boot(): Promise<void> {
       }
       if (near.ride) {
         actions.push({ id: 'ride', emoji: '\u{1F434}', label: 'Ride Hazel', sub: 'saddle up and roam the farm' })
+      }
+      if (near.catalog) {
+        actions.push({ id: 'catalog', emoji: '\u{1F380}', label: 'The Catalog', sub: 'decorations & fence skins' })
       }
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
