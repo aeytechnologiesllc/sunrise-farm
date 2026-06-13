@@ -112,6 +112,9 @@ export class FollowCamera {
    * touch and the pick, which read to the owner as "taps don't register".
    * main toggles this in the editor's onOpen/onClose. */
   editorActive = false
+  /** while riding Hazel the subject sits up on her back — lift the look anchor
+   * so the shot frames the rider, not the horse's rear */
+  rideLift = 0
 
   constructor(dom: HTMLElement, start: Vector3) {
     // a hidden tab can boot with a 0x0 viewport — never divide by it
@@ -400,7 +403,7 @@ export class FollowCamera {
     const lookX = clampAbs(vel.x * LOOKAHEAD, LOOKAHEAD_MAX)
     const lookZ = clampAbs(vel.z * LOOKAHEAD, LOOKAHEAD_MAX)
     this.anchor.x += (playerPos.x + lookX - this.anchor.x) * k
-    this.anchor.y += (playerPos.y + 0.9 - this.anchor.y) * k
+    this.anchor.y += (playerPos.y + 0.9 + this.rideLift - this.anchor.y) * k
     this.anchor.z += (playerPos.z + lookZ - this.anchor.z) * k
     if (this.cineDist === null) this.smoothDist += (this.dist - this.smoothDist) * k
     // near-plane safe radius tracks the live near/fov/aspect (rooms pull the
@@ -447,7 +450,10 @@ export class FollowCamera {
     // sits a notch tighter than before (owner: "more zoomed into the
     // character on landscape"); CINE shots keep the 0.74 they were authored
     // and QA'd against on both aspects.
-    const kAspect = this.camera.aspect > 1.2 ? (this.cineTarget ? 0.74 : 0.64) : 1
+    // riding sits back a notch (0.82) so the whole horse + rider fit; gameplay
+    // on foot stays tight (0.64); cines keep their authored 0.74
+    const kAspect =
+      this.camera.aspect > 1.2 ? (this.cineTarget ? 0.74 : this.rideLift > 0 ? 0.82 : 0.64) : 1
     let dist = this.smoothDist * kAspect
     // ...and look slightly down from above when pinned (output-stage only:
     // the player's pitch state is untouched, manual feel rules hold). At
@@ -457,6 +463,9 @@ export class FollowCamera {
     if (!this.cineTarget) {
       const raised = Math.min(0.95, Math.max(MIN_PITCH, this.pitch + this.kTight * 0.35 * (1 - this.kCollapse)))
       ep = raised * (1 - this.kCollapse) + 0.12 * this.kCollapse
+      // riding: look DOWN over the horse's body so the rider on her back reads,
+      // instead of staring at her rump from directly behind
+      if (this.rideLift > 0) ep = Math.max(ep, 0.66)
     }
     const place = (d: number, into: Vector3, yawOff = 0): Vector3 => {
       const horiz = Math.cos(ep) * d

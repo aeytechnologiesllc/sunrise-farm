@@ -28,6 +28,8 @@ const WALK_SPEED = 3.2
  * speed READ faster — the owner felt the run "too fast" only after the
  * zoom-in, so the run eases off rather than the camera backing out */
 const RUN_SPEED = 3.8
+/** riding Hazel covers ground faster — a brisk canter across the farm */
+const RIDE_BOOST = 1.75
 /** stick deflection above which the farmer breaks into a run */
 const RUN_DEFLECT = 0.7
 const TURN_RATE = 11
@@ -84,6 +86,10 @@ export class PlayerView {
   private baseScale = 1
   private rig: ProceduralRig | null = null
   private swingT = 0
+  /** riding: the farmer MODEL lifts onto the saddle (pos stays ground-level so
+   * proximity/camera are unaffected) and travels at a canter */
+  private mounted = false
+  private rideBoost = 1
   private bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
 
   constructor(assets: Assets, scene: Scene, spawn: Vector3, bounds: { minX: number; maxX: number; minZ: number; maxZ: number }) {
@@ -148,6 +154,19 @@ export class PlayerView {
     return this.autoTo !== null
   }
 
+  /** mount/dismount Hazel: lifts the farmer model onto the saddle and lets him
+   * canter. The group's position (pos) stays at ground level — only the model
+   * child rises — so every proximity check and the camera anchor are unmoved. */
+  setMounted(on: boolean, saddleY = 0): void {
+    this.mounted = on
+    this.rideBoost = on ? RIDE_BOOST : 1
+    this.model.position.y = on ? saddleY : 0
+  }
+
+  get isMounted(): boolean {
+    return this.mounted
+  }
+
   /** fixed-step: camera-relative input -> velocity -> clamped position.
    * Deflection <= 70% walks (speed scales with deflection); beyond that the
    * farmer breaks into a run. */
@@ -169,9 +188,10 @@ export class PlayerView {
     }
     const mag = Math.min(1, Math.hypot(input.x, input.y))
     this.running = mag > RUN_DEFLECT
-    const speed = this.running
-      ? WALK_SPEED + ((mag - RUN_DEFLECT) / (1 - RUN_DEFLECT)) * (RUN_SPEED - WALK_SPEED)
-      : (mag / RUN_DEFLECT) * WALK_SPEED
+    const speed =
+      (this.running
+        ? WALK_SPEED + ((mag - RUN_DEFLECT) / (1 - RUN_DEFLECT)) * (RUN_SPEED - WALK_SPEED)
+        : (mag / RUN_DEFLECT) * WALK_SPEED) * this.rideBoost
     const fx = -Math.sin(camYaw)
     const fz = -Math.cos(camYaw)
     const rx = Math.cos(camYaw)
@@ -206,7 +226,10 @@ export class PlayerView {
   frame(dt: number, t: number): void {
     const moving = this.speed > 0.25
     if (this.mixer) {
-      if (t < this.gestureUntil) {
+      if (this.mounted) {
+        // seated on Hazel — the body stays calm; her gait sells the motion
+        this.swap(this.idle, 1)
+      } else if (t < this.gestureUntil) {
         // one-shot gesture owns the body briefly
       } else if (moving) {
         const fast = this.speed > WALK_SPEED + 0.35 && this.run

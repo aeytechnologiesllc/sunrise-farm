@@ -229,6 +229,7 @@ export class StableInterior {
   private animT: number
   private readonly awayNote = new Group()
   private readonly noHorseYet = new Group()
+  private readonly tackGroup = new Group()
   private motes: Points | null = null
   private t = 0
 
@@ -548,6 +549,132 @@ export class StableInterior {
     this.noHorseYet.add(mound, halterLoop, strapV, strapH, hopeBoard, hopeText)
     this.root.add(this.noHorseYet)
 
+    // ---- Hazel's Tack Room: SW aisle corner (local x≈-4.5…-3.8, z≈2.2…3.8) --
+    // Starts hidden; owner calls setTackRoom(true) once the upgrade is purchased.
+    // Two merged draws: one propWood mesh, one leather mesh.
+    const tackWoodGeos: BufferGeometry[] = []
+    const tackLeatherGeos: BufferGeometry[] = []
+
+    // — Saddle stand — an A-frame wooden rack at (-4.5, 0, 3.2) —
+    // two angled legs each side, a horizontal crossbar
+    for (const sx of [-1, 1]) {
+      // front pair
+      const legF = new BoxGeometry(0.055, 0.82, 0.055)
+      legF.rotateZ(sx * 0.28)
+      legF.translate(-4.5 + sx * 0.3, 0.41, 3.05)
+      tackWoodGeos.push(legF)
+      // back pair
+      const legB = new BoxGeometry(0.055, 0.82, 0.055)
+      legB.rotateZ(sx * 0.28)
+      legB.translate(-4.5 + sx * 0.3, 0.41, 3.35)
+      tackWoodGeos.push(legB)
+    }
+    // top rail connecting the two A peaks
+    const standRail = new BoxGeometry(0.8, 0.062, 0.062)
+    standRail.translate(-4.5, 0.82, 3.2)
+    tackWoodGeos.push(standRail)
+    // lower stretcher bars (front + back)
+    for (const sz of [3.05, 3.35]) {
+      const str = new BoxGeometry(0.7, 0.048, 0.048)
+      str.translate(-4.5, 0.26, sz)
+      tackWoodGeos.push(str)
+    }
+
+    // — Saddle draped over the stand peak —
+    // seat (slightly curved feel: a thick flat box)
+    const seatG = new BoxGeometry(0.56, 0.12, 0.28)
+    seatG.translate(-4.5, 0.88, 3.2)
+    tackLeatherGeos.push(seatG)
+    // flaps hanging either side of the peak
+    for (const ss of [-1, 1]) {
+      const flap = new BoxGeometry(0.48, 0.28, 0.055)
+      flap.rotateX(ss * 0.5)
+      flap.translate(-4.5, 0.76, 3.2 + ss * 0.18)
+      tackLeatherGeos.push(flap)
+    }
+    // stirrup straps (thin vertical strips)
+    for (const sx of [-0.18, 0.18]) {
+      const strap = new BoxGeometry(0.038, 0.34, 0.028)
+      strap.translate(-4.5 + sx, 0.65, 3.28)
+      tackLeatherGeos.push(strap)
+    }
+
+    // — Bridle on a wall peg — west wall at x ≈ -HALF_W + 0.12 = -6.88 —
+    // peg: small stub of wood poking east from the wall
+    const peg = new BoxGeometry(0.18, 0.045, 0.045)
+    peg.translate(-6.8, 1.55, 3.05)
+    tackWoodGeos.push(peg)
+    // bridle headpiece loop
+    const bridle = new TorusGeometry(0.14, 0.024, 6, 12)
+    bridle.rotateZ(Math.PI / 2)
+    bridle.translate(-6.7, 1.55, 3.05)
+    tackLeatherGeos.push(bridle)
+    // cheek pieces hanging down
+    for (const sz of [-0.1, 0.1]) {
+      const cheek = new BoxGeometry(0.034, 0.28, 0.026)
+      cheek.translate(-6.7, 1.34, 3.05 + sz)
+      tackLeatherGeos.push(cheek)
+    }
+    // bit: a small horizontal cylinder at the bottom
+    const bit = new CylinderGeometry(0.018, 0.018, 0.26, 6)
+    bit.rotateX(Math.PI / 2)
+    bit.translate(-6.7, 1.1, 3.05)
+    tackLeatherGeos.push(bit)
+
+    // — Grooming caddy — a low open-top crate at (-3.9, 0, 2.3) —
+    // crate walls (four thin planks)
+    for (const [w, d, cx, cz] of [
+      [0.52, 0.06, -3.9, 2.06],   // front
+      [0.52, 0.06, -3.9, 2.54],   // back
+      [0.06, 0.5, -4.17, 2.3],    // left
+      [0.06, 0.5, -3.63, 2.3],    // right
+    ] as [number, number, number, number][]) {
+      const side = new BoxGeometry(w, 0.18, d)
+      side.translate(cx, 0.19, cz)
+      tackWoodGeos.push(side)
+    }
+    // crate floor
+    const crateFloor = new BoxGeometry(0.52, 0.055, 0.5)
+    crateFloor.translate(-3.9, 0.078, 2.3)
+    tackWoodGeos.push(crateFloor)
+    // handle rail across the top
+    const handleRail = new BoxGeometry(0.52, 0.04, 0.04)
+    handleRail.translate(-3.9, 0.42, 2.3)
+    tackWoodGeos.push(handleRail)
+    // brushes inside — blocky rectangles sticking up
+    for (const [bx, bz, bry] of [
+      [-4.08, 2.24, 0.25],
+      [-3.9, 2.19, -0.15],
+      [-3.72, 2.26, 0.35],
+    ] as [number, number, number][]) {
+      const bristleBlock = new BoxGeometry(0.07, 0.18, 0.12)
+      bristleBlock.rotateY(bry)
+      bristleBlock.translate(bx, 0.37, bz)
+      tackLeatherGeos.push(bristleBlock) // leather-brown is a good brush tone
+      const brushHandle = new BoxGeometry(0.042, 0.22, 0.042)
+      brushHandle.rotateY(bry)
+      brushHandle.translate(bx, 0.56, bz)
+      tackWoodGeos.push(brushHandle)
+    }
+
+    // merge and add both material layers
+    const tackWoodMerged = mergeGeometries(tackWoodGeos)
+    const tackLeatherMerged = mergeGeometries(tackLeatherGeos)
+    if (tackWoodMerged) {
+      const m = new Mesh(tackWoodMerged, propWood)
+      m.castShadow = false
+      m.receiveShadow = false
+      this.tackGroup.add(m)
+    }
+    if (tackLeatherMerged) {
+      const m = new Mesh(tackLeatherMerged, leather)
+      m.castShadow = false
+      m.receiveShadow = false
+      this.tackGroup.add(m)
+    }
+    this.tackGroup.visible = false
+    this.root.add(this.tackGroup)
+
     this.sync({ horseOwned: false, horseHome: false })
     this.root.visible = false
   }
@@ -562,6 +689,12 @@ export class StableInterior {
   setActive(on: boolean): void {
     this.root.visible = on
     for (const l of this.lamps) l.intensity = on ? 1.0 : 0
+  }
+
+  /** Show or hide the Hazel's Tack Room upgrade vignette in the SW aisle corner.
+   *  Call at boot (if upgrade already owned) and again on purchase. Idempotent. */
+  setTackRoom(on: boolean): void {
+    this.tackGroup.visible = on
   }
 
   get active(): boolean {

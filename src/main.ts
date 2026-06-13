@@ -105,6 +105,7 @@ import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS } from './gam
 import { nextGoal } from './game/goals'
 import {
   availableUpgrades,
+  canRideHazel,
   greenhouseBeds,
   marketPremiumBonus,
   marketQueueBonus,
@@ -113,6 +114,7 @@ import {
   upgradeDef,
   type UpgradeId,
 } from './game/upgrades'
+import { RideRig } from './world/riding'
 import { TownSet } from './world/townSet'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
@@ -448,6 +450,7 @@ async function boot(): Promise<void> {
   }
   // the home renovation shows on boot if it's been bought
   if (state.upgrades.homereno) farmhouseInterior.setRenovated(true)
+  if (state.upgrades.tackroom) stableInterior.setTackRoom(true)
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
 
   /** free GPU resources of a removed object tree (textures included) */
@@ -528,7 +531,7 @@ async function boot(): Promise<void> {
       sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
     },
     canOpen: () =>
-      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen,
+      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen && !riding,
     // editing wants OVERVIEW: pull back to see the line you're drawing
     // (the tight landscape ride is for walking, not surveying)
     onOpen: () => {
@@ -658,6 +661,8 @@ async function boot(): Promise<void> {
       grazers.add('goat', GOAT_RECT, 1)
     } else if (id === 'homereno') {
       farmhouseInterior.setRenovated(true)
+    } else if (id === 'tackroom') {
+      stableInterior.setTackRoom(true)
     }
     refreshUpgradeSigns()
     if (!sleepActive && !construction.active) {
@@ -1107,6 +1112,7 @@ async function boot(): Promise<void> {
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
     if (sleepActive || construction.active || fetchCine || room !== null || roomBusy || carry.carrying || !dayCycle.atDusk) return
+    dismountHazel() // you don't sleep in the saddle
     fenceEditor.close() // the day's fencing is done at dusk
     sleepActive = true
     sleepStarted = engine.uTime.value
@@ -1358,6 +1364,34 @@ async function boot(): Promise<void> {
   /** the horse grazes her west paddock by the stable; goats join the pen */
   const paddock = paddockRect(state) // travels with the stable
   const HORSE_RECT = { x0: paddock.x0 + 0.3, z0: paddock.z0 + 0.3, x1: paddock.x1 - 0.3, z1: paddock.z1 - 0.3 }
+  const PADDOCK_CENTER = new Vector3((paddock.x0 + paddock.x1) / 2, 0, (paddock.z0 + paddock.z1) / 2)
+  // riding Hazel: the rig renders her under the farmer; the player controller
+  // stays authoritative for movement (gated on the Tack Room upgrade)
+  const rideRig = new RideRig(scene, assets)
+  let riding = false
+  let rideSavedDist: number | null = null
+  const mountHazel = (): void => {
+    if (riding || !canRideHazel(state) || state.produce.deliveryT > 0) return
+    riding = true
+    grazers.setHidden('horse', true) // the grazing Hazel steps in to be ridden
+    rideRig.mount(player.pos, player.facing)
+    player.setMounted(true, rideRig.saddleY)
+    cam.rideLift = 0.85 // aim up at the rider, not the horse's back
+    rideSavedDist = cam.dist
+    cam.dist = Math.min(17, cam.dist + 2.2) // sit back to frame horse + rider
+    sfx.hooves()
+    hud.showBanner('Up on Hazel \u{1F434}', 'ride out — press Hop down to dismount')
+  }
+  const dismountHazel = (): void => {
+    if (!riding) return
+    riding = false
+    rideRig.dismount()
+    player.setMounted(false)
+    cam.rideLift = 0
+    grazers.setHidden('horse', state.produce.deliveryT > 0) // back to grazing unless she's away
+    if (rideSavedDist !== null) cam.dist = rideSavedDist
+    rideSavedDist = null
+  }
   const penRect0 = penRect(state)
   const GOAT_RECT = { x0: penRect0.x0 + 0.7, z0: penRect0.z0 + 0.7, x1: penRect0.x1 - 0.7, z1: penRect0.z1 - 0.7 }
   let farmhand: FarmhandView | null = null
@@ -1786,6 +1820,7 @@ async function boot(): Promise<void> {
   })
   /** fixed-tick: a held press matures into a lift if it's over a movable */
   const checkLongPress = (): void => {
+    if (riding) return // no picking buildings up from the saddle
     if (!press || engine.uTime.value - press.at < 0.55) return
     const ndc = {
       x: (press.x / innerWidth) * 2 - 1,
@@ -1841,6 +1876,8 @@ async function boot(): Promise<void> {
     orders: false,
     /** at a building-UPGRADE sign */
     upgrade: null as UpgradeId | null,
+    /** by Hazel's paddock with the tack room owned — can mount up */
+    ride: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -1862,6 +1899,10 @@ async function boot(): Promise<void> {
       return new Vector3(p.x - 2.8, 0, p.z + 1.9)
     },
     pasture: () => PEN_CENTER.clone().add(new Vector3(0, 0, -3.4)),
+    tackroom: () => {
+      const p = placeOf(state, 'stable')
+      return new Vector3(p.x + 3.4, 0, p.z + 2.0)
+    },
     homereno: () => homestead.doorPos.clone().add(new Vector3(2.4, 0, 0.4)),
   }
   const upgradeSigns = new Map<UpgradeId, { group: Group; at: Vector3 }>()
@@ -2261,6 +2302,8 @@ async function boot(): Promise<void> {
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
     else if (id === 'orders' && near.orders) openOrderPanel()
+    else if (id === 'ride' && near.ride) mountHazel()
+    else if (id === 'hopoff' && riding) dismountHazel()
     else if (id === 'upgrade' && near.upgrade) {
       const at = upgradeSigns.get(near.upgrade)?.at
       const def = game.buyUpgrade(near.upgrade)
@@ -2733,6 +2776,8 @@ async function boot(): Promise<void> {
       near.pen = game.hasProject('sheep') && p.distanceTo(PEN_CENTER) < 4.2
       near.stable = game.hasProject('stable') && p.distanceTo(STABLE_AT) < 3.4
       near.coop = game.hasProject('coop') && p.distanceTo(COOP_AT) < 3.6
+      near.ride =
+        !riding && canRideHazel(state) && state.produce.deliveryT <= 0 && p.distanceTo(PADDOCK_CENTER) < 3.6
       near.project = null
       let signD = 2.6
       for (const [id, s] of projectSigns) {
@@ -2853,7 +2898,10 @@ async function boot(): Promise<void> {
     // ---- context action buttons (big, above the right thumb) ----
     // one scene at a time: no buttons exist while ANY cinematic is rolling
     const actions: ActionDef[] = []
-    if (carry.carrying && !hud.modalOpen) {
+    if (riding) {
+      // up on Hazel: the only verb is to get back down (riding owns the rest)
+      actions.push({ id: 'hopoff', emoji: '\u{1F434}', label: 'Hop down', sub: 'back on your own feet' })
+    } else if (carry.carrying && !hud.modalOpen) {
       // one verb while a building is in your arms (the spot speaks via color)
       const why: Record<string, string> = {
         far: "you couldn't walk back to it out there",
@@ -3144,6 +3192,9 @@ async function boot(): Promise<void> {
           })
         }
       }
+      if (near.ride) {
+        actions.push({ id: 'ride', emoji: '\u{1F434}', label: 'Ride Hazel', sub: 'saddle up and roam the farm' })
+      }
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
       }
@@ -3330,6 +3381,7 @@ async function boot(): Promise<void> {
     }
     music.tick()
     player.frame(dt, t)
+    if (riding) rideRig.update(dt, player.pos, player.facing, player.speed)
     chicken.frame(dt, t)
     dog.frame(dt)
     flock.frame(dt, player.pos)
