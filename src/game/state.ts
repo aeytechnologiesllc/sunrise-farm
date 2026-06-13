@@ -77,6 +77,9 @@ export interface GameState {
    * the crop field moved out east as parcels. Pre-redesign saves reset their
    * fence to the fixed yard ring exactly once on load (flag true from birth) */
   fieldRedesign: boolean
+  /** follow-up to fieldRedesign: the first reset baked a too-narrow east gate;
+   * a save without this flag re-issues the yard ring once for the wider gate */
+  eastGateFixed: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
   /** totals at dawn — the goodnight scene shows today's tally against these */
@@ -166,6 +169,7 @@ export function initialState(seed: number): GameState {
     horseSplit: true,
     farmhandRetired: true,
     fieldRedesign: true,
+    eastGateFixed: true,
     day: 1,
     dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
@@ -308,6 +312,13 @@ export function deserialize(json: string | null): GameState | null {
     // grown ring's outer pickets no longer correspond to any owned land).
     if (!s.fieldRedesign) {
       s.fieldRedesign = true
+      s.fences = ringEdges(0)
+    }
+    // the FIRST redesign reset baked a too-narrow east gate (it snapped to a gap
+    // that walled off the outer plot rows). Re-issue the yard ring ONCE more so
+    // already-migrated saves pick up the widened EAST_GATE and can leave the field.
+    if (!s.eastGateFixed) {
+      s.eastGateFixed = true
       s.fences = ringEdges(0)
     }
     // Hazel's affection arrived after the stable did — old saves start cold

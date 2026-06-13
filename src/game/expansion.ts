@@ -252,8 +252,11 @@ export const FIELD_Z0 = -0.8
 export const FIELD_Z1 = 4.8
 /** plots per parcel (2 columns × 2 rows) */
 export const PLOTS_PER = 4
-/** the gate in the homestead's east fence that opens onto the field lane */
-export const EAST_GATE: GateDef = { wall: 'E', center: 2.0, half: 1.4 }
+/** the gate in the homestead's east fence that opens onto the field lane.
+ * half=2.0 (not 1.4) so the ringEdges grid-snap opens cells z=0..3 — covering
+ * BOTH plot rows (z=0.6 and z=3.4); a narrower gap left the outer rows walled
+ * off, trapping the player against the fence after tending those plots */
+export const EAST_GATE: GateDef = { wall: 'E', center: 2.0, half: 2.0 }
 
 /** THE FIXED HOMESTEAD YARD — the cosy ring near spawn that encloses every
  * homestead building (home, stand, stable, coop, greenhouse, pen, tractor).

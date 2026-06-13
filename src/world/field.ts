@@ -92,9 +92,11 @@ function sharedDirt(): CanvasTexture {
 }
 
 // ONE soil material shared across every field parcel's slab — the endless field
-// can grow to many parcels, and a fresh MeshStandardMaterial per slab is a
-// distinct GPU material-state change each. Three.js batches by material
-// identity, so a single shared instance lets the driver draw all soil together.
+// can grow to many parcels, and a fresh MeshStandardMaterial per slab would be a
+// distinct GPU shader/uniform bind each. Sharing one instance lets the driver
+// skip those redundant material switches. (Each slab is still its own draw call;
+// they're frustum-culled and parcels cost-climb steeply so the live count stays
+// small — a geometry merge into one mesh is the next step if it ever bites.)
 let soilMat: MeshStandardMaterial | null = null
 function sharedSoilMat(): MeshStandardMaterial {
   if (!soilMat) soilMat = new MeshStandardMaterial({ map: sharedDirt(), vertexColors: true, roughness: 1 })

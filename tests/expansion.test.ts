@@ -10,6 +10,7 @@ import {
   FIELD_Z0,
   FIELD_Z1,
   gatesFor,
+  EAST_GATE,
   HOMESTEAD_FENCE,
   inRect,
   MAX_TIER,
@@ -132,6 +133,16 @@ describe('expansion tiers', () => {
       expect(walls).toContain('W') // pasture lot
       expect(walls).toContain('E') // the lane out to the endless crop field
     }
+  })
+
+  it('the east gate opens BOTH plot rows — no wall after tending the outer rows', () => {
+    // ringEdges (fence.ts) snaps the gate to integer grid cells: cell z is OPEN
+    // when z+0.5 ∈ (center-half, center+half). The plot rows sit at z=0.6 (cell 0)
+    // and z=3.4 (cell 3); a too-narrow gate (half 1.4 → only cells 1,2) trapped
+    // the player against the fence walking west off those rows.
+    const open = (zCell: number) =>
+      zCell + 0.5 > EAST_GATE.center - EAST_GATE.half && zCell + 0.5 < EAST_GATE.center + EAST_GATE.half
+    for (const zCell of [0, 1, 2, 3]) expect(open(zCell)).toBe(true) // every field-row cell is a gate
   })
 
   it('the flock grows with the pasture deed', () => {
