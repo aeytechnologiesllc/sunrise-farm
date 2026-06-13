@@ -94,7 +94,7 @@ describe('delivery nudge when Hazel is home but idle', () => {
     expect(g!.pill).toBe('🚚 Send Hazel to town')
   })
 
-  it('does NOT fire delivery if already delivered once', () => {
+  it('keeps nudging deliveries toward the next town act after the first run', () => {
     const s = make((x) => {
       x.level = 6
       x.expansion = 3
@@ -105,11 +105,26 @@ describe('delivery nudge when Hazel is home but idle', () => {
       x.projects.coop = true
       x.projects.stable = true
       x.projects.horse = true
-      x.town.delivered = 1 // already made at least one delivery
+      x.town.delivered = 1 // one run in; the bakery still needs more
     })
     const g = nextGoal(s)
-    // might return a levelwall or coins-blocked goal, but NOT delivery
-    if (g !== null) expect(g.kind).not.toBe('delivery')
+    // the thread must NOT die after one run — the compass keeps pointing at the
+    // deliveries that unlock the next act (the gap this fixed)
+    expect(g?.kind).toBe('delivery')
+    expect(g?.id).toBe('more-deliveries')
+  })
+
+  it('stops the delivery nudge once the next act is fully unlocked', () => {
+    const s = make((x) => {
+      x.projects.horse = true
+      x.town.built.bakery = true // bakery done; cottages needs 6, give it 6
+      x.town.delivered = 6
+      x.coins = 0
+      x.wheat = 0
+    })
+    const g = nextGoal(s)
+    // cottages is now delivery-met (only coins/wheat short) — no delivery nudge
+    if (g !== null) expect(g.id).not.toBe('more-deliveries')
   })
 })
 

@@ -25,7 +25,7 @@ import { FENCE_STYLES } from './fence'
 import { availableProjects, PROJECTS, projectStatus } from './projects'
 import type { GameState } from './state'
 import { nextTownAct, townStatus } from './town'
-import { availableUpgrades, upgradeStatus } from './upgrades'
+import { availableUpgrades, UPGRADES, upgradeStatus } from './upgrades'
 
 export interface Goal {
   kind: 'project' | 'deed' | 'townact' | 'delivery' | 'levelwall' | 'contract' | 'upgrade' | 'fencestyle' | 'decor'
@@ -146,6 +146,21 @@ export function nextGoal(s: GameState): Goal | null {
         pill: '🚚 Send Hazel to town',
         blocked: null,
         at: undefined,
+      }
+    }
+    // keep nudging the deliveries that unlock the NEXT town act — otherwise the
+    // player makes one run, the board still says "locked", and the thread dies
+    if (s.projects.horse) {
+      const act = nextTownAct(s)
+      if (act && townStatus(act, s) === 'delivered') {
+        const left = act.needDelivered - s.town.delivered
+        return {
+          kind: 'delivery',
+          id: 'more-deliveries',
+          pill: pill40('🚚 ', `${left} more run${left === 1 ? '' : 's'} to ${act.name}`, ''),
+          blocked: 'delivered',
+          at: undefined,
+        }
       }
     }
   }
@@ -305,6 +320,14 @@ export function nextGoal(s: GameState): Goal | null {
       if (def.unlockLevel > s.level) {
         walls.push({ level: def.unlockLevel, label: `${def.label} crop` })
       }
+    }
+
+    // from building upgrades whose prerequisite is owned but the level isn't met
+    // yet — otherwise riding (the Tack Room, lvl 24) is invisible until you hit it
+    for (const u of UPGRADES) {
+      if (s.upgrades[u.id]) continue
+      if (u.requiresProject && !s.projects[u.requiresProject]) continue
+      if (u.level > s.level) walls.push({ level: u.level, label: u.name })
     }
 
     if (walls.length > 0) {
