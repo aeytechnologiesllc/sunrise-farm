@@ -92,9 +92,8 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // CHUNKED instancing (the smooth-fps pass): the meadow is split into a
   // grid of cells, each its own InstancedMesh with a hand-set bounding
   // sphere — so the camera only pays vertex+wind cost for cells actually
-  // on screen (typically a third of the field). That headroom buys the
-  // phone lawn DENSITY back (40k blades, up from the 28k 'airier' cut
-  // the owner clocked as lost quality) and still comes out far cheaper.
+  // on screen (typically a third of the field). Phones use fewer, wider
+  // chunks so they pay fewer draw calls while keeping meadow texture.
   // scaled up with the widened SPAN (68→114 units east-west) so per-area blade
   // density matches the original tuned lawn — placement is uniform over SPAN,
   // so holding COUNT fixed while widening would have thinned the whole meadow.
@@ -102,21 +101,25 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // the bump runs a touch past the raw area ratio to hold near-meadow density.)
   // per-frame cost is unchanged — frustum culling bounds on-screen blades to
   // what the camera sees; the extra count is memory + boot scatter only.
-  const COUNT = coarse ? 20500 : 30000
+  const COUNT = coarse ? 12000 : 30000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = { value: 0 }
     timeU = shader.uniforms.uTime as { value: number }
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nuniform float uTime;\nattribute float gradient;\nvarying float vGradient;',
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
+    const windBlock = coarse
+      ? `#include <begin_vertex>
+        vGradient = gradient;
+        #ifdef USE_INSTANCING
+          vec4 gIpos = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          float gPh = gIpos.x * 1.4 + gIpos.z * 1.1;
+          float gW = gradient * gradient;
+          float gH = length(instanceMatrix[1].xyz);
+          transformed.x += sin(uTime * 1.55 + gPh) * 0.32 * gH * gW;
+          transformed.z += cos(uTime * 1.0 + gPh) * 0.035 * gW;
+        #endif`
+      : `#include <begin_vertex>
         vGradient = gradient;
         #ifdef USE_INSTANCING
           // wind weight grows with gradient^2: tips swing, roots stay planted
@@ -140,7 +143,15 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
           float gGust = sin((gIpos.x + gIpos.z) * 0.13 + uTime * 0.7);
           transformed.x += gGust * 0.42 * gH * gW;
           transformed.z += gGust * 0.07 * gW;
-        #endif`,
+        #endif`
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform float uTime;\nattribute float gradient;\nvarying float vGradient;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        windBlock,
       )
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vGradient;')
@@ -159,7 +170,7 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // until the camera is actually out there. COUNT scales with this width so
   // the near-meadow density the owner tuned is preserved, not diluted.
   const SPAN = { x0: -34, x1: 80, z0: -28, z1: 28 }
-  const CELL = 12
+  const CELL = coarse ? 18 : 12
   const COLS = Math.ceil((SPAN.x1 - SPAN.x0) / CELL)
   const ROWS = Math.ceil((SPAN.z1 - SPAN.z0) / CELL)
   const bladeGeo = bladeGeometry()

@@ -250,10 +250,11 @@ export function buildLights(scene: Scene): LightHandles {
   const sun = new DirectionalLight('#ffe9bd', 2.6)
   sun.position.set(12, 22, -9)
   sun.castShadow = true
-  // phones render the shadow map every frame too — half-res there ("heavy"
-  // report); PCF + normalBias keep edges acceptable at 1024
+  // phones are fill/shadow bound when the player runs or the sun is in view:
+  // 512 keeps the soft contact read while cutting shadow-fill cost to a
+  // quarter of the old 1024 map.
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
-  sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048)
+  sun.shadow.mapSize.set(coarse ? 512 : 2048, coarse ? 512 : 2048)
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.02
   const c = sun.shadow.camera

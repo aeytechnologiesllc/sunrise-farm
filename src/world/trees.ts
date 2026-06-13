@@ -2,8 +2,9 @@
  * leafy alpha-cutout cards with spherical normals (they shade like a volume,
  * not like flat posters), pines as needle-textured cone stacks.
  * Everything bakes into a handful of merged meshes: 1 bark draw, 2 foliage
- * draws (two leaf palettes), 1 needle draw. Foliage casts REAL cutout
- * shadows via a custom depth material. */
+ * draws (two leaf palettes), 1 needle draw. Desktop foliage casts REAL cutout
+ * shadows via a custom depth material; phones skip alpha-cutout tree shadows
+ * because sun-facing/running scenes become shadow-fill bound. */
 import {
   BufferAttribute,
   BufferGeometry,
@@ -153,14 +154,16 @@ export function buildForest(scene: Scene, isClear: (x: number, z: number) => boo
   const sceneProxy = { add: (o: Object3D) => forestRoot.add(o) } as unknown as Scene
   scene = sceneProxy
   const rng = mulberry32(7771234)
+  const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
   const bins: TreeBins = { bark: [], leafA: [], leafB: [], needle: [] }
 
   // ring of mature trees pushed WELL outside the maximum farm footprint —
   // the owner kept losing the farmer behind trunks as the farm expanded
   // toward the old 18.5u ring, and no tree may ever stand between the
   // follow-camera and the play space
-  for (let i = 0; i < 34; i++) {
-    const a = (i / 34) * Math.PI * 2 + rng.next() * 0.26
+  const treeCount = coarse ? 22 : 34
+  for (let i = 0; i < treeCount; i++) {
+    const a = (i / treeCount) * Math.PI * 2 + rng.next() * 0.26
     const r = 23.5 + rng.next() * 8.5
     const x = Math.cos(a) * r
     const z = Math.sin(a) * r * 0.92
@@ -171,7 +174,8 @@ export function buildForest(scene: Scene, isClear: (x: number, z: number) => boo
   }
 
   // bush scatter
-  for (let i = 0; i < 26; i++) {
+  const bushCount = coarse ? 16 : 26
+  for (let i = 0; i < bushCount; i++) {
     const x = (rng.next() - 0.5) * 38
     const z = (rng.next() - 0.5) * 32 + 1
     if (isClear(x, z)) continue
@@ -192,9 +196,9 @@ export function buildForest(scene: Scene, isClear: (x: number, z: number) => boo
     const merged = mergeGeometries(geos)
     if (!merged) return
     const mesh = new Mesh(merged, mat)
-    mesh.castShadow = true
+    mesh.castShadow = !coarse || leafTexture === undefined
     mesh.receiveShadow = true
-    if (leafTexture) {
+    if (leafTexture && !coarse) {
       // cutout-correct shadows for alpha-tested foliage
       mesh.customDepthMaterial = new MeshDepthMaterial({
         depthPacking: RGBADepthPacking,
