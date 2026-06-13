@@ -95,7 +95,14 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // on screen (typically a third of the field). That headroom buys the
   // phone lawn DENSITY back (40k blades, up from the 28k 'airier' cut
   // the owner clocked as lost quality) and still comes out far cheaper.
-  const COUNT = coarse ? 11000 : 16000
+  // scaled up with the widened SPAN (68→114 units east-west) so per-area blade
+  // density matches the original tuned lawn — placement is uniform over SPAN,
+  // so holding COUNT fixed while widening would have thinned the whole meadow.
+  // (the fixed play-box exclusion is a smaller fraction of the wider span, so
+  // the bump runs a touch past the raw area ratio to hold near-meadow density.)
+  // per-frame cost is unchanged — frustum culling bounds on-screen blades to
+  // what the camera sees; the extra count is memory + boot scatter only.
+  const COUNT = coarse ? 20500 : 30000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
@@ -145,8 +152,13 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
       )
   }
 
-  // world span of the scatter (matches the placement loops below)
-  const SPAN = { x0: -34, x1: 34, z0: -28, z1: 28 }
+  // world span of the scatter. x1 reaches well east of the homestead so the
+  // meadow corridor stays grassed as the ENDLESS field grows — worldMaxX hits
+  // 38 at parcel 5 and ~77 at parcel 12 (a fortune in coins / the practical
+  // ceiling); 80 covers that and frustum culling makes the far chunks free
+  // until the camera is actually out there. COUNT scales with this width so
+  // the near-meadow density the owner tuned is preserved, not diluted.
+  const SPAN = { x0: -34, x1: 80, z0: -28, z1: 28 }
   const CELL = 12
   const COLS = Math.ceil((SPAN.x1 - SPAN.x0) / CELL)
   const ROWS = Math.ceil((SPAN.z1 - SPAN.z0) / CELL)
@@ -203,8 +215,10 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
     // the PLAY AREA is SMOOTH GROUND now (owner: "we don't want grass sticking
     // out — smooth the ground"). Blades live ONLY out in the meadow beyond the
     // fence, for distant character; the play box stays a clean green floor.
-    const cx = -34 + rng.next() * 68
-    const cz = -28 + rng.next() * 56
+    // DERIVE from SPAN — a hard-coded duplicate here once desynced from x1 and
+    // left a bare strip east of x=34 when the endless field grew past it.
+    const cx = SPAN.x0 + rng.next() * (SPAN.x1 - SPAN.x0)
+    const cz = SPAN.z0 + rng.next() * (SPAN.z1 - SPAN.z0)
     if (cx > -17 && cx < 17 && cz > -11 && cz < 13) continue
     if (isClear(cx, cz)) continue
     const inYard = false
