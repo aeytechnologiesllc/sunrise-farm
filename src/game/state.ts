@@ -1,6 +1,6 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
-import { clampTier, plotCount } from './expansion'
+import { clampTier, plotCount, PLOTS_PER } from './expansion'
 import type { Contract, FestivalOrder } from './contracts'
 import type { DecorPlacement } from './decor'
 import { ringEdges, type FenceState, type FenceStyle } from './fence'
@@ -57,6 +57,9 @@ export interface GameState {
   harvests: number
   /** land tier owned (see game/expansion.ts); plots length tracks it */
   expansion: number
+  /** crop-field PARCELS owned — the endless east field (always >=1). The field
+   * is decoupled from the homestead: plots.length === fieldParcels * PLOTS_PER. */
+  fieldParcels: number
   /** completed herding missions (reward scaling + story beats) */
   herdsDone: number
   /** construction projects owned (see game/projects.ts) */
@@ -152,6 +155,7 @@ export function initialState(seed: number): GameState {
     level: 1,
     harvests: 0,
     expansion: 0,
+    fieldParcels: 1,
     herdsDone: 0,
     projects: {},
     ladder: true,
@@ -268,6 +272,10 @@ export function deserialize(json: string | null): GameState | null {
     s.eggplants ??= 0
     s.eggs ??= 0
     s.expansion = clampTier(s.expansion ?? 0)
+    // the crop field decoupled into endless parcels — derive the count from the
+    // save's own plot array so no crop index is ever orphaned (4 plots/parcel,
+    // round UP: a partial old tier becomes a full parcel, gaining free soil)
+    s.fieldParcels ??= Math.max(1, Math.ceil(s.plots.length / PLOTS_PER))
     s.herdsDone ??= 0
     s.projects ??= {}
     s.ghPlots ??= []

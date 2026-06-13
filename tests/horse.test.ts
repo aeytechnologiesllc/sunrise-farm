@@ -138,6 +138,23 @@ describe('migration', () => {
     expect(deserialize(JSON.stringify(raw))!.coins).toBe(200)
   })
 
+  it('derives field parcels from the save’s own plot array (no crop orphaned)', () => {
+    // an old save sized its plots from the legacy tier table — the field decoupled
+    // into 4-plot parcels; the count rounds UP so every saved crop index survives
+    const mk = (plots: number): GameState => {
+      const s = initialState(7)
+      s.plots = Array.from({ length: plots }, () => ({ crop: null }))
+      delete (s as Partial<GameState>).fieldParcels
+      return deserialize(serialize(s))!
+    }
+    expect(mk(4).fieldParcels).toBe(1) // a fresh farm
+    expect(mk(12).fieldParcels).toBe(3) // the owner's save (expansion 2)
+    expect(mk(11).fieldParcels).toBe(3) // legacy 11-plot tier rounds up to 3 parcels
+    expect(mk(14).fieldParcels).toBe(4)
+    // and the backfilled field always exposes >= the saved plot count
+    for (const n of [4, 11, 12, 14, 16]) expect(mk(n).fieldParcels * 4).toBeGreaterThanOrEqual(n)
+  })
+
   it('strips stale pre-lock field-position overrides so fields sit home (no seam)', () => {
     // a save that MOVED a field before the lock carried a layout.fieldN override —
     // it would re-open a soil-texture seam and strand the field off its tier

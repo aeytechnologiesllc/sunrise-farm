@@ -227,3 +227,72 @@ export function sheepCount(tier: number): number {
   for (let t = 1; t <= clampTier(tier); t++) n += TIERS[t].sheep ?? 0
   return n
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ENDLESS FIELD — the crop field is a SEPARATE place east of the homestead,
+// one long strip you extend forever by buying the next PARCEL. Parcels are
+// generated, never tabled: parcel n sits at x = FIELD_X0 + n*PARCEL_W, same
+// depth as the old field (so the furrow/texture math is unchanged), holding a
+// 2×2 plot grid. The homestead (buildings/animals) stays finite; the field is
+// the endless money sink the owner asked for ("always one more parcel").
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** west edge of parcel 0 — the field begins here, east of the homestead's
+ * east gate + a short lane. Tuned in the spatial step; the model is x-agnostic. */
+export const FIELD_X0 = 8.0
+/** each parcel is this wide (4 plots: two columns 2.8u apart, like the old tiers) */
+export const PARCEL_W = 5.6
+/** the field's fixed depth (matches the legacy strip so furrows/UVs are unchanged) */
+export const FIELD_Z0 = -0.8
+export const FIELD_Z1 = 4.8
+/** plots per parcel (2 columns × 2 rows) */
+export const PLOTS_PER = 4
+/** the gate in the homestead's east fence that opens onto the field lane */
+export const EAST_GATE: GateDef = { wall: 'E', center: 2.0, half: 1.4 }
+
+/** parcel n (0-indexed): its soil rect + the 4 world-space plot centers inside
+ * it. Plot offsets match the legacy within-tier order (TL, TR, BL, BR). */
+export function fieldParcel(n: number): { rect: FieldRect; plots: Array<[number, number]> } {
+  const x0 = FIELD_X0 + n * PARCEL_W
+  return {
+    rect: { x0, z0: FIELD_Z0, x1: x0 + PARCEL_W, z1: FIELD_Z1 },
+    plots: [
+      [x0 + 1.4, 0.6],
+      [x0 + 4.2, 0.6],
+      [x0 + 1.4, 3.4],
+      [x0 + 4.2, 3.4],
+    ],
+  }
+}
+
+/** climbing price of the NEXT parcel when you already own `owned` (>=1). Never
+ * returns null — there is always one more for sale; geometric so it outruns
+ * income and stays a real sink. owned=1 → 100, 2 → 155, 3 → 240, … 10 → ~5400. */
+export function parcelCost(owned: number): number {
+  return Math.round(100 * Math.pow(1.55, Math.max(1, owned) - 1))
+}
+
+/** gentle level gate for the next parcel (caps so it never hard-walls a whale) */
+export function parcelLevel(owned: number): number {
+  return Math.min(30, 2 + Math.max(1, owned))
+}
+
+/** every field plot center for a save owning `parcels` (>=1), in index order —
+ * the field replacement for plotPositions(); index→sim mapping is preserved */
+export function fieldPlotsAll(parcels: number): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  for (let n = 0; n < Math.max(1, parcels); n++) out.push(...fieldParcel(n).plots)
+  return out
+}
+
+/** how many field plots a save owning `parcels` has */
+export function fieldPlotCount(parcels: number): number {
+  return Math.max(1, parcels) * PLOTS_PER
+}
+
+/** all field rects for a save owning `parcels` (for ground/exclusion/render) */
+export function fieldParcelRects(parcels: number): FieldRect[] {
+  const out: FieldRect[] = []
+  for (let n = 0; n < Math.max(1, parcels); n++) out.push(fieldParcel(n).rect)
+  return out
+}
