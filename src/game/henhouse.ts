@@ -26,18 +26,19 @@ export interface NestBox {
 
 export interface CoopFlock {
   hens: HenDef[]
-  /** 0 = base house (4), 1 = east wing (8), 2 = the long wing (12) */
+  /** 0 = base house (4), 1 = east wing (8), 2 = the long wing (12), 3 = the long roost (16) */
   tier: number
   boxes: NestBox[]
 }
 
 /** base house holds the founders plus two empty boxes (the crate gets to
- * SELL before it teaches expansion); wings take the row to 9, then 12 */
-export const HEN_CAPACITY = [6, 9, 12]
+ * SELL before it teaches expansion); wings take the row to 9, then 12,
+ * then 16 with the Long Roost */
+export const HEN_CAPACITY = [6, 9, 12, 16]
 export const MAX_COOP_TIER = HEN_CAPACITY.length - 1
 /** wing prices + the level that unlocks each (extends the ladder past 11) */
-export const WING_COST = [350, 800]
-export const WING_LEVEL = [12, 13]
+export const WING_COST = [350, 800, 2800]
+export const WING_LEVEL = [12, 13, 18]
 /** a new hen's price climbs with each purchase beyond the founding four */
 export const HEN_BASE_COST = 120
 export const HEN_COST_STEP = 30
@@ -45,6 +46,7 @@ export const HEN_COST_STEP = 30
 export const HEN_POOL = [
   'Clementine', 'Biscuit', 'Pickles', 'Dottie', 'Maple', 'Ginger',
   'Pumpernickel', 'Olive', 'Tilly', 'Mabel', 'Sprout', 'Petunia',
+  'Poppy', 'Saffron', 'Marigold', 'Juniper',
 ]
 
 export function henCapacity(tier: number): number {

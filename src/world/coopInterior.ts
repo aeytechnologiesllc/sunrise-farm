@@ -159,7 +159,7 @@ export class CoopInterior {
     this.root.position.copy(COOP_ANCHOR)
     scene.add(this.root)
 
-    const fullHalfE = BASE_HALF + WING_W * 2 // east extent of the full shell
+    const fullHalfE = BASE_HALF + WING_W * 3 // east extent of the full shell (3 wings)
     const hd = ROOM_D / 2
 
     this.spawnPos = new Vector3(ax, 0, az + hd - 3.0)
@@ -168,6 +168,7 @@ export class CoopInterior {
     this.wingBoardPos = [
       new Vector3(ax + BASE_HALF - 0.4, 0, az),
       new Vector3(ax + BASE_HALF + WING_W - 0.4, 0, az),
+      new Vector3(ax + BASE_HALF + WING_W * 2 - 0.4, 0, az),
     ]
     for (let i = 0; i < HEN_CAPACITY[HEN_CAPACITY.length - 1]; i++) {
       this.boxPositions.push(new Vector3(ax + BOX_X0 + i * BOX_STEP, 0, az + BOX_Z + 0.55))
@@ -314,7 +315,7 @@ export class CoopInterior {
     bake(props, plank)
 
     // ---- boarded wing partitions (open on purchase) ------------------------
-    for (let w = 0; w < 2; w++) {
+    for (let w = 0; w < 3; w++) {
       const px = BASE_HALF + w * WING_W
       const wallG: BufferGeometry[] = []
       // partition wall above + beside a doorway opening
@@ -344,7 +345,7 @@ export class CoopInterior {
       depthWrite: false,
       side: DoubleSide,
     })
-    for (const sx of [-4, 1, 6, 12, 18]) {
+    for (const sx of [-4, 1, 6, 12, 18, 24]) {
       const shaft = new Mesh(new PlaneGeometry(1.4, 2.9), shaftMat)
       shaft.position.set(sx, 1.65, hd - 1.3)
       shaft.rotation.x = 0.5
@@ -389,7 +390,7 @@ export class CoopInterior {
     const az = COOP_ANCHOR.z
     return {
       minX: ax - BASE_HALF + 0.55,
-      maxX: ax + BASE_HALF + WING_W * Math.max(0, Math.min(2, tier)) - 0.55,
+      maxX: ax + BASE_HALF + WING_W * Math.max(0, Math.min(3, tier)) - 0.55,
       minZ: az - ROOM_D / 2 + 0.55,
       maxZ: az + ROOM_D / 2 - 0.3,
     }

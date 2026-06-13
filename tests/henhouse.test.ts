@@ -94,6 +94,7 @@ describe('buying hens and opening wings', () => {
     expect(wingStatus(f, WING_LEVEL[0], 99999)).toBe('ok')
     openWing(f)
     openWing(f)
+    openWing(f)
     expect(wingStatus(f, 99, 99999)).toBe('max')
     expect(openWing(f)).toBe(false)
   })

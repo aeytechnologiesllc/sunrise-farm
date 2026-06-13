@@ -103,6 +103,15 @@ import { BARN_AT, BARN_ROT } from './game/geo'
 import { keeperName, tomorrowLines } from './game/tomorrow'
 import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS } from './game/town'
 import { nextGoal } from './game/goals'
+import {
+  availableUpgrades,
+  marketPremiumBonus,
+  marketQueueBonus,
+  pastureGoatBonus,
+  pastureSheepBonus,
+  upgradeDef,
+  type UpgradeId,
+} from './game/upgrades'
 import { TownSet } from './world/townSet'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
@@ -475,7 +484,7 @@ async function boot(): Promise<void> {
   const flock = new Flock(
     assets,
     scene,
-    state.projects.sheep ? sheepCount(state.expansion) : 0,
+    state.projects.sheep ? sheepCount(state.expansion) + pastureSheepBonus(state) : 0,
     (state.chicken.seed ^ 0x51f15e) >>> 0,
   )
   // a saved pen location binds before anyone meets the flock — penned sheep
@@ -562,6 +571,9 @@ async function boot(): Promise<void> {
     8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
     10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
+    18: 'The coop can grow a third wing — the Long Roost \u{1F414}',
+    20: 'The Market Awning: richer customers come to the shop \u{1F3EA}',
+    22: 'The Pasture Loft makes room for more sheep and a goat \u{1F411}',
   }
   /** a level-up mid-cutscene queues — the fanfare must never fire over the
    * crew's reveal (it lands ~1.2s after done(), the payday-banking pattern) */
@@ -578,6 +590,8 @@ async function boot(): Promise<void> {
   game.on('levelup', (e) => {
     if (construction.active) queuedLevelUp = () => levelUpBeat(e)
     else levelUpBeat(e)
+    // a new level can unlock an upgrade sign (market lvl 20, pasture lvl 22)
+    refreshUpgradeSigns()
   })
   // the ready-chime is rate-limited HARD: with a dozen plots ripening near
   // each other it used to ring over and over ("toon toon") — one chime now
@@ -615,6 +629,24 @@ async function boot(): Promise<void> {
       hud.showBanner("Rosie's standing order \u{1F956}", `4 wheat baked into +${e.coins}c`)
       sfx.kaching()
     }
+  })
+  game.on('upgraded', (e) => {
+    const id = e.def.id
+    if (id === 'market') {
+      customers.premium = SHOP_PREMIUM + marketPremiumBonus(state)
+      customers.queueMax = SHOP_QUEUE_MAX + marketQueueBonus(state)
+    } else if (id === 'pasture') {
+      // the loft makes room: two more sheep at the pen, one more goat
+      for (let i = 0; i < 2; i++) flock.addSheep()
+      grazers.add('goat', GOAT_RECT, 1)
+    }
+    refreshUpgradeSigns()
+    if (!sleepActive && !construction.active) {
+      hud.showBanner(`${e.def.name}!`, e.def.blurb)
+      sfx.fanfare()
+      rareSlowMo()
+    }
+    saveNow()
   })
   game.on('contractDone', (e) => {
     if (!sleepActive && !construction.active && !hud.modalOpen) {
@@ -1371,7 +1403,7 @@ async function boot(): Promise<void> {
       // at boot the Flock constructor already spawned the saved flock; a
       // fresh build spawns the full state-derived headcount (incl. any
       // pasture-deed bonus bought first) so reloads never change income
-      if (fresh) for (let i = 0; i < sheepCount(state.expansion); i++) flock.addSheep()
+      if (fresh) for (let i = 0; i < sheepCount(state.expansion) + pastureSheepBonus(state); i++) flock.addSheep()
     } else if (def.id === 'stable') {
       // the stable is just the building — Hazel is her own purchase now
       addBuilding(buildStable, def, fresh)
@@ -1383,7 +1415,7 @@ async function boot(): Promise<void> {
         sparkleBurst(scene, new Vector3(at.x, 1.0, at.z), false, 10)
       }
     } else if (def.id === 'goats') {
-      grazers.add('goat', GOAT_RECT, 2)
+      grazers.add('goat', GOAT_RECT, 2 + pastureGoatBonus(state))
     } else if (def.id === 'shop') {
       if (standGroup) {
         scene.remove(standGroup)
@@ -1393,8 +1425,8 @@ async function boot(): Promise<void> {
         standGroup = null
       }
       addBuilding(buildShop, def, fresh)
-      customers.premium = SHOP_PREMIUM
-      customers.queueMax = SHOP_QUEUE_MAX
+      customers.premium = SHOP_PREMIUM + marketPremiumBonus(state)
+      customers.queueMax = SHOP_QUEUE_MAX + marketQueueBonus(state)
       // the serving counter moves across the road — customers reroute to the
       // shop front, and anyone mid-queue walks over (a nice opening-day beat)
       marketToShop(placeOf(state, 'shop'))
@@ -1788,6 +1820,8 @@ async function boot(): Promise<void> {
     town: false,
     /** at the order board (daily contracts) by the gate */
     orders: false,
+    /** at a building-UPGRADE sign */
+    upgrade: null as UpgradeId | null,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -1795,6 +1829,38 @@ async function boot(): Promise<void> {
   const stablePlace = placeOf(state, 'stable')
   const STABLE_AT = new Vector3(stablePlace.x, 0, stablePlace.z)
   const PEN_CENTER = new Vector3((penNow.x0 + penNow.x1) / 2, 0, (penNow.z0 + penNow.z1) / 2)
+
+  // ---- building UPGRADES: a green sign by each improvable building ---------
+  // (the greenhouse wing, the tack room, the home reno land in later arcs;
+  // these are the ones whose effect is live today)
+  const UPGRADE_SITE: Partial<Record<UpgradeId, () => Vector3>> = {
+    market: () => {
+      const p = placeOf(state, 'shop')
+      return new Vector3(p.x - 2.8, 0, p.z + 1.9)
+    },
+    pasture: () => PEN_CENTER.clone().add(new Vector3(0, 0, -3.4)),
+  }
+  const upgradeSigns = new Map<UpgradeId, { group: Group; at: Vector3 }>()
+  const refreshUpgradeSigns = (): void => {
+    const avail = availableUpgrades(state).filter((u) => UPGRADE_SITE[u.id])
+    for (const [id, s] of upgradeSigns) {
+      if (!avail.some((u) => u.id === id)) {
+        scene.remove(s.group)
+        disposeMaterials(s.group)
+        upgradeSigns.delete(id)
+      }
+    }
+    for (const def of avail) {
+      if (upgradeSigns.has(def.id)) continue
+      const at = UPGRADE_SITE[def.id]!()
+      const group = buildDeedSign(def.name, def.cost, 'UPGRADE', '#3b7a57')
+      group.position.copy(at)
+      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
+      scene.add(group)
+      upgradeSigns.set(def.id, { group, at })
+    }
+  }
+  refreshUpgradeSigns()
 
   // ---- the walk-in rooms: ONE registry drives doors, occluders, camera ----
   // (diner grammar — no button; the dip-to-black hides the off-world teleport)
@@ -2171,6 +2237,18 @@ async function boot(): Promise<void> {
     else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
     else if (id === 'orders' && near.orders) openOrderPanel()
+    else if (id === 'upgrade' && near.upgrade) {
+      const at = upgradeSigns.get(near.upgrade)?.at
+      const def = game.buyUpgrade(near.upgrade)
+      if (def) {
+        if (at) {
+          const sp = cam.screenPos(at.clone().setY(1.6))
+          if (!sp.behind) hud.floatText(sp, `-${def.cost}c`)
+        }
+        refreshUpgradeSigns() // the sign is done — the building is upgraded
+        saveNow()
+      }
+    }
     else if (id === 'shear' && near.pen) {
       const coins = game.shearFlock(flock.sheep.length)
       if (coins > 0) {
@@ -2590,6 +2668,15 @@ async function boot(): Promise<void> {
       near.deed = deedSign !== null && p.distanceTo(deedSign.at) < 2.5
       near.town = townSign !== null && p.distanceTo(TOWN_SIGN_AT) < 2.6
       near.orders = orderBoard !== null && p.distanceTo(ORDER_BOARD_AT) < 2.4
+      near.upgrade = null
+      let upgD = 2.6
+      for (const [id, s] of upgradeSigns) {
+        const d = p.distanceTo(s.at)
+        if (d < upgD) {
+          upgD = d
+          near.upgrade = id
+        }
+      }
       // ---- Millbrook breathes on the day clock ----
       customers.pace = state.town.built.cottages ? 0.7 : 1
       if (state.town.built.bakery && !sleepActive && !construction.active) {
@@ -2789,6 +2876,17 @@ async function boot(): Promise<void> {
           emoji: '\u{1F6AA}',
           label: `Exit ${ROOMS[room].label}`,
           sub: 'back to the farm',
+        })
+      }
+      if (near.upgrade && room === null) {
+        const def = upgradeDef(near.upgrade)
+        const aff = state.coins >= def.cost
+        actions.push({
+          id: 'upgrade',
+          emoji: def.emoji,
+          label: def.name,
+          sub: aff ? `${def.cost}c \u{2014} ${def.blurb}` : `${def.cost}c \u{2014} need ${def.cost - state.coins} more`,
+          locked: !aff,
         })
       }
       if (near.orders && room === null) {

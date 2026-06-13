@@ -6,7 +6,7 @@ import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
 import { WORLD_BOUNDS } from './geo'
 import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
-import { GREENHOUSE_BEDS } from './projects'
+import { greenhouseBeds, type UpgradeId } from './upgrades'
 
 export interface CropState {
   kind: CropKind
@@ -112,6 +112,8 @@ export interface GameState {
   festival: { week: number; progress: number[]; done: boolean }
   /** ribbons earned from completed festivals — a permanent badge of plenty */
   festivalRibbons: number
+  /** building upgrades owned (see game/upgrades.ts) */
+  upgrades: Partial<Record<UpgradeId, boolean>>
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -156,6 +158,7 @@ export function initialState(seed: number): GameState {
     contracts: { day: 0, progress: [], done: [] },
     festival: { week: -1, progress: [], done: false },
     festivalRibbons: 0,
+    upgrades: {},
     chicken: {
       arrived: false,
       name: null,
@@ -276,6 +279,7 @@ export function deserialize(json: string | null): GameState | null {
     s.contracts ??= { day: 0, progress: [], done: [] }
     s.festival ??= { week: -1, progress: [], done: false }
     s.festivalRibbons ??= 0
+    s.upgrades ??= {}
     s.town.delivered ??= 0
     s.town.built ??= {}
     s.town.lastBakeryDay ??= null
@@ -287,7 +291,7 @@ export function deserialize(json: string | null): GameState | null {
       if (s.produce?.eggsReady) for (const b of s.coopFlock.boxes) b.ready = true
     }
     // the glasshouse grew from 4 beds to 8 — owners get the new beds on load
-    if (s.projects.greenhouse) while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
+    if (s.projects.greenhouse) while (s.ghPlots.length < greenhouseBeds(s)) s.ghPlots.push({ crop: null })
     // grandfather PRE-LADDER saves exactly once: they already had the stand
     // + the flock (new saves carry ladder:true from birth and earn theirs)
     if (!s.ladder) {

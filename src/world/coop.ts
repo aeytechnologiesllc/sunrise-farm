@@ -469,6 +469,25 @@ export function buildCoopAnnex(group: Group, tier: number): void {
     cap.translate(0, topY + 0.32, D / 2 - 0.5)
     lids.push(uvScale(cap, 0.5, 0.2))
   }
+  if (tier >= 3) {
+    // tier 3 — The Long Roost: a second smaller cupola shifted to the left
+    // (the new east wing's ridge shoulder) + a slim weathervane post with a
+    // cockerel-disk finial. All reuse plankMat / shingleMat — no new draws.
+    const topY = bodyY0 + WALL_H + 0.04 + RISE
+    // smaller cupola, offset toward the new wing shoulder (-0.72 x)
+    planks.push(uvScale(box(0.28, 0.24, 0.28, -0.72, topY + 0.12, D / 2 - 0.5), 0.3, 0.24))
+    const cap2 = shedPrism(0.38, 0.12, 0.38)
+    cap2.translate(-0.72, topY + 0.24, D / 2 - 0.5)
+    lids.push(uvScale(cap2, 0.4, 0.15))
+    // weathervane post on the ridge peak above the tier-2 cupola
+    const post = new CylinderGeometry(0.018, 0.018, 0.55, 6)
+    post.translate(0, topY + 0.62, D / 2 - 0.5)
+    planks.push(post)
+    // cockerel silhouette disk — thin plank slab, acts as a directional fin
+    planks.push(uvScale(box(0.22, 0.18, 0.022, 0, topY + 0.92, D / 2 - 0.5), 0.22 / TILE, 0.18 / TILE))
+    // horizontal arrow arm
+    planks.push(uvScale(box(0.32, 0.022, 0.022, 0, topY + 0.84, D / 2 - 0.5), 0.32 / TILE, 0.5))
+  }
   const pm = fuse(planks, plankMat)
   if (pm) annex.add(pm)
   const lm = fuse(lids, shingleMat)

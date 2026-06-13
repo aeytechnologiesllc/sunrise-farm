@@ -31,7 +31,6 @@ import {
   WOOL_COIN_PER_SHEEP,
 } from './produce'
 import {
-  GREENHOUSE_BEDS,
   GREENHOUSE_GROW_MULT,
   PROJECTS,
   projectStatus,
@@ -46,6 +45,13 @@ import {
   rollContracts,
   rollFestival,
 } from './contracts'
+import {
+  greenhouseBeds,
+  type UpgradeDef,
+  upgradeDef,
+  type UpgradeId,
+  upgradeStatus,
+} from './upgrades'
 import {
   buyHen,
   collectAllBoxes,
@@ -108,6 +114,7 @@ export interface GameEvents {
   bakerySold: { coins: number }
   contractDone: { slot: number; contract: Contract }
   festivalDone: { payout: number; ribbons: number }
+  upgraded: { def: UpgradeDef }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -545,11 +552,34 @@ export class Game {
     this.emit('coins', { total: s.coins, delta: -entry.def.cost })
     s.projects[id] = true
     if (id === 'greenhouse') {
-      while (s.ghPlots.length < GREENHOUSE_BEDS) s.ghPlots.push({ crop: null })
+      while (s.ghPlots.length < greenhouseBeds(s)) s.ghPlots.push({ crop: null })
     }
     this.grantXp(XP_GAIN.expand)
     this.emit('built', { def: entry.def })
     return entry.def
+  }
+
+  /** buy a building upgrade (the greenhouse wing, market, pasture, etc.).
+   * Side effects beyond the flag live HERE so the save stays the source of
+   * truth — main.ts mirrors the visuals off the resulting state. */
+  buyUpgrade(id: UpgradeId): UpgradeDef | null {
+    const s = this.state
+    const def = upgradeDef(id)
+    if (upgradeStatus(def, s) !== 'ok') return null
+    s.coins -= def.cost
+    this.emit('coins', { total: s.coins, delta: -def.cost })
+    s.upgrades[id] = true
+    // the bigger greenhouse grows its planting beds immediately
+    if (id === 'ghwing') {
+      while (s.ghPlots.length < greenhouseBeds(s)) s.ghPlots.push({ crop: null })
+    }
+    this.grantXp(XP_GAIN.expand)
+    this.emit('upgraded', { def })
+    return def
+  }
+
+  hasUpgrade(id: UpgradeId): boolean {
+    return this.state.upgrades[id] === true
   }
 
   hasProject(id: ProjectId): boolean {
