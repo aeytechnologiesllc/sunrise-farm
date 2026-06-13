@@ -19,10 +19,6 @@ const MAX_DIST = 17
 const DAMP = 5.5
 const LOOKAHEAD = 0.55
 const LOOKAHEAD_MAX = 1.4
-/** right-stick orbit rates, rad/s at full deflection — deliberately gentle,
- * the owner found the old 2.6 'too fast' */
-const YAW_RATE = 1.7
-const PITCH_RATE = 0.95
 /** desktop drag: radians per CSS pixel */
 const DRAG_RATE = 0.0042
 const FOV_BASE = 42
@@ -60,7 +56,7 @@ export class FollowCamera {
   private smoothDist = 11
   private focusPoint = new Vector3()
   private focusW = { value: 0 }
-  private pointers = new Map<number, { x: number; y: number; type: string }>()
+  private pointers = new Map<number, { x: number; y: number }>()
   private pinchDist = 0
   private fovTarget = FOV_BASE
   /** true while any input touched the camera this frame (idle-timer reset) */
@@ -155,16 +151,6 @@ export class FollowCamera {
     this.kCollapse = 0
   }
 
-  /** right-stick orbit (called per frame with the stick vector).
-   * INVERTED on both axes per the owner's hand-feel: push right = look right
-   * (camera swings left around you), push up = look down. */
-  orbit(stickX: number, stickY: number, dt: number): void {
-    if (stickX === 0 && stickY === 0) return
-    this.yaw += stickX * YAW_RATE * dt
-    this.pitch = clampPitch(this.pitch - stickY * PITCH_RATE * dt)
-    this.moved = true
-  }
-
   /** run-state FOV nudge; eased every frame (a cinematic owns the lens) */
   setRunning(running: boolean): void {
     if (this.cineTarget) return
@@ -181,7 +167,7 @@ export class FollowCamera {
 
   private pDown = (e: PointerEvent): void => {
     if (this.editorActive) return
-    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType })
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // capture: a look-drag that crosses a HUD chip must keep flowing to the
     // canvas — without this, drags died at every overlay edge (it read as
     // "the camera moves around weirdly" on the phone)

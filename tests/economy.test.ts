@@ -188,8 +188,7 @@ describe('offline catch-up', () => {
   it('completes at most one egg while away', () => {
     const s = initialState(9)
     s.chicken.eggTimer = { total: 180, remaining: 100 }
-    const res = catchUp(s, 100000)
-    expect(res.eggBecameReady).toBe(true)
+    catchUp(s, 100000)
     expect(s.chicken.eggReady).toBe(true)
     expect(s.chicken.eggTimer).toBeNull()
     expect(s.chicken.eggsLaid).toBe(1)

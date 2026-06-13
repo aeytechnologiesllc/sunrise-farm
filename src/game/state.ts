@@ -200,7 +200,6 @@ export function initialState(seed: number): GameState {
 
 export interface CatchUpResult {
   readyPlots: number[]
-  eggBecameReady: boolean
   /** Hazel finished her run while the app was closed (flat 34c was banked) —
    * the welcome-back banner should SAY so instead of paying silently */
   offlineDelivery: boolean
@@ -222,7 +221,6 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
     crop.remaining = Math.max(0, crop.remaining - el)
     if (crop.remaining <= 0) readyPlots.push(i)
   }
-  let eggBecameReady = false
   let offlineDelivery = false
   const t = s.chicken.eggTimer
   if (t && t.remaining > 0) {
@@ -231,7 +229,6 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       s.chicken.eggTimer = null
       s.chicken.eggReady = true
       s.chicken.eggsLaid += 1
-      eggBecameReady = true
     }
   }
   // the henhouse boxes trickle while away too (one egg per box, capped)
@@ -253,7 +250,7 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
       offlineDelivery = true
     }
   }
-  return { readyPlots, eggBecameReady, offlineDelivery, offlineEggs }
+  return { readyPlots, offlineDelivery, offlineEggs }
 }
 
 export function serialize(s: GameState): string {

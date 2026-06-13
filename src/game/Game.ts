@@ -106,28 +106,20 @@ export type Suggestion =
   | { kind: 'plant'; plot: number }
 
 export interface GameEvents {
-  coins: { total: number; delta: number }
   xp: { xp: number; need: number; level: number }
   levelup: { level: number; unlocked: CropKind[] }
   stage: { plot: number; stage: number }
   cropReady: { plot: number }
   chickenArrive: undefined
   eggReady: undefined
-  chipDone: { chip: ChipId }
-  expanded: { tier: number; def: TierDef }
-  built: { def: ProjectDef }
-  woolReady: undefined
-  milkReady: undefined
   coopReady: undefined
   deliveryDone: { coins: number }
-  townBuilt: { id: TownActId }
   bakerySold: { coins: number }
   cafeSold: { coins: number }
   contractDone: { slot: number; contract: Contract }
   festivalDone: { payout: number; ribbons: number }
   upgraded: { def: UpgradeDef }
   decorChanged: undefined
-  fenceStyleBought: { id: FenceStyle }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -212,8 +204,6 @@ export class Game {
       stable: this.hasProject('horse'),
       coop: this.hasProject('coop'),
     })
-    if (pev.woolBecameReady) this.emit('woolReady', undefined)
-    if (pev.milkBecameReady) this.emit('milkReady', undefined)
     // the henhouse boxes are the coop's truth now (eggsT keeps ticking only
     // so a rolled-back client stays coherent)
     if (this.hasProject('coop')) {
@@ -550,11 +540,9 @@ export class Game {
     if (!def || this.deedStatus() !== 'ok') return null
     const s = this.state
     s.coins -= def.cost
-    this.emit('coins', { total: s.coins, delta: -def.cost })
     s.expansion += 1
     while (s.plots.length < plotCount(s.expansion)) s.plots.push({ crop: null })
     this.grantXp(XP_GAIN.expand)
-    this.emit('expanded', { tier: s.expansion, def })
     return def
   }
 
@@ -599,13 +587,11 @@ export class Game {
     if (!entry || entry.status !== 'ok') return null
     const s = this.state
     s.coins -= entry.def.cost
-    this.emit('coins', { total: s.coins, delta: -entry.def.cost })
     s.projects[id] = true
     if (id === 'greenhouse') {
       while (s.ghPlots.length < greenhouseBeds(s)) s.ghPlots.push({ crop: null })
     }
     this.grantXp(XP_GAIN.expand)
-    this.emit('built', { def: entry.def })
     return entry.def
   }
 
@@ -617,7 +603,6 @@ export class Game {
     const def = upgradeDef(id)
     if (upgradeStatus(def, s) !== 'ok') return null
     s.coins -= def.cost
-    this.emit('coins', { total: s.coins, delta: -def.cost })
     s.upgrades[id] = true
     // the bigger greenhouse grows its planting beds immediately
     if (id === 'ghwing') {
@@ -648,7 +633,6 @@ export class Game {
     const s = this.state
     const def = decorDef(id)
     s.coins -= def.cost
-    this.emit('coins', { total: s.coins, delta: -def.cost })
     s.decor.push({ item: id, x, z, rot, d: s.day })
     this.grantXp(XP_GAIN.plant)
     this.emit('decorChanged', undefined)
@@ -681,11 +665,9 @@ export class Game {
     const def = fenceStyleDef(id)
     if (!def || s.fenceStyles[id] || s.level < def.level || s.coins < def.cost) return false
     s.coins -= def.cost
-    this.emit('coins', { total: s.coins, delta: -def.cost })
     s.fenceStyles[id] = true
     s.fenceStyle = id
     this.grantXp(XP_GAIN.expand)
-    this.emit('fenceStyleBought', { id })
     return true
   }
 
@@ -749,9 +731,7 @@ export class Game {
         fest.order.payout = Math.round(fest.order.payout * 1.5)
       }
     }
-    this.emit('coins', { total: this.state.coins, delta: -def.coins })
     this.grantXp(XP_GAIN.expand)
-    this.emit('townBuilt', { id })
     return true
   }
 
@@ -807,7 +787,6 @@ export class Game {
     if (this.henBuyStatus() !== 'ok') return null
     const cost = henCost(this.state.coopFlock.hens.length)
     this.state.coins -= cost
-    this.emit('coins', { total: this.state.coins, delta: -cost })
     const hen = buyHen(this.state.coopFlock, (Math.floor(this.rng.next() * 0xffffffff)) >>> 0)
     this.syncRng()
     this.grantXp(XP_GAIN.feed)
@@ -823,7 +802,6 @@ export class Game {
     if (this.wingStatus() !== 'ok') return false
     const cost = WING_COST[this.state.coopFlock.tier]
     this.state.coins -= cost
-    this.emit('coins', { total: this.state.coins, delta: -cost })
     openWing(this.state.coopFlock)
     this.grantXp(XP_GAIN.expand)
     return true
@@ -928,14 +906,12 @@ export class Game {
   retireChip(chip: ChipId): void {
     if (this.state.chipsDone[chip]) return
     this.state.chipsDone[chip] = true
-    this.emit('chipDone', { chip })
   }
 
   // ---- internals --------------------------------------------------------
 
   private grantCoins(n: number): void {
     this.state.coins += n
-    this.emit('coins', { total: this.state.coins, delta: n })
   }
 
   private grantXp(n: number): void {

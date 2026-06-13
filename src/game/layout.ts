@@ -265,7 +265,6 @@ export type PlaceBlock =
   | 'road' // the road must stay clear
   | 'field' // crops will grow there (any tier's soil)
   | 'pen' // the sheep pen
-  | 'flock-out' // the pen can't move while sheep are loose
   | 'paddock' // Hazel's paddock (moves with the stable)
   | 'building' // overlaps another structure
   | 'home' // the homestead and its doorway
