@@ -297,6 +297,12 @@ async function boot(): Promise<void> {
   const OCC_PROXY_MAT = new MeshBasicMaterial()
   const lastCamPos = PLAYER_SPAWN.clone()
   const camDispVel = new Vector3()
+  /** look-ahead velocity, LOW-PASSED. The player moves on the fixed 60Hz step
+   * while the camera follows at render rate, so the raw per-frame displacement
+   * alternates 0 / 1x / 2x as steps land between frames — feeding that jagged
+   * value to the look-ahead made the camera shake when running. Smoothing it
+   * into a steady velocity fixes the shake without touching the orbit feel. */
+  const camVelSmooth = new Vector3()
   /** first-person collapse: lens pressed into the farmer = he fades out */
   let playerGhost = false
   const camHead = new Vector3()
@@ -2399,6 +2405,7 @@ async function boot(): Promise<void> {
       prevPos.x = to.x
       prevPos.z = to.z
       lastCamPos.copy(to)
+      camVelSmooth.set(0, 0, 0) // a teleport isn't motion — don't let it fling the look-ahead
       const bounds = enter ? def.bounds() : WORLD_BOUNDS
       player.setBounds(bounds)
       // the camera lives in its own per-room volume (aim box = the walk
@@ -3561,7 +3568,16 @@ async function boot(): Promise<void> {
     // velocity-fed look-ahead used to shove the ray origin through the wall
     const camDt = Math.max(1e-4, dt)
     camDispVel.set((player.pos.x - lastCamPos.x) / camDt, 0, (player.pos.z - lastCamPos.z) / camDt)
-    cam.follow(player.pos, camDispVel, dt)
+    // low-pass the fixed-step-quantized displacement into a steady velocity so
+    // the look-ahead stops juddering the camera when the farmer runs (~85ms TC:
+    // averages out the 0/1x/2x per-frame jitter, still tracks real speed changes)
+    const kVel = 1 - Math.exp(-12 * camDt)
+    camVelSmooth.set(
+      camVelSmooth.x + (camDispVel.x - camVelSmooth.x) * kVel,
+      0,
+      camVelSmooth.z + (camDispVel.z - camVelSmooth.z) * kVel,
+    )
+    cam.follow(player.pos, camVelSmooth, dt)
     lastCamPos.copy(player.pos)
     // pressed flat against a wall the farmer's own body fills the lens —
     // fade him out (first-person collapse, with hysteresis so the doorway

@@ -46,9 +46,6 @@ const BLADE_W = 0.022
 const SEGS = 4
 /** baked forward lean of the tip, as a fraction of blade height */
 const LEAN = 0.25
-/** the farmyard reads as a kept lawn: blades inside the fence ring stay
- * short; the wild meadow beyond grows tall */
-const YARD = { minX: -15.2, maxX: 15.0, minZ: -9.0, maxZ: 10.2 }
 
 /** One blade: a tapered ribbon in the x/y plane, bending forward along +z.
  * Width holds near the root then narrows to a point (real blades are not
@@ -98,7 +95,7 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   // on screen (typically a third of the field). That headroom buys the
   // phone lawn DENSITY back (40k blades, up from the 28k 'airier' cut
   // the owner clocked as lost quality) and still comes out far cheaper.
-  const COUNT = coarse ? 40000 : 64000
+  const COUNT = coarse ? 11000 : 16000
 
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: 1 })
   let timeU: { value: number } | null = null
@@ -203,14 +200,14 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
   let attempts = 0
   while (placed < COUNT && attempts < COUNT * 10) {
     attempts++
-    // 72% of clumps pack the play space so the lawn carpet is continuous
-    // underfoot with no bald patches; the rest fade into the far meadow
-    const inner = rng.next() < 0.72
-    const cx = inner ? -17 + rng.next() * 34 : -34 + rng.next() * 68
-    const cz = inner ? -11 + rng.next() * 24 : -28 + rng.next() * 56
-    if (!inner && cx > -17 && cx < 17 && cz > -11 && cz < 13) continue
+    // the PLAY AREA is SMOOTH GROUND now (owner: "we don't want grass sticking
+    // out — smooth the ground"). Blades live ONLY out in the meadow beyond the
+    // fence, for distant character; the play box stays a clean green floor.
+    const cx = -34 + rng.next() * 68
+    const cz = -28 + rng.next() * 56
+    if (cx > -17 && cx < 17 && cz > -11 && cz < 13) continue
     if (isClear(cx, cz)) continue
-    const inYard = cx > YARD.minX && cx < YARD.maxX && cz > YARD.minZ && cz < YARD.maxZ
+    const inYard = false
     // each clump shares a tint family and a base height; a kept lawn is
     // close to uniform green, so straw clumps are rare (~5% overall) and
     // live almost entirely out in the wild meadow
