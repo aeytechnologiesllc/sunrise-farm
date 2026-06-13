@@ -8,7 +8,6 @@
 import gsap from 'gsap'
 import {
   ACESFilmicToneMapping,
-  BasicShadowMap,
   Box3,
   BoxGeometry,
   Color,
@@ -267,23 +266,26 @@ async function boot(): Promise<void> {
   veil.innerHTML = '<div>🌻 Sunrise Farm</div><div id="ldp" style="font-size:15px;font-weight:700">loading…</div>'
   document.body.appendChild(veil)
 
-  // phones get a lighter pipeline: lower DPR cap, no MSAA, no full-screen
-  // post stack — the owner's device reported lag with the sun in view and
-  // post-processing/fill-rate is the big lever there.
+  // phones get a lighter pipeline: lower DPR cap, no MSAA, cheaper god rays —
+  // the owner's device reported lag and post-processing is the big lever
   const isCoarse = matchMedia('(pointer: coarse)').matches
   const renderer = new WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' })
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = isCoarse ? BasicShadowMap : PCFShadowMap
+  renderer.shadowMap.type = PCFShadowMap
   // the shadow map redraws on OUR schedule (every other frame — the sun
   // crawls, nobody can see a 33ms-stale shadow), not every frame
   renderer.shadowMap.autoUpdate = false
-  // ADAPTIVE resolution: phones start lower because running + foliage + sun
-  // glints are fill-rate bound. The DPR governor can still sharpen a cool
-  // device, but it no longer begins one hitch away from downshifting.
-  const DPR_MAX = Math.min(devicePixelRatio, isCoarse ? 1.55 : 2)
+  // ADAPTIVE resolution (the smooth-fps pass, repaired by the 2026-06-12
+  // perf audit): start sharp-ish, ease down when frame time misses budget.
+  // The old coarse ceiling of 2.2 was HIGHER than desktop's — every post
+  // pass paid ~40% more fragments than needed on the very devices that
+  // struggle. Boot 1.6 with headroom to 1.8 stays above the flat 1.5 cap
+  // the owner once clocked as 'lost quality'; on a 460ppi panel at arm's
+  // length the difference is at visual acuity in motion.
+  const DPR_MAX = Math.min(devicePixelRatio, isCoarse ? 1.8 : 2)
   const DPR_MIN = isCoarse ? 1.1 : 1.5
-  let dpr = Math.min(devicePixelRatio, isCoarse ? 1.35 : 2)
+  let dpr = Math.min(devicePixelRatio, isCoarse ? 1.6 : 2)
   renderer.setPixelRatio(dpr)
   document.body.appendChild(renderer.domElement)
 
@@ -307,17 +309,16 @@ async function boot(): Promise<void> {
   let playerGhost = false
   const camHead = new Vector3()
 
-  // warm ACES grade; desktop gets the cinematic post stack. Mobile renders
-  // direct to the canvas: one pass instead of bloom/vignette over every pixel.
-  const composer = isCoarse ? null : new EffectComposer(renderer, { multisampling: 4 })
-  composer?.addPass(new RenderPass(scene, cam.camera))
+  // warm ACES grade; the effect pass (god rays + bloom + vignette) is added
+  // after the sky exists — god rays need the sun disk as a light source
+  const composer = new EffectComposer(renderer, { multisampling: isCoarse ? 0 : 4 })
+  composer.addPass(new RenderPass(scene, cam.camera))
   // manual info reset: the composer runs multiple passes per frame and
   // autoReset would hide the real draw-call total from the dev driver
   renderer.info.autoReset = false
   const engine = new Engine((dt) => {
     renderer.info.reset()
-    if (composer) composer.render(dt)
-    else renderer.render(scene, cam.camera)
+    composer.render(dt)
   })
 
   // gsap re-rooted on the engine clock: tweens advance only when the engine
@@ -418,14 +419,16 @@ async function boot(): Promise<void> {
    * `room === 'coop'` — a new room inherits every gate for free. */
   let room: RoomId | null = null
   const bloom = new BloomEffect({
-    intensity: 0.42,
+    intensity: isCoarse ? 0.34 : 0.42,
     luminanceThreshold: 0.82,
     mipmapBlur: true,
-    levels: 8,
-    resolutionScale: 1,
+    levels: isCoarse ? 4 : 8,
+    resolutionScale: isCoarse ? 0.35 : 1,
   })
   const vignette = new VignetteEffect({ darkness: 0.3, offset: 0.26 })
-  if (composer) {
+  if (isCoarse) {
+    composer.addPass(new EffectPass(cam.camera, bloom, vignette))
+  } else {
     composer.addPass(
       new EffectPass(
         cam.camera,
@@ -3562,10 +3565,7 @@ async function boot(): Promise<void> {
   // ---- per-frame presentation ---------------------------------------------------
   engine.onFrame((dt) => {
     const t = engine.uTime.value
-    // Phones were hitching while running: avoid the per-frame projection/FOV
-    // nudge there and shed the extra occlusion whisker during the run.
-    cam.setRunning(isCoarse ? false : player.running)
-    cam.lowSpec = stressed || (isCoarse && player.running)
+    cam.setRunning(player.running)
     if (cam.moved) touch()
     // the camera's look-ahead reads DISPLACEMENT, not intent: a player
     // pushing into a wall has full velocity but zero displacement, and
@@ -3745,7 +3745,7 @@ async function boot(): Promise<void> {
     // 50ms-stale shadow) — and the every-OTHER-frame sawtooth this used to
     // be read as judder on phones. Dusk park crawls even slower.
     shadowTick++
-    const shadowEvery = isCoarse ? (player.running ? 48 : dayCycle.atDusk ? 20 : stressed ? 12 : 6) : stressed || dayCycle.atDusk ? 6 : 2
+    const shadowEvery = stressed || dayCycle.atDusk ? 6 : isCoarse ? 3 : 2
     if (shadowTick % shadowEvery === 0) renderer.shadowMap.needsUpdate = true
     // adaptive resolution: miss budget -> step softer; comfortably under
     // budget for a while -> step sharper. Cooldowns stop buffer thrash.
@@ -3826,7 +3826,7 @@ async function boot(): Promise<void> {
     sizedH = viewH()
     cam.resize(sizedW, sizedH)
     renderer.setSize(sizedW, sizedH, false)
-    composer?.setSize(sizedW, sizedH)
+    composer.setSize(sizedW, sizedH)
     // the realloc hitch itself must not read as load: reset the frame
     // average and hold the DPR governor still while the dust settles —
     // rotation used to fire realloc -> panic down-step -> realloc -> ...

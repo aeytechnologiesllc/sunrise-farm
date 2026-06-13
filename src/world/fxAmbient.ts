@@ -50,13 +50,11 @@ export class AmbientLife {
   private bData: Flyer[] = []
   private pollen: Points
   private pBase: Float32Array
-  private readonly coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
-  private lastCoarseUpdate = 0
 
   constructor(scene: Scene) {
     const rng = mulberry32(4242)
     // butterflies
-    const B = this.coarse ? 6 : 12
+    const B = 12
     const bPos = new Float32Array(B * 3)
     const bCol = new Float32Array(B * 3)
     const palette = [
@@ -87,7 +85,7 @@ export class AmbientLife {
     scene.add(this.butterflies)
 
     // pollen — slow golden drift, additive so it catches the bloom
-    const P = this.coarse ? 14 : 40
+    const P = 40
     this.pBase = new Float32Array(P * 3)
     for (let i = 0; i < P; i++) {
       this.pBase[i * 3] = (rng.next() - 0.5) * 30
@@ -112,8 +110,6 @@ export class AmbientLife {
   }
 
   update(t: number): void {
-    if (this.coarse && t - this.lastCoarseUpdate < 0.066) return
-    this.lastCoarseUpdate = t
     const bp = this.butterflies.geometry.getAttribute('position') as BufferAttribute
     for (let i = 0; i < this.bData.length; i++) {
       const f = this.bData[i]
