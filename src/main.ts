@@ -3043,7 +3043,7 @@ async function boot(): Promise<void> {
       // one verb while a building is in your arms (the spot speaks via color)
       const why: Record<string, string> = {
         far: "you couldn't walk back to it out there",
-        land: "that's not your land yet",
+        land: 'buildings stay in the homestead yard',
         road: 'the road has to stay clear',
         field: 'crops will grow there',
         pen: "that's the sheep's yard",
