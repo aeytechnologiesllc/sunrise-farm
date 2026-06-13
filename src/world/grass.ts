@@ -214,13 +214,16 @@ export function buildGrass(scene: Scene, isClear: (x: number, z: number) => bool
     // each clump shares a tint family and a base height; a kept lawn is
     // close to uniform green, so straw clumps are rare (~5% overall) and
     // live almost entirely out in the wild meadow
-    const dry = rng.next() < (inYard ? 0.01 : 0.09)
+    // a KEPT lawn has no weeds: straw clumps live only out in the wild meadow
+    const dry = inYard ? false : rng.next() < 0.09
     const ch = dry ? 0.115 + rng.next() * 0.035 : 0.275 + rng.next() * 0.055
     const cs = dry ? 0.38 + rng.next() * 0.2 : 0.43 + rng.next() * 0.15
     const cl = dry ? 0.42 + rng.next() * 0.18 : 0.3 + rng.next() * 0.16
-    // yard blades stay mower-short (0.09..0.16 world units) so the lawn
-    // reads smooth; the meadow grows 0.20..0.38 for the wilder fringe
-    const baseH = inYard ? 0.09 + rng.next() * 0.05 : 0.2 + rng.next() * 0.14
+    // yard blades hug the ground (0.045..0.075 world units) and stay nearly
+    // uniform height so the play space reads as a smooth mown carpet, not
+    // sprigs sticking up (owner: people found the tall blades "weird"); the
+    // meadow beyond keeps the taller, wilder look for character
+    const baseH = inYard ? 0.045 + rng.next() * 0.03 : 0.2 + rng.next() * 0.14
     const blades = 4 + Math.floor(rng.next() * 4)
     for (let b = 0; b < blades && placed < COUNT; b++) {
       const a = rng.next() * Math.PI * 2
