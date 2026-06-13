@@ -82,6 +82,11 @@ import {
 import { mulberry32, type Rng } from './rng'
 import type { ChipId, GameState, PlotState } from './state'
 
+/** the renovated farmhouse's daily family-breakfast coin treat */
+const HOMERENO_BREAKFAST = 75
+/** the most a seasoned sheepdog adds per sheep (on top of HERD_COIN_PER_SHEEP) */
+const HERD_SEASONED_CAP = 6
+
 export interface HarvestResult {
   kind: CropKind
   golden: boolean
@@ -494,7 +499,16 @@ export class Game {
     if (!this.canGreetFamily()) return false
     this.state.familyGreetDay = this.todayFn()
     this.grantXp(XP_GAIN.pet)
+    // "A Cosier Home" finally earns its keep: the renovated farmhouse lays on a
+    // warm family breakfast once a day — a small, cosy daily treat (was purely
+    // cosmetic for 6000c before)
+    if (this.state.upgrades.homereno) this.grantCoins(HOMERENO_BREAKFAST)
     return true
+  }
+
+  /** the daily family breakfast pays this once the home is renovated */
+  get breakfastBonus(): number {
+    return this.state.upgrades.homereno ? HOMERENO_BREAKFAST : 0
   }
 
   /** a scoop of oats (costs 1 wheat) — pure affection; the first scoop of
@@ -696,7 +710,11 @@ export class Game {
 
   /** all sheep home: pay out (scales with flock size) */
   herdComplete(sheepHomed: number): { coins: number } {
-    const coins = HERD_COIN_PER_SHEEP * sheepHomed
+    // a seasoned sheepdog earns his keep: every few completed herds, Rex brings
+    // them in a touch tighter for +1c/sheep, capped — so repeat herding (the
+    // herdsDone counter was dead before) keeps getting a little more rewarding
+    const seasoned = Math.min(HERD_SEASONED_CAP, Math.floor(this.state.herdsDone / 3))
+    const coins = (HERD_COIN_PER_SHEEP + seasoned) * sheepHomed
     this.state.herdsDone += 1
     this.grantCoins(coins)
     this.grantXp(XP_GAIN.herd)

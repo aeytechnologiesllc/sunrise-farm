@@ -10,6 +10,7 @@ import {
   decorDef,
   type DecorPlacement,
 } from '../src/game/decor'
+import { placeOf } from '../src/game/layout'
 import { initialState, type GameState } from '../src/game/state'
 
 /** state with decor injected (field not yet in GameState proper) */
@@ -155,6 +156,15 @@ describe('canPlaceDecor: ok', () => {
   it('allows placing next to (but not on top of) an existing item', () => {
     const s = withDecor([placement(2, 2)])
     expect(canPlaceDecor(s, 2 + DECOR_CLEAR + 0.1, 2).ok).toBe(true)
+  })
+
+  it('rejects decor placed on top of an owned building footprint', () => {
+    const s = withDecor([], (x) => {
+      x.projects.coop = true
+    })
+    const coop = placeOf(s, 'coop')
+    // dead center of the coop is inside its footprint — no bench in the henhouse
+    expect(canPlaceDecor(s, coop.x, coop.z).reason).toBe('occupied')
   })
 })
 

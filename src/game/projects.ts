@@ -137,7 +137,7 @@ export const PROJECTS: ProjectDef[] = [
     yaw: 3.14159,
     footprint: { w: 4.6, d: 3.4 },
     kind: 'building',
-    earns: 'One more customer at a time — and city prices across the road.',
+    earns: 'City prices across the road — and the Catalog: decorations & fence skins.',
   },
   {
     id: 'greenhouse',

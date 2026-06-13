@@ -1026,7 +1026,13 @@ export function buildPen(scene: Scene, at: { x: number; z: number }): Group {
 // ---- FOR SALE deed sign --------------------------------------------------------------
 
 /** wooden board on two posts advertising a land deed or a build project */
-export function buildDeedSign(title: string, cost: number, header = 'FOR SALE', accent = '#b3541e'): Group {
+export function buildDeedSign(
+  title: string,
+  cost: number,
+  header = 'FOR SALE',
+  accent = '#b3541e',
+  wheat = 0,
+): Group {
   const group = new Group()
   const rng = mulberry32(8989)
   const woodTex = toTexture(woodCanvas(rng, '#8a6a42'), true)
@@ -1053,9 +1059,16 @@ export function buildDeedSign(title: string, cost: number, header = 'FOR SALE', 
   g.fillStyle = '#3a2d1e'
   g.font = '700 24px Trebuchet MS, sans-serif'
   g.fillText(title, 128, 80)
-  g.font = '800 26px Trebuchet MS, sans-serif'
   g.fillStyle = '#8a6d1a'
-  g.fillText(`${cost} coins`, 128, 112)
+  if (wheat > 0) {
+    // town acts cost coins AND wheat (Hazel hauls it) — show both so the price
+    // isn't a surprise at purchase
+    g.font = '800 23px Trebuchet MS, sans-serif'
+    g.fillText(`${cost}c  +  ${wheat} \u{1F33E}`, 128, 112)
+  } else {
+    g.font = '800 26px Trebuchet MS, sans-serif'
+    g.fillText(`${cost} coins`, 128, 112)
+  }
   const tex = new CanvasTexture(c)
   tex.colorSpace = SRGBColorSpace
   const board = new Mesh(new BoxGeometry(1.6, 0.8, 0.05), [

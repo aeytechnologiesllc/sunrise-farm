@@ -693,11 +693,21 @@ async function boot(): Promise<void> {
     8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
     10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
+    12: "The coop's east wing — room for three more hens \u{1F414}",
+    13: "Another coop wing, and Old Tom's farmstead is up for sale \u{1FAB4}",
+    15: 'The Birch Farmstead — the last of the open land \u{1F333}',
     16: 'A bigger Greenhouse — four more beds under glass \u{1F33F}',
     18: 'The coop can grow a third wing — the Long Roost \u{1F414}',
     20: 'The Market Awning: richer customers come to the shop \u{1F3EA}',
     22: 'The Pasture Loft makes room for more sheep and a goat \u{1F411}',
+    24: "Hazel's Tack Room — you can finally saddle up and RIDE her \u{1F434}",
     26: 'Make the farmhouse cosier — shelves, curtains, a tiled hearth \u{1F3E1}',
+    // milestones past the last unlock — leveling always means something warm
+    30: 'Thirty seasons in — Millbrook feels like home now \u{1F3E1}',
+    35: 'The whole valley knows Sunrise Farm by name \u{2600}\u{FE0F}',
+    40: 'Forty seasons! Grandpa would be so proud \u{1F33E}',
+    45: 'A farm for the ages — the orchards run gold \u{1F33B}',
+    50: 'Fifty seasons — a true Sunrise legend \u{1F3C6}',
   }
   /** a level-up mid-cutscene queues — the fanfare must never fire over the
    * crew's reveal (it lands ~1.2s after done(), the payday-banking pattern) */
@@ -1725,7 +1735,7 @@ async function boot(): Promise<void> {
     // the town notices the farm after its first delivery — before that the
     // board would just be noise on the roadside
     if (!def || state.town.delivered < 1) return
-    townSign = buildDeedSign(def.name, def.coins, 'MILLBROOK', '#7a4a9e')
+    townSign = buildDeedSign(def.name, def.coins, 'MILLBROOK', '#7a4a9e', def.wheat)
     townSign.position.copy(TOWN_SIGN_AT)
     townSign.rotation.y = Math.atan2(PLAYER_SPAWN.x - TOWN_SIGN_AT.x, PLAYER_SPAWN.z - TOWN_SIGN_AT.z)
     scene.add(townSign)
@@ -2554,7 +2564,13 @@ async function boot(): Promise<void> {
         heartBurst(scene, at.clone().setY(1.3))
         sfx.heart()
         player.gesture(engine.uTime.value)
-        hud.showBanner('Family time \u{1F49B}', 'the best part of any day')
+        // the renovated home lays on a breakfast — a small daily coin treat
+        if (game.breakfastBonus > 0) {
+          hud.showBanner('Family breakfast \u{1F373}', `the cosy kitchen warms the day \u{2014} +${game.breakfastBonus}c`)
+          sfx.kaching()
+        } else {
+          hud.showBanner('Family time \u{1F49B}', 'the best part of any day')
+        }
         saveNow()
       }
     } else if (id === 'milk' && near.pen) {

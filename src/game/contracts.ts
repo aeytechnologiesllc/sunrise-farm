@@ -11,6 +11,13 @@ import { EGG_SELL } from './economy'
 import { mulberry32 } from './rng'
 import { WOOL_COIN_PER_SHEEP, MILK_COIN_PER_GOAT } from './produce'
 import type { GameState } from './state'
+import { woolMult } from './town'
+
+/** base value AT MARKET — wool reflects the Wool Works 1.5x just like shearing
+ * does, so a wool order never pays less per fleece than selling it yourself */
+function marketValue(good: ContractGood, s: GameState): number {
+  return good === 'wool' ? goodBaseValue('wool') * woolMult(s) : goodBaseValue(good)
+}
 
 // ---------- public types ----------------------------------------------------
 
@@ -164,7 +171,7 @@ export function rollContracts(seedBase: number, day: number, s: GameState): Cont
     const rawQty = rollQty(rng, good, lvl)
     const qty = isStationSlot ? rawQty * 2 : rawQty
     const slotPrem = isStationSlot ? prem + 0.4 : prem
-    const payout = Math.round(qty * goodBaseValue(good) * slotPrem)
+    const payout = Math.round(qty * marketValue(good, s) * slotPrem)
     const sponsor = pickSponsor(rng, sponsorPool)
 
     contracts.push({ good, qty, payout, sponsor })
@@ -211,7 +218,7 @@ export function rollFestival(seedBase: number, week: number, s: GameState): Fest
   }
 
   // payout = round(sum(per-good qty*base*premium) * 1.8), optionally *1.5 if square
-  const rawPayout = goods.reduce((sum, { good, qty }) => sum + qty * goodBaseValue(good) * prem, 0)
+  const rawPayout = goods.reduce((sum, { good, qty }) => sum + qty * marketValue(good, s) * prem, 0)
   let payout = Math.round(rawPayout * 1.8)
 
   // town square bonus — 'square' may not be a TownActId yet; use safe lookup

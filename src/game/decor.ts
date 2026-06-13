@@ -1,6 +1,7 @@
 /** DECORATION catalog — repeatable cosmetic items the player buys and
  * places on the farm.  Pure module (no three/DOM/Date/Math.random). */
 import { WORLD_BOUNDS } from './geo'
+import { pointInBuilding } from './layout'
 import type { GameState } from './state'
 
 export type DecorId =
@@ -93,6 +94,9 @@ export function canPlaceDecor(s: GameState, x: number, z: number): DecorCheck {
   for (const p of placed) {
     if (Math.hypot(x - p.x, z - p.z) < DECOR_CLEAR) return { ok: false, reason: 'occupied' }
   }
+
+  // no planting a bench inside the coop: respect building/pen/paddock footprints
+  if (pointInBuilding(s, x, z)) return { ok: false, reason: 'occupied' }
 
   return { ok: true }
 }

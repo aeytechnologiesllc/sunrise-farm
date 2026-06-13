@@ -46,7 +46,7 @@ export const TOWN_ACTS: TownActDef[] = [
   {
     id: 'cottages',
     name: 'The Cottages',
-    earns: 'two families move in — and they love shopping at your stand',
+    earns: 'two families move in, they love your stand — and the weekly festival order opens',
     coins: 500,
     wheat: 10,
     needDelivered: 6,
