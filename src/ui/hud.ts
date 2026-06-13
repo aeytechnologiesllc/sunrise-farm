@@ -8,8 +8,10 @@ import gsap from 'gsap'
 const CSS = `
 #hud{position:fixed;inset:0;pointer-events:none;color:#3a2d1e;
   font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;z-index:10}
-.pill{display:flex;align-items:center;gap:7px;background:rgba(255,252,240,.92);
-  border-radius:999px;padding:6px 14px 6px 9px;box-shadow:0 2px 8px rgba(60,40,10,.18);
+.pill{display:flex;align-items:center;gap:7px;background:rgba(250,245,232,.44);
+  backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);
+  border-radius:999px;padding:6px 14px 6px 9px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 1px 5px rgba(45,32,10,.12);
   font-weight:700;font-size:17px}
 #topleft{position:absolute;top:max(10px,env(safe-area-inset-top));left:12px;
   display:flex;flex-direction:column;gap:8px;align-items:flex-start}
@@ -17,11 +19,15 @@ const CSS = `
   background:radial-gradient(circle at 35% 30%,#ffe999,#f5b916 60%,#c98a08);
   box-shadow:inset 0 0 0 2px rgba(150,95,0,.35)}
 .wheat-ico{font-size:18px;line-height:22px}
-#xpwrap{display:flex;align-items:center;gap:8px;background:rgba(255,252,240,.92);
-  border-radius:999px;padding:5px 12px 5px 6px;box-shadow:0 2px 8px rgba(60,40,10,.18)}
-#daypill{display:flex;align-items:center;gap:6px;background:rgba(255,252,240,.92);
-  border-radius:999px;padding:4px 12px;box-shadow:0 2px 8px rgba(60,40,10,.18);
-  font-weight:800;font-size:13px;color:#7a5c1e}
+#xpwrap{display:flex;align-items:center;gap:8px;background:rgba(250,245,232,.44);
+  backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);
+  border-radius:999px;padding:5px 12px 5px 6px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 1px 5px rgba(45,32,10,.12)}
+#daypill{display:flex;align-items:center;gap:6px;background:rgba(250,245,232,.44);
+  backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);
+  border-radius:999px;padding:4px 12px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 1px 5px rgba(45,32,10,.12);
+  font-weight:800;font-size:13px;color:#5e4715}
 #lvl{min-width:26px;height:26px;border-radius:50%;background:#7cb342;color:#fff;
   display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;
   box-shadow:inset 0 -2px 0 rgba(0,0,0,.18)}
@@ -106,13 +112,13 @@ const CSS = `
 @keyframes tickpop{50%{transform:scale(1.18)}}
 #musicbtn{position:absolute;top:max(10px,env(safe-area-inset-top));
   right:calc(12px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;
-  border:none;background:rgba(255,252,240,.92);box-shadow:0 2px 8px rgba(60,40,10,.18);
+  border:none;background:rgba(250,245,232,.44);backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 1px 5px rgba(45,32,10,.12);
   font-size:19px;line-height:1;pointer-events:auto;cursor:pointer;
   font-family:inherit;touch-action:manipulation}
 #musicbtn:active{transform:translateY(1px)}
 #fsbtn{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 50px);
   right:calc(12px + env(safe-area-inset-right));width:42px;height:42px;border-radius:50%;
-  border:none;background:rgba(255,252,240,.92);box-shadow:0 2px 8px rgba(60,40,10,.18);
+  border:none;background:rgba(250,245,232,.44);backdrop-filter:blur(7px) saturate(1.15);-webkit-backdrop-filter:blur(7px) saturate(1.15);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 1px 5px rgba(45,32,10,.12);
   font-size:17px;line-height:1;pointer-events:auto;cursor:pointer;
   font-family:inherit;touch-action:manipulation}
 #fsbtn:active{transform:translateY(1px)}
