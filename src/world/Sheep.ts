@@ -29,22 +29,16 @@ const ESCAPE_SPEED = 1.6
 const FLEE_SPEED = 2.7
 const FLEE_R = 3.2
 const TURN_RATE = 7
-/** where escapees wander to (jittered per mission).
- * tiers 0-2: the pen sits outside the picket ring, so sheep scatter into the
- * open WEST meadow (no ring walls on the way). tier 3 fences the pasture in,
- * so the flock raids the YARD instead ("sheep in the crops!"). */
-/** scatter offsets from the PEN CENTER (the pen is a movable now): the west
- * meadow raid at the authored spot, reproduced exactly at the default pen */
+/** where escapees wander to (jittered per mission): out to the open meadow by
+ * the pen. The endless-field redesign moved the crops far east and froze the
+ * homestead as a fixed yard, so the old tier-3 "sheep in the crops!" yard raid
+ * is retired — every wander now ambles to the nearby meadow (which is what the
+ * "strolled out to the meadow" banner already promises). Scatter offsets are
+ * from the PEN CENTER (the pen is movable), reproduced at the default pen. */
 const SCATTER_NEAR: Array<[number, number]> = [
   [-5.2, 1.2],
   [-4.7, -4.8],
   [-0.7, 6.7],
-]
-/** the tier-3 yard raid stays absolute — "sheep in the crops!" */
-const SCATTER_YARD: Array<[number, number]> = [
-  [-5.5, 8.0],
-  [-2.5, -6.5],
-  [3.0, -2.0],
 ]
 
 /** everything the flock derives from wherever its pen stands today */
@@ -127,7 +121,6 @@ export class Flock {
 
   private rng: Rng
   private escaped = 0
-  private tier = 0
   private geo: PenGeom = penGeometry(DEFAULT_PEN)
   private fences: FenceSets | null = null
 
@@ -229,12 +222,11 @@ export class Flock {
   }
 
   /** kick off a mission: k sheep bolt out the gate to scatter spots */
-  startEscape(k: number, tier: number): number {
-    this.tier = tier
+  startEscape(k: number): number {
     const penned = this.sheep.filter((s) => s.mode === 'penned')
     const n = Math.min(k, penned.length)
     const g = this.geo
-    const spots = tier >= 3 ? SCATTER_YARD.map(([x, z]) => new Vector3(x, 0, z)) : g.scatterNear
+    const spots = g.scatterNear
     for (let i = 0; i < n; i++) {
       const u = penned[i]
       const spot = spots[Math.floor(this.rng.next() * spots.length)]
@@ -269,14 +261,14 @@ export class Flock {
     // deadlocks resolve by sliding west into the lane first
     if (p.x < g.rect.x0 + 0.2) return north ? g.westN : g.westS
     if (p.x < g.rect.x1 + 0.4) return north ? g.cornerN : g.cornerS
-    const f = fenceFor(this.tier)
+    // the homestead fence is fixed post-redesign — fenceFor ignores its arg
+    const f = fenceFor(0)
     if (p.z > f.maxZ - 0.1 && p.x > f.minX - 0.4) return new Vector3(f.minX - 0.9, 0, f.maxZ + 0.9)
     if (p.z < f.minZ + 0.1 && p.x > f.minX - 0.4) return new Vector3(f.minX - 0.9, 0, f.minZ - 0.9)
     return g.gateOut
   }
 
-  update(dt: number, playerPos: Vector3, dogPos: Vector3, tier = 0, fences: FenceSets | null = null): void {
-    this.tier = tier
+  update(dt: number, playerPos: Vector3, dogPos: Vector3, fences: FenceSets | null = null): void {
     this.fences = fences
     for (const u of this.sheep) {
       u.baaTimer -= dt

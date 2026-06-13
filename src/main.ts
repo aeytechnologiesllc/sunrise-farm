@@ -1801,6 +1801,9 @@ async function boot(): Promise<void> {
     bindParcels(state.fieldParcels)
     player.setBounds({ ...WORLD_BOUNDS, maxX: worldMaxX(state.fieldParcels) })
     hud.dismissBanner() // a lingering event toast must not float over the scene
+    // the 3rd parcel rolls the tractor in mid-ceremony — flag it so the closing
+    // banner can announce the unlock instead of leaving the player to find it
+    let tractorArrived = false
     construction.play({
       site: center,
       yaw: 0,
@@ -1818,11 +1821,17 @@ async function boot(): Promise<void> {
         if (!tractor && state.fieldParcels >= 3) {
           tractor = new TractorView(scene, TRACTOR_SPOT.pos, TRACTOR_SPOT.yaw)
           carry.register('tractor', tractor.group)
+          tractorArrived = true
         }
         sparkleBurst(scene, center.clone().setY(1.2), true, 18)
       },
       done: () => {
-        hud.showBanner(`${def.name}!`, def.flavor)
+        hud.showBanner(
+          `${def.name}!`,
+          tractorArrived
+            ? 'The old tractor rumbles in \u{1F69C} — it sows the whole field in one pass'
+            : def.flavor,
+        )
         music.duck()
         sfx.fanfare()
         rareSlowMo()
@@ -2732,7 +2741,7 @@ async function boot(): Promise<void> {
     }
     chicken.update(dt)
     dog.update(dt, player.pos)
-    flock.update(dt, player.pos, dog.group.position, state.expansion, fences)
+    flock.update(dt, player.pos, dog.group.position, fences)
     construction.update(dt)
     grazers.update(dt, player.pos)
     // fetch cinema safety: if the mission system yanked Rex off the job,
@@ -2761,7 +2770,7 @@ async function boot(): Promise<void> {
     ) {
       herdTimer -= dt
       if (herdTimer <= 0) {
-        const n = flock.startEscape(state.level >= 6 ? 3 : 2, state.expansion)
+        const n = flock.startEscape(state.level >= 6 ? 3 : 2)
         if (n > 0) {
           dropStick() // pick the stick back up after the flock's home, Rex
           hud.showBanner('Wanderers! \u{1F411}', `${n} sheep strolled out to the meadow — Rex is ready when you are`)
@@ -3865,7 +3874,7 @@ async function boot(): Promise<void> {
     dogPos: () => [dog.group.position.x, dog.group.position.y, dog.group.position.z],
     henPos: () => [chicken.group.position.x, chicken.group.position.y, chicken.group.position.z],
     sheep: () => flock.sheep.map((s) => [s.group.position.x, s.group.position.z, s.mode] as [number, number, string]),
-    escape: () => flock.startEscape(2, state.expansion),
+    escape: () => flock.startEscape(2),
     grazers: () => grazers.positions().map((p) => [p.x, p.z] as [number, number]),
     music: () => music.debug,
     musicUnlock: () => music.unlock(),
