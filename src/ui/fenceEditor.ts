@@ -34,8 +34,9 @@ import { decodeEdge, encodeEdge, nearestEdge, type FenceSets } from '../game/fen
 
 const PANEL_CSS = `
 #editor-panel{position:fixed;top:calc(58px + env(safe-area-inset-top));left:50%;
-  transform:translateX(-50%);display:flex;gap:8px;z-index:30;
-  font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif}
+  transform:translateX(-50%);display:flex;gap:8px;z-index:30;max-width:calc(100vw - 16px);
+  overflow-x:auto;scrollbar-width:none;font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif}
+#editor-panel::-webkit-scrollbar{display:none}
 .etool{pointer-events:auto;display:flex;align-items:center;gap:6px;border:none;
   background:rgba(255,252,240,.94);border-radius:999px;padding:8px 14px 8px 10px;
   font-family:inherit;font-weight:800;font-size:14px;color:#3a2d1e;
@@ -51,7 +52,8 @@ const PANEL_CSS = `
   transition:opacity .15s}
 #style-picker{position:fixed;top:calc(106px + env(safe-area-inset-top));left:50%;
   transform:translateX(-50%);display:none;flex-wrap:nowrap;gap:6px;z-index:31;
-  pointer-events:auto}
+  max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:none;pointer-events:auto}
+#style-picker::-webkit-scrollbar{display:none}
 .spick{pointer-events:auto;display:flex;align-items:center;gap:5px;border:none;
   background:rgba(255,252,240,.96);border-radius:999px;padding:7px 12px 7px 9px;
   font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;font-weight:800;

@@ -4,7 +4,7 @@
   "description": "Build your farm: plant, harvest, herd, and grow.",
   "start_url": "./",
   "display": "fullscreen",
-  "orientation": "landscape",
+  "orientation": "any",
   "background_color": "#87b86a",
   "theme_color": "#87b86a",
   "icons": [

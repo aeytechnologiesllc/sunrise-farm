@@ -40,7 +40,7 @@ export class Music {
     this.muted = localStorage.getItem(MUTE_KEY) === '1'
     this.els = TRACKS.map((url) => {
       const a = new Audio(url)
-      a.preload = 'auto'
+      a.preload = 'none'
       a.loop = false
       a.muted = this.muted
       ;(a as HTMLAudioElement & { playsInline?: boolean }).playsInline = true

@@ -108,6 +108,8 @@ export class FollowCamera {
    * touch and the pick, which read to the owner as "taps don't register".
    * main toggles this in the editor's onOpen/onClose. */
   editorActive = false
+  /** modal dialogs own all pointer intent until dismissed */
+  inputLocked = false
   /** while riding Hazel the subject sits up on her back — lift the look anchor
    * so the shot frames the rider, not the horse's rear */
   rideLift = 0
@@ -160,13 +162,14 @@ export class FollowCamera {
   // ---- zoom (wheel + two-finger pinch) + desktop drag-orbit ---------------
 
   private wheel = (e: WheelEvent): void => {
+    if (this.inputLocked) return
     e.preventDefault()
     this.dist = this.clampD(this.dist * (1 + Math.sign(e.deltaY) * 0.08))
     this.moved = true
   }
 
   private pDown = (e: PointerEvent): void => {
-    if (this.editorActive) return
+    if (this.editorActive || this.inputLocked) return
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // capture: a look-drag that crosses a HUD chip must keep flowing to the
     // canvas — without this, drags died at every overlay edge (it read as
@@ -183,7 +186,7 @@ export class FollowCamera {
   }
 
   private pMove = (e: PointerEvent): void => {
-    if (this.editorActive) return
+    if (this.editorActive || this.inputLocked) return
     const p = this.pointers.get(e.pointerId)
     if (!p) return
     const dx = e.clientX - p.x

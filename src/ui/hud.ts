@@ -51,7 +51,9 @@ const CSS = `
   box-shadow:0 0 8px rgba(255,215,0,.9)}
 #actions{position:absolute;right:calc(14px + env(safe-area-inset-right));
   bottom:calc(158px + env(safe-area-inset-bottom));display:flex;flex-direction:column;
-  gap:10px;align-items:flex-end}
+  gap:10px;align-items:flex-end;max-height:calc(100vh - 190px - env(safe-area-inset-top));
+  max-width:calc(100vw - 28px);overflow-y:auto;scrollbar-width:none}
+#actions::-webkit-scrollbar{display:none}
 .act{pointer-events:auto;display:flex;align-items:center;gap:8px;border:none;
   background:rgba(255,252,240,.96);border-radius:999px;padding:8px 15px 8px 11px;
   font-family:inherit;font-weight:800;font-size:15px;color:#3a2d1e;min-height:46px;
@@ -72,8 +74,8 @@ const CSS = `
   vertical-align:-1px;background:radial-gradient(circle at 35% 30%,#ffe999,#f5b916 60%,#c98a08)}
 .toast{position:absolute;transform:translate(-50%,-50%);font-weight:800;font-size:17px;
   color:#fff;text-shadow:0 2px 6px rgba(60,30,0,.55);white-space:nowrap;pointer-events:none}
-#namecard-veil{position:absolute;inset:0;background:rgba(30,20,5,.35);pointer-events:auto;
-  display:flex;align-items:center;justify-content:center;opacity:0}
+#namecard-veil{position:fixed;inset:0;background:rgba(30,20,5,.35);pointer-events:auto;
+  display:flex;align-items:center;justify-content:center;opacity:0;z-index:90}
 #namecard{background:#fffcf0;border-radius:22px;padding:22px 26px;width:min(320px,84vw);
   box-shadow:0 12px 40px rgba(40,25,0,.45);text-align:center;transform:scale(.7)}
 #namecard h2{margin:0 0 4px;font-size:22px;color:#5d3a00}
@@ -122,18 +124,21 @@ const CSS = `
   font-size:17px;line-height:1;pointer-events:auto;cursor:pointer;
   font-family:inherit;touch-action:manipulation}
 #fsbtn:active{transform:translateY(1px)}
-#rotatehint{position:absolute;inset:0;display:none;align-items:flex-start;
-  justify-content:center;pointer-events:none;z-index:30}
+#rotatehint{position:absolute;top:calc(max(10px,env(safe-area-inset-top)) + 104px);
+  right:calc(12px + env(safe-area-inset-right));display:none;align-items:flex-start;
+  justify-content:flex-end;pointer-events:none;z-index:18;max-width:calc(100vw - 24px)}
 #rotatehint.show{display:flex}
-#rotatecard{margin-top:20vh;background:rgba(40,30,10,.8);color:#fffcf0;border-radius:18px;
-  padding:16px 30px 14px;text-align:center;pointer-events:auto;position:relative;
-  box-shadow:0 8px 30px rgba(20,10,0,.4);display:flex;flex-direction:column;gap:2px}
-#rotatecard .ph{font-size:34px;animation:rotnudge 2.4s ease-in-out infinite}
+#rotatecard{background:rgba(40,30,10,.66);color:#fffcf0;border-radius:999px;
+  padding:8px 32px 8px 11px;text-align:left;pointer-events:auto;position:relative;
+  box-shadow:0 5px 18px rgba(20,10,0,.2);display:grid;grid-template-columns:auto auto;
+  gap:2px 7px;align-items:center;backdrop-filter:blur(8px) saturate(1.15);
+  -webkit-backdrop-filter:blur(8px) saturate(1.15)}
+#rotatecard .ph{grid-row:1/3;font-size:18px;animation:rotnudge 2.4s ease-in-out infinite}
 @keyframes rotnudge{0%,25%{transform:rotate(0)}60%,85%{transform:rotate(90deg)}100%{transform:rotate(90deg)}}
-#rotatecard b{font-size:17px}
-#rotatecard span{font-size:13px;opacity:.85}
-#rotatex{position:absolute;top:4px;right:6px;border:none;background:none;color:#fffcf0;
-  font-size:15px;opacity:.7;cursor:pointer;padding:4px 6px;font-family:inherit}
+#rotatecard b{font-size:12px;line-height:1}
+#rotatecard span{font-size:10px;line-height:1;opacity:.82}
+#rotatex{position:absolute;top:50%;right:7px;transform:translateY(-50%);border:none;background:none;color:#fffcf0;
+  font-size:14px;opacity:.75;cursor:pointer;padding:4px 6px;font-family:inherit}
 /* landscape phones: everything compact so the FARM owns the screen
    (owner, twice: the verbs were eating the view — keep them modest) */
 @media (max-height: 500px){
@@ -158,8 +163,16 @@ const CSS = `
   #fsbtn{width:34px;height:34px;font-size:14px;top:calc(max(6px,env(safe-area-inset-top)) + 42px)}
   .bubble{font-size:13px;padding:5px 10px}
 }
-#cardpanel-veil{position:absolute;inset:0;background:rgba(20,14,6,.5);
-  pointer-events:auto;display:flex;align-items:center;justify-content:center;opacity:0}
+@media (max-width: 560px) and (min-height: 501px){
+  #chip{top:calc(max(10px,env(safe-area-inset-top)) + 166px);left:50%;right:auto;
+    width:calc(100vw - 24px);box-sizing:border-box;text-align:center;white-space:normal;
+    line-height:1.15;font-size:14px;padding:7px 12px}
+  #actions{right:calc(12px + env(safe-area-inset-right));
+    bottom:calc(148px + env(safe-area-inset-bottom));gap:8px}
+  .act{max-width:min(210px,calc(100vw - 24px))}
+}
+#cardpanel-veil{position:fixed;inset:0;background:rgba(20,14,6,.5);
+  pointer-events:auto;display:flex;align-items:center;justify-content:center;opacity:0;z-index:90}
 #cardpanel-col{background:#fffcf0;border-radius:22px;padding:22px 20px 18px;
   width:min(360px,88vw);box-shadow:0 12px 40px rgba(40,25,0,.45);
   transform:scale(.9);position:relative}
@@ -347,8 +360,8 @@ export class Hud {
     // Dismissible, pointer-events only on the card — play is never blocked.
     const hint = el('div', 'rotatehint', this.root)
     hint.innerHTML =
-      '<div id="rotatecard"><div class="ph">\u{1F4F1}</div><b>Rotate your device</b>' +
-      '<span>the farm is loveliest in landscape</span>' +
+      '<div id="rotatecard"><div class="ph">\u{1F4F1}</div><b>Landscape widens view</b>' +
+      '<span>portrait works too</span>' +
       '<button id="rotatex" aria-label="Dismiss">✕</button></div>'
     const portrait = matchMedia('(orientation: portrait)')
     const coarse = matchMedia('(pointer: coarse)')
@@ -669,6 +682,9 @@ export class Hud {
   // ---- naming card ------------------------------------------------------
 
   showNameCard(suggested: string, done: (name: string) => void): void {
+    this.hideCardPanel()
+    this.nameVeil?.remove()
+    this.nameVeil = null
     const veil = document.createElement('div')
     veil.id = 'namecard-veil'
     const card = document.createElement('div')
@@ -682,7 +698,7 @@ export class Hud {
     btn.textContent = 'Welcome her home'
     card.append(input, btn)
     veil.appendChild(card)
-    this.root.appendChild(veil)
+    document.body.appendChild(veil)
     this.nameVeil = veil
     gsap.to(veil, { opacity: 1, duration: 0.3 })
     gsap.to(card, { scale: 1, duration: 0.45, ease: 'back.out(1.7)' })
@@ -712,6 +728,7 @@ export class Hud {
    * or the ✕ button calls hideCardPanel(). */
   showCardPanel(title: string, cards: CardDef[], onTap?: (id: string) => void): void {
     this.hideCardPanel()
+    if (this.nameVeil) return
 
     const veil = document.createElement('div')
     veil.id = 'cardpanel-veil'
@@ -793,7 +810,7 @@ export class Hud {
 
     col.append(head, list)
     veil.appendChild(col)
-    this.root.appendChild(veil)
+    document.body.appendChild(veil)
     this.cardPanelVeil = veil
 
     // close on veil tap (outside column) — stop propagation on col itself

@@ -378,29 +378,32 @@ async function boot(): Promise<void> {
    * ANY-room gates read `room !== null`, room-specific verbs read
    * `room === 'coop'` — a new room inherits every gate for free. */
   let room: RoomId | null = null
-  composer.addPass(
-    new EffectPass(
-      cam.camera,
-      new GodRaysEffect(cam.camera, sky.sunDisk, {
-        density: 0.96,
-        decay: 0.93,
-        weight: 0.25,
-        samples: isCoarse ? 12 : 32,
-        resolutionScale: isCoarse ? 0.3 : 0.5,
-      }),
-      // phones: half-res luminance + 5 mip levels — the outer mips blur to
-      // a halo wider than a 6-inch screen resolves, and bloom was the one
-      // effect that never had a coarse tier (the perf audit's #2 GPU cost)
-      new BloomEffect({
-        intensity: 0.42,
-        luminanceThreshold: 0.82,
-        mipmapBlur: true,
-        levels: isCoarse ? 5 : 8,
-        resolutionScale: isCoarse ? 0.5 : 1,
-      }),
-      new VignetteEffect({ darkness: 0.3, offset: 0.26 }),
-    ),
-  )
+  const bloom = new BloomEffect({
+    intensity: isCoarse ? 0.34 : 0.42,
+    luminanceThreshold: 0.82,
+    mipmapBlur: true,
+    levels: isCoarse ? 4 : 8,
+    resolutionScale: isCoarse ? 0.35 : 1,
+  })
+  const vignette = new VignetteEffect({ darkness: 0.3, offset: 0.26 })
+  if (isCoarse) {
+    composer.addPass(new EffectPass(cam.camera, bloom, vignette))
+  } else {
+    composer.addPass(
+      new EffectPass(
+        cam.camera,
+        new GodRaysEffect(cam.camera, sky.sunDisk, {
+          density: 0.96,
+          decay: 0.93,
+          weight: 0.25,
+          samples: 32,
+          resolutionScale: 0.5,
+        }),
+        bloom,
+        vignette,
+      ),
+    )
+  }
   buildGround(scene)
   const { grass, forest } = buildMeadow(scene, assets)
   // level one starts from SCRATCH: the stand exists only once its project is
@@ -2403,7 +2406,7 @@ async function boot(): Promise<void> {
     else if (carry.carrying) return // a building in your arms is a full-time job
     else if (id === 'fence-edit') fenceEditor.open()
     else if (id in CROPS && near.emptyPlot >= 0) plantAt(near.emptyPlot, id as CropKind)
-    else if (id === 'stick' && near.dog && !dog.fetching && fetchCool <= 0) throwStick()
+    else if (id === 'stick' && near.dog && state.chipsDone.plant && !dog.fetching && fetchCool <= 0) throwStick()
     else if (id === 'sleep' && near.home) sleepScene()
     else if (id === 'orders' && near.orders) openOrderPanel()
     else if (id === 'ride' && near.ride) mountHazel()
@@ -2711,6 +2714,7 @@ async function boot(): Promise<void> {
   let coinMismatchFor = 0
   let standT = 0
   let movedEver = false
+  const stoppedInput = { x: 0, y: 0 }
   /** the current action-button ids (dev driver / E2E introspection) */
   let lastActions: string[] = []
   /** engine time when dusk parked (-1 while the sun is up) — chip cadence */
@@ -2719,7 +2723,8 @@ async function boot(): Promise<void> {
     game.update(dt)
     customers.active = state.harvests >= 1 && (game.hasProject('stand') || game.hasProject('shop'))
     customers.update(dt, game.stock())
-    player.update(dt, joy.value, cam.yaw)
+    cam.inputLocked = hud.modalOpen
+    player.update(dt, hud.modalOpen ? stoppedInput : joy.value, cam.yaw)
     fenceBlock()
     // ---- carry & place: long-press lifts; the ghost glides ahead ----
     checkLongPress()
@@ -3348,7 +3353,7 @@ async function boot(): Promise<void> {
       if (near.decor) {
         actions.push({ id: 'decorpick', emoji: '\u{1F91A}', label: 'Pick it up', sub: 're-arrange or free a slot' })
       }
-      if (near.dog && !dog.fetching && fetchCool <= 0) {
+      if (near.dog && state.chipsDone.plant && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })
       }
       // fallback verbs only join a QUIET stack — when real work is on the
@@ -3385,7 +3390,7 @@ async function boot(): Promise<void> {
     let chipText: string | null = null
     if (!hud.modalOpen && !construction.active && !sleepActive && !fenceEditor.active) {
       if (!movedEver && !state.chipsDone.plant) {
-        chipText = 'Drag the joystick to take a walk \u{1F33B}'
+        chipText = 'Drag the joystick toward the field \u{1F33E}'
       } else if (dayCycle.atDusk && duskFor < 20) {
         chipText = state.plots.some((p) => !p.crop)
           ? '\u{1F319} Plant before bed — crops grow overnight'
@@ -4094,7 +4099,14 @@ async function boot(): Promise<void> {
   }
   window.__step = window.__farm.step
 
-  gsap.to(veil, { opacity: 0, duration: 0.5, onComplete: () => veil.remove() })
+  let veilRemoved = false
+  const removeVeil = (): void => {
+    if (veilRemoved) return
+    veilRemoved = true
+    veil.remove()
+  }
+  gsap.to(veil, { opacity: 0, duration: 0.5, onComplete: removeVeil })
+  window.setTimeout(removeVeil, 1600)
 }
 
 void boot()
