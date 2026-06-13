@@ -100,12 +100,14 @@ import {
 } from './world/scenery'
 import { BARN_AT, BARN_ROT } from './game/geo'
 import { keeperName, tomorrowLines } from './game/tomorrow'
-import { busWindow, nextTownAct, recessNow, TOWN_ACTS } from './game/town'
+import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS } from './game/town'
+import { nextGoal } from './game/goals'
 import { TownSet } from './world/townSet'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
+  landBlockedProjects,
   SHOP_PREMIUM,
   SHOP_QUEUE_MAX,
   type ProjectDef,
@@ -514,8 +516,13 @@ async function boot(): Promise<void> {
     onOpen: () => {
       editSavedDist = cam.dist
       cam.dist = Math.max(cam.dist, 14)
+      // the camera STOPS reading gestures while the editor owns the pointer —
+      // otherwise every fence tap also orbits the world and the ground slides
+      // under the finger between touch and pick (the "taps don't register" bug)
+      cam.editorActive = true
     },
     onClose: () => {
+      cam.editorActive = false
       if (editSavedDist !== null) cam.dist = editSavedDist
       editSavedDist = null
     },
@@ -1405,34 +1412,43 @@ async function boot(): Promise<void> {
   // Millbrook stands back up exactly as far as the farm has built it
   for (const a of TOWN_ACTS) if (state.town.built[a.id]) townSet.reveal(a.id, false)
   townSet.setShift(state.town.built.works === true)
+  // ambient villagers stroll the bakery↔cottages shoulder all day once the
+  // cottages stand — so a player in town at any hour sees life, not a diorama
+  townSet.setStrollers(state.town.built.cottages === true)
   // reloaded mid-delivery? Hazel is still in town, not grazing at the stable
   if (state.produce.deliveryT > 0) grazers.setHidden('horse', true)
 
   // build-site signs for every project whose land exists
   const projectSigns = new Map<ProjectId, { group: Group; at: Vector3 }>()
+  // a teaser sign stands on a lot whose LAND the player hasn't bought yet, so
+  // a farmer who's planted everything still sees "the Stable goes HERE — buy
+  // this land" instead of a silent empty corner (the owner's level-38 player
+  // owned the coop and never knew the stable was even possible)
+  const teaserSigns = new Map<ProjectId, Group>()
+  // upgrade/build signs can't stand inside the building they replace
+  const SIGN_OFFSET: Partial<Record<ProjectId, [number, number]>> = {
+    shop: [-2.8, -1.6], // beside the lot, clear of the queue spots at z-2.4
+    goats: [1.6, -3.4],
+    stable: [3.4, 0.8], // east of the paddock, on the walking line
+    horse: [3.4, -1.8], // her own sign beside the stable's
+  }
   const refreshProjectSigns = (): void => {
-    // chained projects (shop after stand, goats after sheep) keep their sign
-    // hidden until the prerequisite exists — they also share build sites, so
-    // early signs would stack on top of each other
-    const avail = availableProjects({
+    const gate = {
       level: state.level,
       coins: state.coins,
       expansion: state.expansion,
       projects: state.projects as Partial<Record<ProjectId, boolean>>,
-    }).filter((d) => !d.requires || state.projects[d.requires])
+    }
+    // chained projects (shop after stand, goats after sheep) keep their sign
+    // hidden until the prerequisite exists — they also share build sites, so
+    // early signs would stack on top of each other
+    const avail = availableProjects(gate).filter((d) => !d.requires || state.projects[d.requires])
     for (const [id, s] of projectSigns) {
       if (!avail.some((d) => d.id === id)) {
         scene.remove(s.group)
         disposeMaterials(s.group)
         projectSigns.delete(id)
       }
-    }
-    // upgrade signs can't stand inside the building they replace
-    const SIGN_OFFSET: Partial<Record<ProjectId, [number, number]>> = {
-      shop: [-2.8, -1.6], // beside the lot, clear of the queue spots at z-2.4
-      goats: [1.6, -3.4],
-      stable: [3.4, 0.8], // east of the paddock, on the walking line
-      horse: [3.4, -1.8], // her own sign beside the stable's
     }
     for (const def of avail) {
       if (projectSigns.has(def.id)) continue
@@ -1444,6 +1460,28 @@ async function boot(): Promise<void> {
       group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
       scene.add(group)
       projectSigns.set(def.id, { group, at })
+    }
+    // teasers: only the buildings the NEXT deed will unlock, so the lot the
+    // player should buy next reads its future out loud (no clutter — one
+    // deed's worth of promises at a time)
+    const teasers = landBlockedProjects(gate).filter((d) => d.requiresExpansion === state.expansion + 1)
+    for (const [id, group] of teaserSigns) {
+      if (!teasers.some((d) => d.id === id)) {
+        scene.remove(group)
+        disposeMaterials(group)
+        teaserSigns.delete(id)
+      }
+    }
+    for (const def of teasers) {
+      if (teaserSigns.has(def.id)) continue
+      const [ox, oz] = SIGN_OFFSET[def.id] ?? [0, 0]
+      const site = projectSite(def)
+      const at = new Vector3(site.x + ox, 0, site.z + oz)
+      const group = buildDeedSign(def.name, def.cost, 'NEEDS LAND', '#8a6d3b')
+      group.position.copy(at)
+      group.rotation.y = Math.atan2(PLAYER_SPAWN.x - at.x, PLAYER_SPAWN.z - at.z)
+      scene.add(group)
+      teaserSigns.set(def.id, group)
     }
   }
   refreshProjectSigns()
@@ -2252,6 +2290,7 @@ async function boot(): Promise<void> {
           reveal: () => {
             townSet.reveal(def.id, true)
             if (def.id === 'works') townSet.setShift(true)
+            if (def.id === 'cottages') townSet.setStrollers(true)
           },
           done: () => {
             hud.showBanner(`${def.name}!`, def.earns)
@@ -2484,18 +2523,23 @@ async function boot(): Promise<void> {
       near.town = townSign !== null && p.distanceTo(TOWN_SIGN_AT) < 2.6
       // ---- Millbrook breathes on the day clock ----
       customers.pace = state.town.built.cottages ? 0.7 : 1
-      if (
-        state.town.built.bakery &&
-        busWindow(dayCycle.phase) &&
-        state.town.lastBusDay !== `day-${state.day}` &&
-        !sleepActive &&
-        !construction.active
-      ) {
-        state.town.lastBusDay = `day-${state.day}`
-        townSet.busRun()
-        sfx.bell()
-        hud.showBanner('The morning bus \u{1F68C}', 'visitors ride in from Millbrook')
-        saveNow()
+      if (state.town.built.bakery && !sleepActive && !construction.active) {
+        // two buses a day now (the town used to look dead between the single
+        // 21s morning run and dusk): morning visitors in, afternoon trippers
+        // home. Keyed per-half-day so a reload can't double-ring the same run.
+        if (busWindow(dayCycle.phase) && state.town.lastBusDay !== `day-${state.day}-am`) {
+          state.town.lastBusDay = `day-${state.day}-am`
+          townSet.busRun()
+          sfx.bell()
+          hud.showBanner('The morning bus \u{1F68C}', 'visitors ride in from Millbrook')
+          saveNow()
+        } else if (busWindowPm(dayCycle.phase) && state.town.lastBusDay !== `day-${state.day}-pm`) {
+          state.town.lastBusDay = `day-${state.day}-pm`
+          townSet.busRun()
+          sfx.bell()
+          hud.showBanner('The afternoon bus \u{1F68C}', 'the day-trippers head home')
+          saveNow()
+        }
       }
       const recess = state.town.built.school === true && recessNow(dayCycle.phase) && !sleepActive
       if (recess !== recessWas) {
@@ -2997,6 +3041,14 @@ async function boot(): Promise<void> {
       // soft late-dusk reminder, only once the player has gone idle
       if (!chipText && dayCycle.atDusk && duskFor >= 20 && engine.uTime.value - lastInteract > 30) {
         chipText = "\u{1F3E1} supper's still warm — home when you're ready"
+      }
+      // the always-a-goal compass: when nothing urgent is chirping, name the
+      // next thing worth walking toward, so the player never wonders "what
+      // now?" — this is what surfaces the hidden half of the game (the deed
+      // that unlocks the stable, the town, the next farmstead)
+      if (!chipText) {
+        const goal = nextGoal(state)
+        if (goal) chipText = goal.pill
       }
     }
     hud.showChip(chipText)

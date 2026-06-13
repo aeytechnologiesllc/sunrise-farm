@@ -326,11 +326,13 @@ export class FenceEditor {
 
   private down = (e: PointerEvent): void => {
     if (!this.active) return
-    // the panel's own buttons live OUTSIDE the canvas — anything reaching
-    // the canvas is tool intent
-    if (this.dragId !== null) return
+    // the panel's own buttons live OUTSIDE the canvas — anything reaching the
+    // canvas is tool intent. Swallow it BEFORE the dragId early-out so a
+    // second finger mid-draw can't leak through to start a camera pinch or a
+    // building lift on the layer beneath us.
     e.stopImmediatePropagation()
     e.preventDefault()
+    if (this.dragId !== null) return
     const g = this.ground(e)
     if (!g) return
     this.dragId = e.pointerId

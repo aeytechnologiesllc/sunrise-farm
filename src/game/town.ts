@@ -128,7 +128,13 @@ export function busWindow(phase: number): boolean {
   return phase >= 0.3 && phase <= 0.42
 }
 
-/** recess: kids spill into the schoolyard mid-day */
+/** afternoon return bus — Millbrook's second run, mirrors the morning latch */
+export function busWindowPm(phase: number): boolean {
+  return phase >= 0.66 && phase <= 0.78
+}
+
+/** recess: kids spill into the schoolyard mid-day — two bands: morning recess
+ * and post-lunch play (~47% of the day, up from ~17%) */
 export function recessNow(phase: number): boolean {
-  return phase >= 0.45 && phase <= 0.62
+  return (phase >= 0.3 && phase <= 0.44) || (phase >= 0.48 && phase <= 0.66)
 }

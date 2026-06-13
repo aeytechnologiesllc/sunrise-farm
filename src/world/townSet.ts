@@ -65,6 +65,12 @@ const WORKER_X0 = -1.8
 const WORKER_X1 = 1.6
 const WORKER_Z0 = -0.3
 const WORKER_Z1 = 1.2
+/** south road-shoulder wander rect for the always-on strollers (world coords,
+ * in front of the bakery and cottages — x 26..36, z 9..10) */
+const STROLLER_X0 = 26.0
+const STROLLER_X1 = 36.0
+const STROLLER_Z0 = 9.0
+const STROLLER_Z1 = 10.0
 /** mill chimney mouth, LOCAL to the works stage pivot (smoke is born here) */
 const SMOKE_AT: [number, number, number] = [-2.9, 6.05, 3.8]
 /** ground speed covered by the family Walk clip at timeScale 1 for a 1.6u
@@ -767,6 +773,11 @@ export class TownSet {
   private recessOn = false
   private shiftOn = false
 
+  // always-on ambient strollers (bakery/cottages road shoulder)
+  private readonly strollers: Walker[] = []
+  private readonly strollersGroup: Group
+  private strollersOn = false
+
   // mill smoke (the homestead supper-smoke pattern)
   private readonly smoke: Group
   private readonly puffs: Puff[] = []
@@ -801,6 +812,11 @@ export class TownSet {
     this.workersGroup = new Group()
     this.workersGroup.visible = false
     this.stages.works.add(this.workersGroup)
+
+    // strollers live directly on root so they walk regardless of act visibility
+    this.strollersGroup = new Group()
+    this.strollersGroup.visible = false
+    this.root.add(this.strollersGroup)
 
     // mill smoke: four looping puffs staggered up the wisp (homestead recipe)
     this.smoke = new Group()
@@ -896,6 +912,15 @@ export class TownSet {
     if (!on) for (const p of this.puffs) p.mat.opacity = 0
   }
 
+  /** ambient strollers on the south road shoulder (bakery + cottages frontage);
+   * idempotent — call setStrollers(true) once the cottages act is built */
+  setStrollers(on: boolean): void {
+    if (on === this.strollersOn) return
+    this.strollersOn = on
+    if (on && this.strollers.length === 0) this.ensureStrollers()
+    this.strollersGroup.visible = on
+  }
+
   /** zero-alloc per-frame tick: riders walk, kids/workers wander, smoke
    * curls; every mixer banks dt and ticks at 2Hz (the rigs are 25u+ out) */
   update(dt: number): void {
@@ -914,6 +939,13 @@ export class TownSet {
         this.tickMixer(w, dt)
       }
       this.updateSmoke(dt)
+    }
+    if (this.strollersOn) {
+      for (let i = 0; i < this.strollers.length; i++) {
+        const s = this.strollers[i]
+        this.wander(s, dt, STROLLER_X0, STROLLER_X1, STROLLER_Z0, STROLLER_Z1, 3.5, 5.0)
+        this.tickMixer(s, dt)
+      }
     }
   }
 
@@ -1020,6 +1052,20 @@ export class TownSet {
       w.timer = 1 + this.rng.next() * 4
       this.playClip(w, w.idle, 1)
       this.workers.push(w)
+    }
+  }
+
+  private ensureStrollers(): void {
+    // slightly different shirt tones from the existing palette — soft slate and warm tan
+    const tints = ['#7a8fa6', '#c49a6c']
+    for (let i = 0; i < 2; i++) {
+      const s = this.makeWalker('customerA', 1.52 + i * 0.04, tints[i], 0.22, this.strollersGroup)
+      s.speed = 0.9 // calm walk — these are leisure strollers, not mill workers
+      s.group.position.set(STROLLER_X0 + 2.0 + i * 4.5, 0, STROLLER_Z0 + this.rng.next() * (STROLLER_Z1 - STROLLER_Z0))
+      s.heading = s.group.rotation.y = this.rng.next() * Math.PI * 2
+      s.timer = 2 + this.rng.next() * 4
+      this.playClip(s, s.idle, 1)
+      this.strollers.push(s)
     }
   }
 

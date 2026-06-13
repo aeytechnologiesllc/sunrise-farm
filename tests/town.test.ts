@@ -8,6 +8,7 @@ import {
   BAKERY_RATE,
   BAKERY_WHEAT,
   busWindow,
+  busWindowPm,
   nextTownAct,
   recessNow,
   TOWN_ACTS,
@@ -124,6 +125,34 @@ describe('day-clock windows', () => {
     expect(busWindow(0.8)).toBe(false)
     expect(recessNow(0.5)).toBe(true)
     expect(recessNow(0.2)).toBe(false)
+  })
+
+  it('afternoon bus window is distinct from morning and off elsewhere', () => {
+    // morning band still passes
+    expect(busWindow(0.35)).toBe(true)
+    expect(busWindow(0.8)).toBe(false)
+    // pm band: 0.66..0.78
+    expect(busWindowPm(0.72)).toBe(true)
+    expect(busWindowPm(0.5)).toBe(false)
+    // pm band edges are clean
+    expect(busWindowPm(0.66)).toBe(true)
+    expect(busWindowPm(0.78)).toBe(true)
+    expect(busWindowPm(0.65)).toBe(false)
+    expect(busWindowPm(0.79)).toBe(false)
+  })
+
+  it('widened recess covers both bands and is dark at edges', () => {
+    // morning recess: 0.30..0.44
+    expect(recessNow(0.35)).toBe(true)
+    // post-lunch recess: 0.48..0.66
+    expect(recessNow(0.5)).toBe(true)   // original assertion preserved
+    expect(recessNow(0.6)).toBe(true)
+    // quiet gap between bands
+    expect(recessNow(0.46)).toBe(false)
+    // before school
+    expect(recessNow(0.2)).toBe(false)  // original assertion preserved
+    // after school
+    expect(recessNow(0.9)).toBe(false)
   })
 })
 

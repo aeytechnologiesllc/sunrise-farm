@@ -105,6 +105,13 @@ export class FollowCamera {
   /** stressed-device mode (set by the adaptive governor at its floor):
    * sheds the whisker ray — the center ray + confiner still protect */
   lowSpec = false
+  /** while a placement / fence editor owns the pointer, the camera ignores
+   * ALL gestures. The camera's pointerdown/move are registered on the canvas
+   * BEFORE the editor's at-target listeners, so without this every fence tap
+   * also orbits the world — shifting the ground under the finger between the
+   * touch and the pick, which read to the owner as "taps don't register".
+   * main toggles this in the editor's onOpen/onClose. */
+  editorActive = false
 
   constructor(dom: HTMLElement, start: Vector3) {
     // a hidden tab can boot with a 0x0 viewport — never divide by it
@@ -149,6 +156,7 @@ export class FollowCamera {
   }
 
   private pDown = (e: PointerEvent): void => {
+    if (this.editorActive) return
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType })
     // capture: a look-drag that crosses a HUD chip must keep flowing to the
     // canvas — without this, drags died at every overlay edge (it read as
@@ -165,6 +173,7 @@ export class FollowCamera {
   }
 
   private pMove = (e: PointerEvent): void => {
+    if (this.editorActive) return
     const p = this.pointers.get(e.pointerId)
     if (!p) return
     const dx = e.clientX - p.x
