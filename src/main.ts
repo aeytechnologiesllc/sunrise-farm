@@ -28,6 +28,8 @@ import { BloomEffect, EffectComposer, EffectPass, GodRaysEffect, RenderPass, Vig
 import { Music } from './audio/music'
 import { Sfx } from './audio/sfx'
 import { Engine } from './engine/Engine'
+import { safeStorage } from './storage'
+import { createTelemetry, type SunriseFarmSnapshot } from './telemetry'
 import {
   CROPS,
   fountainCount,
@@ -248,12 +250,14 @@ declare global {
       cam: () => ReturnType<FollowCamera['probe']>
       camMat: () => Record<string, unknown>
       town: () => GameState['town']
+      telemetry: () => SunriseFarmSnapshot
     }
     __step: (s: number) => void
   }
 }
 
 async function boot(): Promise<void> {
+  const bootStarted = performance.now()
   // ---- loading veil -----------------------------------------------------
   const veil = document.createElement('div')
   veil.style.cssText =
@@ -327,12 +331,12 @@ async function boot(): Promise<void> {
   await assets.loadAll((d, t) => (ldp.textContent = `loading ${d}/${t}`))
 
   // ---- state first (scenery is tier-aware) --------------------------------
-  const rawSave = localStorage.getItem(SAVE_KEY)
+  const rawSave = safeStorage.getItem(SAVE_KEY)
   const loaded = deserialize(rawSave)
   // a save that EXISTS but no longer parses is rescued, never clobbered: the
   // autosave would otherwise overwrite a farm a bad update failed to read.
   // The copy keeps the original recoverable (manually, or by a future fix).
-  if (rawSave && !loaded) localStorage.setItem(`${SAVE_KEY}.rescue`, rawSave)
+  if (rawSave && !loaded) safeStorage.setItem(`${SAVE_KEY}.rescue`, rawSave)
   const state = loaded ?? initialState((Math.random() * 0xffffffff) >>> 0)
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
   // a save that just took the one-time farmhand-retirement migration (refund +
@@ -341,6 +345,42 @@ async function boot(): Promise<void> {
   // it from the PRE-migration raw save (loaded ⟹ rawSave parsed cleanly).
   const migrationFlush = !!loaded && !!rawSave && !(JSON.parse(rawSave) as { farmhandRetired?: boolean }).farmhandRetired
   const game = new Game(state)
+  let wiping = false
+  const snapshot = (): SunriseFarmSnapshot => ({
+    coins: state.coins,
+    wheat: state.wheat,
+    level: state.level,
+    xp: state.xp,
+    harvests: state.harvests,
+    day: state.day,
+    fieldParcels: state.fieldParcels,
+    projects: state.projects,
+    chicken: {
+      arrived: state.chicken.arrived,
+      named: state.chicken.name !== null,
+      hearts: state.chicken.hearts,
+      eggsLaid: state.chicken.eggsLaid,
+    },
+    townDelivered: state.town.delivered,
+    playSeconds: Math.round((performance.now() - bootStarted) / 1000),
+  })
+  const resetSave = (): void => {
+    wiping = true
+    safeStorage.removeItem(SAVE_KEY)
+    location.reload()
+  }
+  const telemetry = createTelemetry({
+    saveKey: SAVE_KEY,
+    build: import.meta.env.VITE_APP_VERSION || 'local',
+    snapshot,
+    reset: resetSave,
+  })
+  telemetry.track('boot', {
+    loadedSave: loaded !== null,
+    rescuedSave: rawSave !== null && loaded === null,
+    offlineSeconds: offline ? Math.round((Date.now() - loaded!.savedAt) / 1000) : 0,
+  })
+  renderer.domElement.addEventListener('webglcontextlost', () => telemetry.track('webgl_context_lost', { dpr }))
   // the saved LAYOUT drives where everything stands — scenery's ground art,
   // exclusion zones, and every anchor below resolve through it
   bindLayout(layoutView(state))
@@ -687,9 +727,8 @@ async function boot(): Promise<void> {
   }
 
 
-  let wiping = false
   const saveNow = (): void => {
-    if (!wiping) localStorage.setItem(SAVE_KEY, serialize(state))
+    if (!wiping) safeStorage.setItem(SAVE_KEY, serialize(state))
   }
   // persist a just-applied one-time migration immediately (see migrationFlush)
   if (migrationFlush) saveNow()
@@ -740,6 +779,7 @@ async function boot(): Promise<void> {
     navigator.vibrate?.([20, 40, 20])
   }
   game.on('levelup', (e) => {
+    telemetry.track('level_up', { level: e.level, unlocked: e.unlocked })
     if (construction.active) queuedLevelUp = () => levelUpBeat(e)
     else levelUpBeat(e)
     // a new level can unlock an upgrade sign (market lvl 20, pasture lvl 22)
@@ -860,6 +900,7 @@ async function boot(): Promise<void> {
     if (state.chicken.name) return
     hud.showNameCard(suggestedName, (name) => {
       game.setChickenName(name)
+      telemetry.milestone('chicken_named', { suggested: suggestedName, keptSuggested: state.chicken.name === suggestedName })
       sfx.cluck()
       heartBurst(scene, chicken.tagWorldPos())
       chicken.acknowledge(cam.camera.position)
@@ -868,6 +909,7 @@ async function boot(): Promise<void> {
   }
   // first harvest: the crate thuds down and WAITS — walking up opens it
   game.on('chickenArrive', () => {
+    telemetry.milestone('chicken_arrived', { harvests: state.harvests })
     endFetchCine() // the crate ceremony outranks a stick chase
     sfx.crate()
     chicken.dropCrate()
@@ -959,6 +1001,7 @@ async function boot(): Promise<void> {
     const center = plots[i].center.clone().setY(0.9)
     const res = game.harvest(i)
     if (!res) return
+    telemetry.milestone('first_harvest', { kind: res.kind, coins: res.coins, golden: res.golden })
     plots[i].harvestPop(res.golden)
     plots[i].setCrop(null, 0, false)
     lastGlow[i] = 'none'
@@ -980,6 +1023,7 @@ async function boot(): Promise<void> {
 
   const plantAt = (i: number, kind: CropKind): void => {
     if (game.plant(i, kind)) {
+      telemetry.milestone('first_crop_planted', { kind, plot: i })
       plots[i].setCrop(kind, 0, true)
       sfx.plant()
       saveNow()
@@ -2578,6 +2622,7 @@ async function boot(): Promise<void> {
     } else if (id === 'build' && near.project) {
       const def = game.buildProject(near.project)
       if (def) {
+        telemetry.track('project_built', { id: def.id, name: def.name, cost: def.cost, level: state.level })
         hud.setCoins(state.coins)
         refreshProjectSigns()
         sfx.crate()
@@ -2646,6 +2691,7 @@ async function boot(): Promise<void> {
     } else if (id === 'deed' && near.deed) {
       const def = game.expand()
       if (def) {
+        telemetry.track('land_deed_bought', { name: def.name, cost: def.cost, fieldParcels: state.fieldParcels })
         hud.setCoins(state.coins)
         sfx.kaching()
         expandCeremony(def)
@@ -2820,7 +2866,10 @@ async function boot(): Promise<void> {
     feedCool = Math.max(0, feedCool - dt)
     if (joy.active) {
       touch()
-      if (joy.active) movedEver = true
+      if (joy.active) {
+        if (!movedEver) telemetry.milestone('first_move')
+        movedEver = true
+      }
     }
 
     // ---- the 20Hz tier: proximity, buttons, chips, guidance ----
@@ -3668,6 +3717,15 @@ async function boot(): Promise<void> {
   /** EMA of real frame time, ms — drives the adaptive resolution */
   let frameAvg = 16.7
   let dprSettleAt = performance.now() + 4000 // let boot hitches pass first
+  window.setTimeout(() => {
+    telemetry.track('performance_sample', {
+      fps: Math.round(engine.fps),
+      frameMs: +frameAvg.toFixed(2),
+      dpr: +dpr.toFixed(2),
+      calls: renderer.info.render.calls,
+      tris: renderer.info.render.triangles,
+    })
+  }, 15000)
   const loop = (now: number): void => {
     requestAnimationFrame(loop)
     // self-healing viewport: iOS standalone misses resize events — if the
@@ -3845,10 +3903,10 @@ async function boot(): Promise<void> {
     isCoarse &&
     !standalone &&
     typeof document.documentElement.requestFullscreen !== 'function' &&
-    localStorage.getItem('sunrise-farm.fsHint') !== '1'
+    safeStorage.getItem('sunrise-farm.fsHint') !== '1'
   ) {
     gsap.delayedCall(45, () => {
-      localStorage.setItem('sunrise-farm.fsHint', '1')
+      safeStorage.setItem('sunrise-farm.fsHint', '1')
       hud.showBanner('Play fullscreen!', 'Share button → Add to Home Screen')
     })
   }
@@ -3872,7 +3930,7 @@ async function boot(): Promise<void> {
     },
     wipe: () => {
       wiping = true // pagehide save must not resurrect the old state
-      localStorage.removeItem(SAVE_KEY)
+      safeStorage.removeItem(SAVE_KEY)
       location.reload()
     },
     pos: () => [player.pos.x, player.pos.z],
@@ -4011,6 +4069,7 @@ async function boot(): Promise<void> {
       frameMs: +frameAvg.toFixed(2),
       fps: Math.round(engine.fps),
     }),
+    telemetry: snapshot,
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)
       prevPos.x = x
@@ -4103,6 +4162,7 @@ async function boot(): Promise<void> {
   const removeVeil = (): void => {
     if (veilRemoved) return
     veilRemoved = true
+    telemetry.track('ready', { loadMs: Math.round(performance.now() - bootStarted), snapshot: snapshot() as unknown as Record<string, unknown> })
     veil.remove()
   }
   gsap.to(veil, { opacity: 0, duration: 0.5, onComplete: removeVeil })

@@ -4,6 +4,7 @@
  * Purely presentational — game state is the single source of truth and the
  * displayed coin count self-heals toward it (never gated on tweens). */
 import gsap from 'gsap'
+import { safeSessionStorage } from '../storage'
 
 const CSS = `
 #hud{position:fixed;inset:0;pointer-events:none;color:#3a2d1e;
@@ -367,12 +368,12 @@ export class Hud {
     const coarse = matchMedia('(pointer: coarse)')
     const refreshHint = (): void => {
       const show =
-        portrait.matches && coarse.matches && sessionStorage.getItem('sunrise-farm.rotateDismissed') !== '1'
+        portrait.matches && coarse.matches && safeSessionStorage.getItem('sunrise-farm.rotateDismissed') !== '1'
       hint.classList.toggle('show', show)
     }
     portrait.addEventListener('change', refreshHint)
     hint.querySelector('#rotatex')!.addEventListener('click', () => {
-      sessionStorage.setItem('sunrise-farm.rotateDismissed', '1')
+      safeSessionStorage.setItem('sunrise-farm.rotateDismissed', '1')
       refreshHint()
     })
     refreshHint()

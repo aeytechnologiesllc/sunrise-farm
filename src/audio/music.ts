@@ -13,6 +13,8 @@
  * Sits quietly under the SFX (~0.25), ducks during fanfares, and the HUD
  * corner button mutes it (persisted). Purely presentational. */
 
+import { safeStorage } from '../storage'
+
 // BASE-relative so a subpath host (GitHub Pages /<repo>/) still finds them
 const TRACKS = [
   `${import.meta.env.BASE_URL}audio/music/still-pickin.mp3`,
@@ -37,7 +39,7 @@ export class Music {
   private duckRecoverAt = 0
 
   constructor() {
-    this.muted = localStorage.getItem(MUTE_KEY) === '1'
+    this.muted = safeStorage.getItem(MUTE_KEY) === '1'
     this.els = TRACKS.map((url) => {
       const a = new Audio(url)
       a.preload = 'none'
@@ -154,7 +156,7 @@ export class Music {
 
   setMuted(muted: boolean): void {
     this.muted = muted
-    localStorage.setItem(MUTE_KEY, muted ? '1' : '0')
+    safeStorage.setItem(MUTE_KEY, muted ? '1' : '0')
     for (const a of this.els) a.muted = muted
   }
 
