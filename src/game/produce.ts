@@ -34,7 +34,6 @@ export const DELIVERY_PAY: [number, number] = [26, 42]
 /** the coop's nesting boxes fill on this cadence */
 export const COOP_TIME = 150
 export const COOP_COIN_PER_HEN = 7
-export const COOP_HENS = 4
 
 export function initialProduce(): Produce {
   return {
@@ -126,14 +125,6 @@ export function collectMilk(p: Produce): boolean {
   if (!p.milkReady) return false
   p.milkReady = false
   p.milkT = MILK_TIME
-  return true
-}
-
-/** Gather the coop's egg baskets: consumes the batch and restarts the timer. */
-export function collectCoopEggs(p: Produce): boolean {
-  if (!p.eggsReady) return false
-  p.eggsReady = false
-  p.eggsT = COOP_TIME
   return true
 }
 

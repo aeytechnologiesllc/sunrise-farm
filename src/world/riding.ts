@@ -25,15 +25,6 @@ const HORSE_TARGET_H = 1.75
 /** Horse asset key — matches MODEL_URLS['horse'] in assets.ts. */
 const HORSE_KEY = 'horse' as const
 
-/**
- * World-unit Y of the horse's back (saddle height).
- *
- * The Quaternius horse targets 1.75 u head-to-toe (animals.ts BAND).
- * The withers sit at roughly 54–56% of total height on the Quaternius rig,
- * putting the back at ~0.95 u.  main.ts should add this to the farmer's
- * root-to-pelvis offset and fine-tune until it looks right.
- */
-export const SADDLE_Y = 0.95
 
 /** Rotation smoothing: lerp rate in turns/second toward the target yaw.
  * 10 /s gives a natural "banking" lean without feeling sloppy. */

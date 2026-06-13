@@ -13,7 +13,6 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   SphereGeometry,
-  Vector3,
 } from 'three'
 import { mulberry32 } from '../game/rng'
 import type { FieldRect } from '../game/expansion'
@@ -138,11 +137,6 @@ export function buildField(rect: FieldRect, plots: Array<[number, number]>, _see
   soil.receiveShadow = true
   group.add(soil)
   return group
-}
-
-/** world position helper for crop placement on the ridged soil */
-export function plotCenter(p: [number, number]): Vector3 {
-  return new Vector3(p[0], 0, p[1])
 }
 
 // ---- greenhouse crop stages -------------------------------------------------

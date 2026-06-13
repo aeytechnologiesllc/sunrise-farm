@@ -164,9 +164,6 @@ export function woolMult(s: GameState): number {
   return s.town.built.works ? 1.5 : 1
 }
 
-/** named regulars the cottages bring — they shop like customers but tip */
-export const NEIGHBORS = ['Rosie', 'Martha', 'Tom'] as const
-
 /** the bus: one morning arrival per day once the bakery stands. The window
  * is a day-phase band so reloads can't double-run it; main latches per day. */
 export function busWindow(phase: number): boolean {

@@ -932,10 +932,3 @@ export function buildScaffoldStaged(w: number, d: number, seed: number): { root:
   root.add(stage0, stage1, stage2)
   return { root, stages: [stage0, stage1, stage2] }
 }
-
-/** fully-built scaffold (all stages up) — kept for non-staged callers */
-export function buildScaffold(w: number, d: number, seed: number): Group {
-  const { root, stages } = buildScaffoldStaged(w, d, seed)
-  for (const s of stages) s.scale.y = 1
-  return root
-}
