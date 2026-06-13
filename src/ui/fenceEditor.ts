@@ -394,6 +394,9 @@ export class FenceEditor {
 
   private down = (e: PointerEvent): void => {
     if (!this.active) return
+    // touching the canvas commits to a tool gesture — fold the style picker away
+    // so it doesn't float over the preview ghosts for the rest of the draw
+    this.stylePicker.style.display = 'none'
     // the panel's own buttons live OUTSIDE the canvas — anything reaching the
     // canvas is tool intent. Swallow it BEFORE the dragId early-out so a
     // second finger mid-draw can't leak through to start a camera pinch or a

@@ -63,8 +63,8 @@ describe('contracts wired into Game', () => {
     delete raw.festival
     delete raw.festivalRibbons
     const back = deserialize(JSON.stringify(raw))!
-    expect(back.contracts).toEqual({ day: 0, progress: [], done: [] })
-    expect(back.festival).toEqual({ week: -1, progress: [], done: false })
+    expect(back.contracts).toEqual({ day: 0, goods: [], progress: [], done: [] })
+    expect(back.festival).toEqual({ week: -1, order: { goods: [], payout: 0 }, progress: [], done: false })
     expect(back.festivalRibbons).toBe(0)
   })
 })

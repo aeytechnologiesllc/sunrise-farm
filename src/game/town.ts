@@ -11,7 +11,7 @@
  * as land tiers 5 and 6 — land is land, the deed flow already knows it. */
 import type { GameState } from './state'
 
-export type TownActId = 'bakery' | 'cottages' | 'school' | 'works'
+export type TownActId = 'bakery' | 'cottages' | 'school' | 'works' | 'cafe' | 'square' | 'station'
 
 export interface TownActDef {
   id: TownActId
@@ -79,6 +79,42 @@ export const TOWN_ACTS: TownActDef[] = [
     lot: [40.5, 14.8],
     yaw: 0,
   },
+  {
+    id: 'cafe',
+    name: 'The Copper Kettle',
+    earns: 'coffee and cake in the village — and a daily egg order that starts the morning right',
+    coins: 1800,
+    wheat: 40,
+    needDelivered: 20,
+    after: 'works',
+    footprint: { w: 5.5, d: 4.2 },
+    lot: [46.0, 8.0],
+    yaw: Math.PI,
+  },
+  {
+    id: 'square',
+    name: 'Festival Square',
+    earns: 'the village green is open — the weekly festival pays more when crowds fill the square',
+    coins: 2600,
+    wheat: 50,
+    needDelivered: 28,
+    after: 'cafe',
+    footprint: { w: 9.0, d: 9.0 },
+    lot: [37.5, 15.5],
+    yaw: 0,
+  },
+  {
+    id: 'station',
+    name: 'Millbrook Station',
+    earns: 'the railway arrives — a fourth daily order comes in by rail every morning',
+    coins: 4200,
+    wheat: 60,
+    needDelivered: 36,
+    after: 'square',
+    footprint: { w: 10.0, d: 5.5 },
+    lot: [50.5, 11.0],
+    yaw: Math.PI,
+  },
 ]
 
 export function townActDef(id: TownActId): TownActDef {
@@ -111,6 +147,15 @@ export const BAKERY_RATE = 9
 
 export function bakeryOrderReady(s: GameState, today: string): boolean {
   return s.town.built.bakery === true && s.town.lastBakeryDay !== today && s.wheat >= BAKERY_WHEAT
+}
+
+/** the café's standing egg order: the Copper Kettle buys 3 eggs at a premium
+ * once per day, automatically — the farm's second standing order */
+export const CAFE_EGGS = 3
+export const CAFE_RATE = 20
+
+export function cafeOrderReady(s: GameState, today: string): boolean {
+  return s.town.built.cafe === true && s.town.lastCafeDay !== today && s.eggs >= CAFE_EGGS
 }
 
 /** wool pays half again more once the works spin (cozy law: town additions

@@ -602,6 +602,7 @@ function flushAccum(acc: GeoAccum, scene: Scene): Mesh[] {
   const emit = (geos: BufferGeometry[], mat: MeshStandardMaterial, emissive = false): void => {
     if (geos.length === 0) return
     const merged = mergeGeometries(geos)
+    for (const g of geos) g.dispose() // the source primitives are spent once merged
     if (!merged) return
     const m = new Mesh(merged, mat)
     m.castShadow = !emissive
@@ -636,6 +637,7 @@ function buildOneGroup(id: DecorId, dayAge: number): Group {
   const addToGroup = (geos: BufferGeometry[], mat: MeshStandardMaterial, isEmissive = false): void => {
     if (geos.length === 0) return
     const merged = mergeGeometries(geos)
+    for (const g of geos) g.dispose() // free the source primitives post-merge
     if (!merged) return
     const m = new Mesh(merged, mat)
     m.castShadow = !isEmissive

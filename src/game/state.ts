@@ -1,6 +1,7 @@
 /** Save-state shape, serialization, and offline catch-up. Pure module. */
 import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
+import type { Contract, FestivalOrder } from './contracts'
 import type { DecorPlacement } from './decor'
 import { ringEdges, type FenceState, type FenceStyle } from './fence'
 import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
@@ -102,15 +103,20 @@ export interface GameState {
     built: Partial<Record<string, boolean>>
     /** the bakery's standing order fires once per day */
     lastBakeryDay: string | null
+    /** the café's daily egg order fires once per day */
+    lastCafeDay: string | null
+    /** the station's train passes through, am + pm */
+    lastTrainDay: string | null
     /** the morning bus comes once per day */
     lastBusDay: string | null
   }
-  /** the ORDER BOARD: daily contracts (see game/contracts.ts). Contracts
-   * themselves are deterministic rolls per (seed, day) — only progress is
-   * saved. `day` marks which day this progress belongs to; a new day re-rolls. */
-  contracts: { day: number; progress: number[]; done: boolean[] }
-  /** the weekly festival order; `week` marks which week the progress is for */
-  festival: { week: number; progress: number[]; done: boolean }
+  /** the ORDER BOARD: daily contracts (see game/contracts.ts). The rolled list
+   * is FROZEN into the save for the day — re-rolling on every produce tick let a
+   * mid-day level-up (which changes the eligible goods) shuffle the goods and
+   * orphan progress already banked into a slot. `day` marks the live day. */
+  contracts: { day: number; goods: Contract[]; progress: number[]; done: boolean[] }
+  /** the weekly festival order, likewise frozen for the week */
+  festival: { week: number; order: FestivalOrder; progress: number[]; done: boolean }
   /** ribbons earned from completed festivals — a permanent badge of plenty */
   festivalRibbons: number
   /** building upgrades owned (see game/upgrades.ts) */
@@ -160,9 +166,9 @@ export function initialState(seed: number): GameState {
     coopFlock: foundingFlock((seed ^ 0xc00b) >>> 0),
     hazel: { hearts: 0, lastPetDay: null, lastFedDay: null },
     familyGreetDay: null,
-    town: { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null },
-    contracts: { day: 0, progress: [], done: [] },
-    festival: { week: -1, progress: [], done: false },
+    town: { delivered: 0, built: {}, lastBakeryDay: null, lastCafeDay: null, lastBusDay: null, lastTrainDay: null },
+    contracts: { day: 0, goods: [], progress: [], done: [] },
+    festival: { week: -1, order: { goods: [], payout: 0 }, progress: [], done: false },
     festivalRibbons: 0,
     upgrades: {},
     decor: [],
@@ -283,10 +289,12 @@ export function deserialize(json: string | null): GameState | null {
     s.hazel ??= { hearts: 0, lastPetDay: null, lastFedDay: null }
     s.familyGreetDay ??= null
     // Millbrook arrived late — old saves start with an empty town square
-    s.town ??= { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null }
+    s.town ??= { delivered: 0, built: {}, lastBakeryDay: null, lastCafeDay: null, lastBusDay: null, lastTrainDay: null }
     // the order board grew in onto older saves empty; the first update() re-rolls
-    s.contracts ??= { day: 0, progress: [], done: [] }
-    s.festival ??= { week: -1, progress: [], done: false }
+    s.contracts ??= { day: 0, goods: [], progress: [], done: [] }
+    s.contracts.goods ??= [] // frozen-list field added later — empty forces a re-roll
+    s.festival ??= { week: -1, order: { goods: [], payout: 0 }, progress: [], done: false }
+    s.festival.order ??= { goods: [], payout: 0 }
     s.festivalRibbons ??= 0
     s.upgrades ??= {}
     // the decoration shop + fence skins arrived in the Long Season — old saves
@@ -297,7 +305,9 @@ export function deserialize(json: string | null): GameState | null {
     s.town.delivered ??= 0
     s.town.built ??= {}
     s.town.lastBakeryDay ??= null
+    s.town.lastCafeDay ??= null
     s.town.lastBusDay ??= null
+    s.town.lastTrainDay ??= null
     // henhouse migration: the founding four get boxes; a pending batch from
     // the OLD single-latch coop becomes ready boxes (nobody loses eggs)
     if (!s.coopFlock) {

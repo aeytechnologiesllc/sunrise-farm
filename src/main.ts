@@ -561,7 +561,11 @@ async function boot(): Promise<void> {
   const rebuildFenceMesh = (): void => {
     if (fenceMesh) {
       scene.remove(fenceMesh)
-      fenceMesh.geometry.dispose()
+      // traverse, not just root: the stone style parents a wooden gate overlay
+      // as a child — dispose every mesh's geometry so nothing orphans on edits
+      fenceMesh.traverse((o) => {
+        if (o instanceof Mesh) o.geometry.dispose()
+      })
       disposeMaterials(fenceMesh)
     }
     fenceMesh = buildFenceEdges(scene, fences.edges, fences.gates, state.fenceStyle)
@@ -746,6 +750,12 @@ async function boot(): Promise<void> {
     hud.setWheat(state.wheat)
     if (!sleepActive && !construction.active) {
       hud.showBanner("Rosie's standing order \u{1F956}", `4 wheat baked into +${e.coins}c`)
+      sfx.kaching()
+    }
+  })
+  game.on('cafeSold', (e) => {
+    if (!sleepActive && !construction.active) {
+      hud.showBanner('The Copper Kettle \u{2615}', `3 eggs whisked into +${e.coins}c`)
       sfx.kaching()
     }
   })
@@ -1484,6 +1494,7 @@ async function boot(): Promise<void> {
     rideRig.mount(player.pos, player.facing)
     player.setMounted(true, rideRig.saddleY)
     cam.rideLift = 0.85 // aim up at the rider, not the horse's back
+    cam.clearWhiskers() // the +2.2u jump must not inherit the old orbit's hits
     rideSavedDist = cam.dist
     cam.dist = Math.min(17, cam.dist + 2.2) // sit back to frame horse + rider
     sfx.hooves()
@@ -1498,6 +1509,7 @@ async function boot(): Promise<void> {
     grazers.setHidden('horse', state.produce.deliveryT > 0) // back to grazing unless she's away
     if (rideSavedDist !== null) cam.dist = rideSavedDist
     rideSavedDist = null
+    cam.clearWhiskers() // dropping back to the closer orbit, same reason
   }
   const penRect0 = penRect(state)
   const GOAT_RECT = { x0: penRect0.x0 + 0.7, z0: penRect0.z0 + 0.7, x1: penRect0.x1 - 0.7, z1: penRect0.z1 - 0.7 }
@@ -2882,6 +2894,17 @@ async function boot(): Promise<void> {
           sfx.bell()
           hud.showBanner('The afternoon bus \u{1F68C}', 'the day-trippers head home')
           saveNow()
+        }
+      }
+      // the station's train rolls through twice a day (silent ambience — the
+      // bus owns the banner; same half-day windows, its own latch)
+      if (state.town.built.station && !sleepActive && !construction.active) {
+        if (busWindow(dayCycle.phase) && state.town.lastTrainDay !== `day-${state.day}-am`) {
+          state.town.lastTrainDay = `day-${state.day}-am`
+          townSet.trainRun()
+        } else if (busWindowPm(dayCycle.phase) && state.town.lastTrainDay !== `day-${state.day}-pm`) {
+          state.town.lastTrainDay = `day-${state.day}-pm`
+          townSet.trainRun()
         }
       }
       const recess = state.town.built.school === true && recessNow(dayCycle.phase) && !sleepActive

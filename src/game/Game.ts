@@ -71,6 +71,9 @@ import {
   BAKERY_RATE,
   BAKERY_WHEAT,
   bakeryOrderReady,
+  CAFE_EGGS,
+  CAFE_RATE,
+  cafeOrderReady,
   townActDef,
   townStatus,
   woolMult,
@@ -114,6 +117,7 @@ export interface GameEvents {
   deliveryDone: { coins: number }
   townBuilt: { id: TownActId }
   bakerySold: { coins: number }
+  cafeSold: { coins: number }
   contractDone: { slot: number; contract: Contract }
   festivalDone: { payout: number; ribbons: number }
   upgraded: { def: UpgradeDef }
@@ -219,6 +223,14 @@ export class Game {
       this.grantCoins(pay)
       this.emit('bakerySold', { coins: pay })
     }
+    // The Copper Kettle's standing order: 3 eggs at a premium, once a day
+    if (cafeOrderReady(s, this.todayFn())) {
+      s.town.lastCafeDay = this.todayFn()
+      s.eggs -= CAFE_EGGS
+      const pay = CAFE_EGGS * CAFE_RATE
+      this.grantCoins(pay)
+      this.emit('cafeSold', { coins: pay })
+    }
     if (pev.deliveryReturned) {
       // a loved horse haggles better: +1c per heart on LIVE returns only
       // (offline catch-up stays the flat 34 — the absentee-landlord rule)
@@ -247,14 +259,22 @@ export class Game {
   private ensureContractsFresh(): void {
     const s = this.state
     const slots = contractSlots(s)
-    if (s.contracts.day !== s.day || s.contracts.progress.length !== slots) {
-      s.contracts = { day: s.day, progress: new Array(slots).fill(0), done: new Array(slots).fill(false) }
+    // re-roll only when the DAY turns (or the slot count changed, or an old save
+    // has no frozen list yet) — never on a mid-day level-up, which would reshuffle
+    // the goods under progress already banked into a slot
+    if (s.contracts.day !== s.day || s.contracts.goods.length !== slots) {
+      s.contracts = {
+        day: s.day,
+        goods: rollContracts(s.chicken.seed, s.day, s),
+        progress: new Array(slots).fill(0),
+        done: new Array(slots).fill(false),
+      }
     }
     if (s.town.built.cottages === true) {
       const week = this.weekOf()
-      const fest = rollFestival(s.chicken.seed, week, s)
-      if (s.festival.week !== week || s.festival.progress.length !== fest.goods.length) {
-        s.festival = { week, progress: new Array(fest.goods.length).fill(0), done: false }
+      if (s.festival.week !== week || s.festival.order.goods.length === 0) {
+        const order = rollFestival(s.chicken.seed, week, s)
+        s.festival = { week, order, progress: new Array(order.goods.length).fill(0), done: false }
       }
     }
   }
@@ -265,7 +285,7 @@ export class Game {
     if (qty <= 0) return
     const s = this.state
     this.ensureContractsFresh()
-    const list = rollContracts(s.chicken.seed, s.day, s)
+    const list = s.contracts.goods // the FROZEN list, immune to mid-day re-rolls
     for (let i = 0; i < list.length; i++) {
       if (s.contracts.done[i] || list[i].good !== good) continue
       s.contracts.progress[i] += qty
@@ -277,7 +297,7 @@ export class Game {
       }
     }
     if (s.town.built.cottages === true && !s.festival.done) {
-      const fest = rollFestival(s.chicken.seed, this.weekOf(), s)
+      const fest = s.festival.order // frozen for the week
       let touched = false
       for (let j = 0; j < fest.goods.length; j++) {
         if (fest.goods[j].good === good) {
@@ -299,7 +319,7 @@ export class Game {
   contractBoard(): { contract: Contract; progress: number; done: boolean }[] {
     this.ensureContractsFresh()
     const s = this.state
-    return rollContracts(s.chicken.seed, s.day, s).map((contract, i) => ({
+    return s.contracts.goods.map((contract, i) => ({
       contract,
       progress: s.contracts.progress[i] ?? 0,
       done: s.contracts.done[i] ?? false,
@@ -311,7 +331,7 @@ export class Game {
     const s = this.state
     if (s.town.built.cottages !== true) return null
     this.ensureContractsFresh()
-    return { order: rollFestival(s.chicken.seed, this.weekOf(), s), progress: [...s.festival.progress], done: s.festival.done }
+    return { order: s.festival.order, progress: [...s.festival.progress], done: s.festival.done }
   }
 
   // ---- actions ----------------------------------------------------------

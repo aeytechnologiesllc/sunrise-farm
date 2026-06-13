@@ -917,14 +917,20 @@ export function buildFenceEdges(
         rootMesh = m
       }
     }
-    // draw call 2: wooden gate overlay
+    // draw call 2: wooden gate overlay. PARENT it under the stone body (not the
+    // scene) so rebuildFenceMesh's scene.remove(root) + traverse-dispose reaches
+    // it too — a loose scene.add(gm) orphaned one mesh+geometry on every edit.
     const woodMat = new MeshStandardMaterial({ map: cedarWoodTex(), roughness: 0.90 })
     const mGate = mergeGeometries(gateGeos)
     if (mGate) {
       const gm = new Mesh(mGate, woodMat)
       gm.castShadow = true; gm.receiveShadow = true
-      scene.add(gm)
-      if (!rootMesh) rootMesh = gm
+      if (rootMesh) {
+        rootMesh.add(gm) // merged geo is world-space; root sits at origin so this is identity
+      } else {
+        scene.add(gm)
+        rootMesh = gm
+      }
     }
     return rootMesh
   }

@@ -36,8 +36,8 @@ import type { Assets, ModelKey } from './assets'
 import { normalizeHeight } from './scale'
 import { makeCanvas, toTexture, woodCanvas } from './textures'
 
-type ActId = 'bakery' | 'cottages' | 'school' | 'works'
-const ACTS: ActId[] = ['bakery', 'cottages', 'school', 'works']
+type ActId = 'bakery' | 'cottages' | 'school' | 'works' | 'cafe' | 'square' | 'station'
+const ACTS: ActId[] = ['bakery', 'cottages', 'school', 'works', 'cafe', 'square', 'station']
 
 /** meters of wall per texture tile — same board scale as the farm buildings */
 const TILE = 1.4
@@ -49,6 +49,9 @@ const P_BAKERY: [number, number] = [26.8, 9.4]
 const P_COTTAGES: [number, number] = [34.6, 8.5]
 const P_SCHOOL: [number, number] = [31.8, 14.8]
 const P_WORKS: [number, number] = [40.6, 12.4]
+const P_CAFE: [number, number] = [46.0, 8.0]
+const P_SQUARE: [number, number] = [37.5, 15.5]
+const P_STATION: [number, number] = [50.5, 11.0]
 /** where the bus noses to a stop, beside Rosie's */
 const BUS_STOP_X = 26.8
 const BUS_Z = ROAD_Z + 0.2
@@ -73,6 +76,12 @@ const STROLLER_Z0 = 9.0
 const STROLLER_Z1 = 10.0
 /** mill chimney mouth, LOCAL to the works stage pivot (smoke is born here) */
 const SMOKE_AT: [number, number, number] = [-2.9, 6.05, 3.8]
+/** train parked X (offstage east, just beyond the station) */
+const TRAIN_PARK_X = 62.0
+/** train stop X — engine nose rests at the platform end */
+const TRAIN_STOP_X = 50.5
+/** train Z — centre of the tracks (runs east from the station) */
+const TRAIN_Z = ROAD_Z + 2.0
 /** ground speed covered by the family Walk clip at timeScale 1 for a 1.6u
  * adult — same foot-lock measurement as Customer.ts */
 const WALK_REF = 2.2
@@ -678,6 +687,154 @@ function busBodyCanvas(rng: Rng): HTMLCanvasElement {
   return c
 }
 
+/** dark wrought-iron / rail metal: cold grey with subtle oxidation streaks */
+function ironCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(64, 64)
+  g.fillStyle = '#2a2a2c'
+  g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 18; i++) {
+    g.strokeStyle = rng.next() > 0.5 ? 'rgba(80,82,88,0.3)' : 'rgba(16,14,12,0.35)'
+    g.lineWidth = 0.8 + rng.next()
+    const x = rng.next() * 64
+    g.beginPath()
+    g.moveTo(x, 0)
+    g.lineTo(x + (rng.next() - 0.5) * 6, 64)
+    g.stroke()
+  }
+  for (let i = 0; i < 24; i++) {
+    g.fillStyle = rng.next() > 0.5 ? 'rgba(120,118,110,0.14)' : 'rgba(10,8,6,0.18)'
+    g.fillRect(rng.next() * 64, rng.next() * 64, 1.5, 1.5)
+  }
+  return c
+}
+
+/** painted sign atlas for the new acts — four signs stacked:
+ *  COFFEE (0,0)-(256,64): warm-board + coffee ring + copper letters
+ *  MAYPOLE flag stripe (0,64)-(256,128): broad red/white/blue vertical bars
+ *  MILLBROOK STATION clock face (0,128)-(256,192): cream disc, numerals, hands
+ *  sleeper wood (0,192)-(256,256): dark timber cross-grain, bolt heads */
+function signAtlasCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(256, 256)
+
+  // -- COFFEE sign (0,0)-(256,64) --------------------------------------------------
+  g.fillStyle = '#4a3018'
+  g.fillRect(0, 0, 256, 64)
+  for (let i = 0; i < 20; i++) {
+    const y = rng.next() * 64
+    g.strokeStyle = 'rgba(86,60,28,0.5)'
+    g.lineWidth = 0.8 + rng.next()
+    g.beginPath()
+    g.moveTo(0, y)
+    g.quadraticCurveTo(128, y + (rng.next() - 0.5) * 6, 256, y)
+    g.stroke()
+  }
+  g.strokeStyle = '#c8a46a'
+  g.lineWidth = 4
+  g.strokeRect(3, 3, 250, 58)
+  // copper-coloured steam curl above the cup
+  g.strokeStyle = '#b07830'
+  g.lineWidth = 2.5
+  g.beginPath()
+  g.moveTo(94, 28)
+  g.quadraticCurveTo(88, 16, 98, 10)
+  g.stroke()
+  g.beginPath()
+  g.moveTo(106, 26)
+  g.quadraticCurveTo(100, 14, 110, 8)
+  g.stroke()
+  // tiny cup silhouette
+  g.fillStyle = '#c8a46a'
+  g.fillRect(86, 30, 28, 16)
+  g.fillRect(82, 44, 36, 4)
+  g.fillStyle = '#4a3018'
+  const cof = g.createRadialGradient(100, 38, 2, 100, 38, 12)
+  cof.addColorStop(0, '#2a1a08')
+  cof.addColorStop(1, '#7a4e22')
+  g.fillStyle = cof
+  g.fillRect(88, 32, 24, 12)
+  g.fillStyle = '#d4b080'
+  g.font = '800 28px Trebuchet MS, sans-serif'
+  g.textAlign = 'center'
+  g.fillText('COFFEE', 168, 44)
+
+  // -- maypole stripe band (0,64)-(256,128): vertical bars red/white/blue/white/red
+  const barW = 256 / 5
+  const barColors = ['#c84444', '#f4efe6', '#3a5fa8', '#f4efe6', '#c84444']
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle = barColors[i]
+    g.fillRect(i * barW, 64, barW, 64)
+  }
+  // horizontal weave lines
+  g.fillStyle = 'rgba(0,0,0,0.045)'
+  for (let y = 64; y < 128; y += 5) g.fillRect(0, y, 256, 1)
+  for (let i = 0; i < 60; i++) {
+    g.fillStyle = rng.next() > 0.5 ? 'rgba(255,255,255,0.07)' : 'rgba(20,10,10,0.05)'
+    g.fillRect(rng.next() * 256, 64 + rng.next() * 64, 2, 2)
+  }
+
+  // -- clock face (0,128)-(256,192): cream disc on slate ---
+  g.fillStyle = '#4a5058'
+  g.fillRect(0, 128, 256, 64)
+  g.fillStyle = '#f0ead8'
+  g.beginPath()
+  g.arc(128, 160, 26, 0, Math.PI * 2)
+  g.fill()
+  g.strokeStyle = '#2c2a24'
+  g.lineWidth = 2.5
+  g.stroke()
+  g.fillStyle = '#2c2a24'
+  g.font = 'bold 10px Trebuchet MS, sans-serif'
+  g.textAlign = 'center'
+  g.fillText('12', 128, 140)
+  g.fillText('3', 153, 163)
+  g.fillText('6', 128, 184)
+  g.fillText('9', 103, 163)
+  // clock hands: hour (10:10 pose) + minute
+  g.strokeStyle = '#1a1816'
+  g.lineWidth = 2.5
+  g.beginPath()
+  g.moveTo(128, 160)
+  g.lineTo(128 + Math.cos(-Math.PI * 0.5 + Math.PI * 2 * (10 / 12)) * 14,
+           160 + Math.sin(-Math.PI * 0.5 + Math.PI * 2 * (10 / 12)) * 14)
+  g.stroke()
+  g.lineWidth = 1.8
+  g.beginPath()
+  g.moveTo(128, 160)
+  g.lineTo(128 + Math.cos(-Math.PI * 0.5 + Math.PI * 2 * (2 / 60)) * 20,
+           160 + Math.sin(-Math.PI * 0.5 + Math.PI * 2 * (2 / 60)) * 20)
+  g.stroke()
+  g.fillStyle = '#c8392b'
+  g.beginPath()
+  g.arc(128, 160, 2, 0, Math.PI * 2)
+  g.fill()
+
+  // -- sleeper wood (0,192)-(256,256): dark oak cross-grain ---
+  g.fillStyle = '#3a2a18'
+  g.fillRect(0, 192, 256, 64)
+  for (let i = 0; i < 22; i++) {
+    const x = rng.next() * 256
+    const y = 192 + rng.next() * 64
+    g.strokeStyle = rng.next() > 0.5 ? 'rgba(76,54,28,0.5)' : 'rgba(18,10,4,0.4)'
+    g.lineWidth = 0.8 + rng.next()
+    g.beginPath()
+    g.moveTo(0, y)
+    g.quadraticCurveTo(x, y + (rng.next() - 0.5) * 5, 256, y + (rng.next() - 0.5) * 3)
+    g.stroke()
+  }
+  // bolt heads at rail-fastening spots
+  for (const bx of [20, 120, 220]) {
+    g.fillStyle = '#5a5248'
+    g.beginPath()
+    g.arc(bx, 224, 4, 0, Math.PI * 2)
+    g.fill()
+    g.fillStyle = 'rgba(255,240,200,0.2)'
+    g.beginPath()
+    g.arc(bx - 1, 223, 1.5, 0, Math.PI * 2)
+    g.fill()
+  }
+  return c
+}
+
 // ---- skinned-rig helpers --------------------------------------------------------
 
 /** suffix-matched clip lookup — same matcher as Customer.ts */
@@ -765,6 +922,10 @@ export class TownSet {
   private busActive = false
   private busParked = false
 
+  // the train (station act)
+  private trainGroup: Group | null = null
+  private trainActive = false
+
   // schoolyard + mill crews (lazy-spawned)
   private readonly kids: Walker[] = []
   private readonly workers: Walker[] = []
@@ -799,6 +960,9 @@ export class TownSet {
       cottages: this.buildCottagesStage(rng),
       school: this.buildSchoolStage(rng),
       works: this.buildWorksStage(rng),
+      cafe: this.buildCafeStage(rng),
+      square: this.buildSquareStage(rng),
+      station: this.buildStationStage(rng),
     }
     for (const id of ACTS) {
       this.stages[id].visible = false
@@ -843,6 +1007,13 @@ export class TownSet {
     this.bus.position.set(50, 0, BUS_Z)
     this.bus.rotation.y = Math.PI
     this.root.add(this.bus)
+
+    // train lives on root so it slides independently of the station stage
+    const train = this.buildTrain(rng)
+    train.visible = false
+    train.position.set(TRAIN_PARK_X, 0, TRAIN_Z)
+    this.root.add(train)
+    this.trainGroup = train
 
     // runtime rolls (wander timers, targets) — derived from the same seed
     this.rng = mulberry32(Math.floor(rng.next() * 0xffffffff))
@@ -892,6 +1063,31 @@ export class TownSet {
     tl.to(bus.rotation, { y: Math.PI * 2, duration: 2.4, ease: 'power1.inOut' }, '+=4')
     tl.to(bus.position, { x: BUS_STOP_X + 2.6, z: ROAD_Z + 1.7, duration: 2.4, ease: 'power1.inOut' }, '<')
     tl.to(bus.position, { x: 50, z: BUS_Z + 0.2, duration: 7.5, ease: 'power1.in' })
+  }
+
+  /** the afternoon train: slides in from offstage east, eases to a stop at
+   * the station platform, dwells while travellers (static) stand, then eases
+   * back out east and parks offstage. ~16s, mirrors busRun() exactly.
+   * Idempotent — no-op while already running. */
+  trainRun(): void {
+    if (this.trainActive || !this.trainGroup) return
+    this.trainActive = true
+    const train = this.trainGroup
+    train.visible = true
+    train.position.set(TRAIN_PARK_X, 0, TRAIN_Z)
+    gsap.killTweensOf(train.position)
+    const tl = gsap.timeline({
+      onComplete: () => {
+        train.visible = false
+        this.trainActive = false
+      },
+    })
+    // roll in from the east (high X → low stop X), ease to rest at the platform
+    tl.to(train.position, { x: TRAIN_STOP_X, duration: 5.0, ease: 'power2.out' })
+    // dwell at the platform — static travellers on the platform stand witness
+    tl.to(train.position, { x: TRAIN_STOP_X, duration: 4.5, ease: 'none' })
+    // ease out east and park offstage
+    tl.to(train.position, { x: TRAIN_PARK_X, duration: 6.5, ease: 'power1.in' })
   }
 
   /** kids out in the schoolyard (three of them, wandering on seeded timers) */
@@ -1759,6 +1955,509 @@ export class TownSet {
     this.addFused(stage, px, pz, painted, this.paintedMat)
     this.addFused(stage, px, pz, glow, this.glowMat, false)
     return stage
+  }
+
+  /** The Copper Kettle — cosy café at [46, 8] on the south road shoulder,
+   * east of the works. Timber + plaster shell, chimney, striped awning,
+   * two parasol tables with stools, a hanging COFFEE sign, two static patron
+   * figures (billboard glow cards). 6 draws: plaster, roof, wood, stripe,
+   * sign (signAtlas), glow. */
+  private buildCafeStage(rng: Rng): Group {
+    const stage = new Group()
+    const [px, pz] = P_CAFE
+    stage.position.set(px, 0, pz)
+
+    const plasterMat = new MeshStandardMaterial({ map: toTexture(plasterCanvas(rng), true), roughness: 0.9 })
+    const roofMat = new MeshStandardMaterial({
+      map: toTexture(shingleCanvas(rng, ['#7a4a33', '#88563d', '#6e412c', '#925f44']), true),
+      roughness: 0.95,
+    })
+    const signMat = new MeshStandardMaterial({ map: toTexture(signAtlasCanvas(rng)), roughness: 0.85 })
+
+    const plaster: BufferGeometry[] = []
+    const roof: BufferGeometry[] = []
+    const wood: BufferGeometry[] = []
+    const stripe: BufferGeometry[] = []
+    const signGeos: BufferGeometry[] = []
+    const glow: BufferGeometry[] = []
+
+    // -- the café shell at [46, 8], front faces +z toward the road ---------------
+    {
+      const W = 4.4
+      const D = 3.6
+      const WALL = 2.4
+      const RISE = 0.9
+      const hz = D / 2
+      const CX = 46.0
+      const CZ = 8.0
+
+      // walls + plaster gable
+      const b: BufferGeometry[] = []
+      b.push(uvScale(box(W, WALL, D, 0, WALL / 2, 0), W / TILE, WALL / TILE))
+      const gable = gablePrism(W, RISE, D)
+      gable.translate(0, WALL, 0)
+      b.push(uvScale(gable, W / TILE, RISE / TILE))
+      plaster.push(...moveGeos(b, CX, CZ))
+
+      // roof slabs + ridge cap
+      const slope = Math.hypot(W / 2, RISE)
+      const pitch = Math.atan2(RISE, W / 2)
+      const r: BufferGeometry[] = []
+      for (const s of [-1, 1]) {
+        const slab = new BoxGeometry(slope + 0.38, 0.09, D + 0.48)
+        uvTranspose(slab)
+        uvScale(slab, (D + 0.48) / 1.2, (slope + 0.38) / 1.2)
+        slab.rotateZ(-s * pitch)
+        slab.translate((s * W) / 4, WALL + RISE / 2 + 0.03, 0)
+        r.push(slab)
+      }
+      r.push(uvScale(box(0.14, 0.09, D + 0.48, 0, WALL + RISE + 0.02, 0), 1, 3))
+      roof.push(...moveGeos(r, CX, CZ))
+
+      // brick chimney on the east end — pushed through brickMat (reused)
+      const ch: BufferGeometry[] = []
+      ch.push(uvScale(box(0.44, 1.9, 0.44, 1.4, 2.85, -0.7), 0.6, 2.4))
+      ch.push(uvScale(box(0.56, 0.11, 0.56, 1.4, 3.81, -0.7), 0.7, 0.14))
+      this.addFused(stage, px, pz, moveGeos(ch, CX, CZ), this.brickMat)
+
+      // door frame (west bay), shopfront window (east bay), trim
+      const t: BufferGeometry[] = []
+      t.push(uvScale(box(0.9, 1.85, 0.07, -1.3, 0.925, hz + 0.02), 0.7, 1.5))
+      for (const by of [0.45, 1.35]) t.push(box(0.82, 0.08, 0.04, -1.3, by, hz + 0.06))
+      for (const sx of [-1, 1]) t.push(box(0.09, 1.9, 0.08, -1.3 + sx * 0.49, 0.95, hz + 0.02))
+      t.push(box(1.08, 0.1, 0.09, -1.3, 1.95, hz + 0.02))
+      t.push(box(1.6, 0.08, 0.07, 0.7, 1.92, hz + 0.04))
+      t.push(box(1.6, 0.1, 0.11, 0.7, 0.98, hz + 0.05))
+      for (const sx of [-1, 1]) t.push(box(0.09, 0.9, 0.07, 0.7 + sx * 0.76, 1.43, hz + 0.04))
+      t.push(box(0.06, 0.9, 0.05, 0.7, 1.43, hz + 0.03))
+      // hanging-sign bracket
+      t.push(box(0.05, 0.05, 0.7, -1.3, 2.28, hz + 0.34))
+      for (const sx of [-1, 1]) t.push(box(0.025, 0.13, 0.025, -1.3 + sx * 0.25, 2.2, hz + 0.62))
+      // porch step
+      t.push(uvScale(box(1.3, 0.1, 0.4, -1.3, 0.05, hz + 0.22), 1.2, 0.3))
+      wood.push(...moveGeos(t, CX, CZ))
+
+      // striped awning over the shopfront (rose/cream band of stripe atlas)
+      const aw: BufferGeometry[] = []
+      const aTop = pitchPlane(3.0, 0.52, 0.58, 2.28, hz + 0.02)
+      aTop.translate(0.7, 0, 0)
+      aw.push(uvRegion(aTop, 0, 0, 256, 64, 256, 192))
+      const valance = new PlaneGeometry(3.0, 0.17)
+      valance.translate(0.7, 1.89, hz + 0.45)
+      aw.push(uvRegion(valance, 0, 6, 256, 40, 256, 192))
+      stripe.push(...moveGeos(aw, CX, CZ))
+
+      // COFFEE hanging sign (signAtlas 0,0)-(256,64)
+      signGeos.push(uvRegion(box(1.0, 0.38, 0.05, CX - 1.3, 1.93, CZ + hz + 0.62), 0, 0, 256, 64, 256, 256))
+
+      // warm window glow
+      const win = new PlaneGeometry(1.44, 0.86)
+      win.translate(CX + 0.7, 1.43, CZ + hz + 0.025)
+      glow.push(uvRegion(win, 0, 0, 96, 120, 256, 256))
+    }
+
+    // -- two parasol tables out front (south road side) --------------------------
+    for (const [tx, tz] of [[44.4, 9.8], [47.0, 9.8]] as [number, number][]) {
+      // parasol pole + canopy disc (green/cream band of stripe atlas)
+      const pole = new CylinderGeometry(0.025, 0.03, 2.1, 7)
+      pole.translate(tx, 1.05, tz)
+      wood.push(uvScale(pole, 0.5, 1.5))
+      const canopy = new CylinderGeometry(0.8, 0.72, 0.06, 12)
+      canopy.translate(tx, 2.05, tz)
+      stripe.push(uvRegion(canopy, 0, 128, 256, 192, 256, 192))
+      // table top + centre leg
+      wood.push(uvScale(box(0.7, 0.05, 0.7, tx, 0.78, tz), 0.7, 0.7))
+      const leg = new CylinderGeometry(0.028, 0.028, 0.78, 6)
+      leg.translate(tx, 0.39, tz)
+      wood.push(uvScale(leg, 0.5, 1))
+      // two stools per table (four thin legs each)
+      for (const [sx2, sz2] of [[tx - 0.4, tz + 0.4], [tx + 0.4, tz - 0.4]] as [number, number][]) {
+        wood.push(uvScale(box(0.28, 0.04, 0.28, sx2, 0.42, sz2), 0.4, 0.4))
+        for (const [ox, oz] of [[-0.1, -0.1], [0.1, -0.1], [-0.1, 0.1], [0.1, 0.1]] as [number, number][]) {
+          const sl = new CylinderGeometry(0.018, 0.018, 0.42, 5)
+          sl.translate(sx2 + ox, 0.21, sz2 + oz)
+          wood.push(sl)
+        }
+      }
+    }
+
+    // -- two static patron figures (flower-clump glow region as warm silhouettes)
+    for (const [fx, fz] of [[44.4, 9.55], [47.0, 9.55]] as [number, number][]) {
+      const card = new PlaneGeometry(0.4, 0.55)
+      card.translate(fx, 0.55, fz)
+      glow.push(uvRegion(card, 160, 0, 256, 96, 256, 256))
+    }
+
+    this.addFused(stage, px, pz, plaster, plasterMat)
+    this.addFused(stage, px, pz, roof, roofMat)
+    this.addFused(stage, px, pz, wood, this.woodMat)
+    this.addFused(stage, px, pz, stripe, this.stripeMat)
+    this.addFused(stage, px, pz, signGeos, signMat)
+    this.addFused(stage, px, pz, glow, this.glowMat, false)
+    return stage
+  }
+
+  /** Festival Square — village green at [37.5, 15.5] north of the road, east
+   * of the school. A central maypole with ribbon strands, bunting strings
+   * between corner posts, 2 market stalls (green canopies), a notice board.
+   * 5 draws: wood, stripe, sign (maypole/bunting), painted (crates), glow. */
+  private buildSquareStage(rng: Rng): Group {
+    const stage = new Group()
+    const [px, pz] = P_SQUARE
+    stage.position.set(px, 0, pz)
+
+    const signMat = new MeshStandardMaterial({ map: toTexture(signAtlasCanvas(rng)), roughness: 0.85 })
+
+    const wood: BufferGeometry[] = []
+    const stripe: BufferGeometry[] = []
+    const signGeos: BufferGeometry[] = []
+    const painted: BufferGeometry[] = []
+    const glow: BufferGeometry[] = []
+
+    // -- maypole at [37.5, 15.5] -------------------------------------------------
+    {
+      const MX = 37.5
+      const MZ = 15.5
+      // tall striped pole (maypole stripe band 0,64..128 of signAtlas)
+      const poleGeo = new CylinderGeometry(0.055, 0.07, 5.0, 10)
+      poleGeo.translate(MX, 2.5, MZ)
+      signGeos.push(uvRegion(poleGeo, 0, 64, 256, 128, 256, 256))
+      // weathervane finial cap
+      wood.push(uvScale(box(0.12, 0.12, 0.12, MX, 5.08, MZ), 0.5, 0.5))
+
+      // ribbon strands from pole-top to 8 anchor posts in a ring (radius 1.8)
+      const R = 1.8
+      const NRIB = 8
+      for (let i = 0; i < NRIB; i++) {
+        const a = (i / NRIB) * Math.PI * 2
+        const gx = MX + Math.cos(a) * R
+        const gz = MZ + Math.sin(a) * R
+        // small anchor post
+        const post2 = new CylinderGeometry(0.025, 0.03, 1.0, 6)
+        post2.translate(gx, 0.5, gz)
+        wood.push(uvScale(post2, 0.4, 0.8))
+        // ribbon plane from pole-top → post-top
+        const dy = 1.0 - 5.0
+        const dh = Math.hypot(gx - MX, gz - MZ)
+        const rLen = Math.hypot(dy, dh)
+        const ribbon = new PlaneGeometry(0.045, rLen)
+        ribbon.rotateX(-Math.atan2(-dy, dh))
+        ribbon.rotateY(-Math.atan2(gz - MZ, gx - MX))
+        ribbon.translate((MX + gx) / 2, (5.0 + 1.0) / 2, (MZ + gz) / 2)
+        // alternate bar colours from the maypole band
+        const u0 = (i % 2) * 128
+        stripe.push(uvRegion(ribbon, u0, 64, u0 + 128, 128, 256, 256))
+      }
+    }
+
+    // -- bunting strings between 4 corner posts (square [35.5..39.5, 14.5..16.5])
+    {
+      const corners: [number, number][] = [
+        [35.5, 14.5], [39.5, 14.5], [39.5, 16.5], [35.5, 16.5],
+      ]
+      for (const [bx, bz] of corners) {
+        const p = new CylinderGeometry(0.03, 0.04, 1.4, 7)
+        p.translate(bx, 0.7, bz)
+        wood.push(uvScale(p, 0.4, 1.0))
+      }
+      const pairs: [[number, number], [number, number]][] = [
+        [corners[0], corners[1]], [corners[1], corners[2]],
+        [corners[2], corners[3]], [corners[3], corners[0]],
+      ]
+      for (const [[ax, az], [bx, bz]] of pairs) {
+        const sLen = Math.hypot(bx - ax, bz - az)
+        const nFlags = Math.floor(sLen / 0.55)
+        const flagYaw = -Math.atan2(bz - az, bx - ax)
+        for (let i = 0; i < nFlags; i++) {
+          const t2 = (i + 0.5) / nFlags
+          const fx = ax + (bx - ax) * t2
+          const fz = az + (bz - az) * t2
+          const fy = 1.35 - Math.sin(Math.PI * t2) * 0.1
+          const flag = new PlaneGeometry(0.22, 0.28)
+          flag.rotateX(-0.35)
+          flag.rotateY(flagYaw)
+          flag.translate(fx, fy, fz)
+          // alternate warm/red/blue flag colours from signAtlas
+          const band = i % 3
+          if (band === 0) signGeos.push(uvRegion(flag, 0, 0, 256, 64, 256, 256))
+          else if (band === 1) signGeos.push(uvRegion(flag, 0, 64, 128, 128, 256, 256))
+          else signGeos.push(uvRegion(flag, 128, 64, 256, 128, 256, 256))
+        }
+      }
+    }
+
+    // -- 2 market stalls (green canopies, same recipe as works stalls) ------------
+    const stallDefs: Array<{ x: number; z: number; yaw: number }> = [
+      { x: 35.8, z: 15.6, yaw: 0.08 },
+      { x: 39.2, z: 15.4, yaw: -0.07 },
+    ]
+    for (const st of stallDefs) {
+      const t: BufferGeometry[] = []
+      for (const sx of [-0.68, 0.68]) {
+        t.push(box(0.07, 1.5, 0.07, sx, 0.75, 0.33))
+        t.push(box(0.07, 1.75, 0.07, sx, 0.875, -0.33))
+      }
+      t.push(uvScale(box(1.48, 0.09, 0.72, 0, 0.8, 0), 1.3, 0.6))
+      t.push(uvScale(box(1.48, 0.46, 0.05, 0, 0.52, 0.35), 1.3, 0.4))
+      wood.push(...moveGeos(t, st.x, st.z, st.yaw))
+
+      const canopy = pitchPlane(1.6, 1.0, 0.28, 1.85, -0.46)
+      stripe.push(...moveGeos([uvRegion(canopy, 0, 128, 256, 192, 256, 192)], st.x, st.z, st.yaw))
+
+      // produce crates (reuse paintedMat)
+      const p: BufferGeometry[] = []
+      p.push(uvRegion(box(0.42, 0.28, 0.42, -0.3, 1.0, 0.0), 0, 160, 96, 256, 256, 256))
+      const lid = new PlaneGeometry(0.38, 0.38)
+      lid.rotateX(-Math.PI / 2)
+      lid.translate(-0.3, 1.15, 0.0)
+      p.push(uvRegion(lid, 96, 160, 192, 256, 256, 256))
+      painted.push(...moveGeos(p, st.x, st.z, st.yaw))
+    }
+
+    // -- notice board at [37.5, 14.5] -------------------------------------------
+    {
+      const NX = 37.5
+      const NZ = 14.5
+      for (const ox of [-0.28, 0.28]) {
+        const p = new CylinderGeometry(0.03, 0.04, 1.1, 7)
+        p.translate(NX + ox, 0.55, NZ)
+        wood.push(uvScale(p, 0.4, 0.8))
+      }
+      // board face: warm window-glow region reads as pinned paper in the distance
+      glow.push(uvRegion(box(0.64, 0.5, 0.06, NX, 1.0, NZ), 0, 0, 96, 120, 256, 256))
+      // board surround trim
+      wood.push(box(0.72, 0.58, 0.04, NX, 1.0, NZ + 0.05))
+    }
+
+    this.addFused(stage, px, pz, wood, this.woodMat)
+    this.addFused(stage, px, pz, stripe, this.stripeMat)
+    this.addFused(stage, px, pz, signGeos, signMat)
+    this.addFused(stage, px, pz, painted, this.paintedMat)
+    this.addFused(stage, px, pz, glow, this.glowMat, false)
+    return stage
+  }
+
+  /** Millbrook Station — station house with a clock, a canopy on iron posts
+   * over the platform, a short length of track running east, and two static
+   * traveller figures. The movable train is separate (buildTrain / trainRun).
+   * 6 draws: plaster (house), roof, wood (platform/posts/trim), iron (rails +
+   * canopy posts), sign (clock face + sleepers), glow (windows + figures). */
+  private buildStationStage(rng: Rng): Group {
+    const stage = new Group()
+    const [px, pz] = P_STATION
+    stage.position.set(px, 0, pz)
+
+    const plasterMat = new MeshStandardMaterial({ map: toTexture(plasterCanvas(rng), true), roughness: 0.9 })
+    const roofMat = new MeshStandardMaterial({
+      map: toTexture(shingleCanvas(rng, ['#5a5450', '#686260', '#4e4c48', '#747068']), true),
+      roughness: 0.95,
+    })
+    // new: dark iron for rails and canopy posts
+    const ironMat = new MeshStandardMaterial({ map: toTexture(ironCanvas(rng)), roughness: 0.6, metalness: 0.35 })
+    const signMat = new MeshStandardMaterial({ map: toTexture(signAtlasCanvas(rng)), roughness: 0.85 })
+
+    const plaster: BufferGeometry[] = []
+    const roof: BufferGeometry[] = []
+    const wood: BufferGeometry[] = []
+    const iron: BufferGeometry[] = []
+    const signGeos: BufferGeometry[] = []
+    const glow: BufferGeometry[] = []
+
+    // -- station house at [50.0, 12.2], front faces +z (toward road) -------------
+    {
+      const HX = 50.0
+      const HZ = 12.2
+      const W = 3.8
+      const D = 3.2
+      const WALL = 2.4
+      const RISE = 0.9
+      const hz = D / 2
+
+      const b: BufferGeometry[] = []
+      b.push(uvScale(box(W, WALL, D, 0, WALL / 2, 0), W / TILE, WALL / TILE))
+      const gable = gablePrism(W, RISE, D)
+      gable.translate(0, WALL, 0)
+      b.push(uvScale(gable, W / TILE, RISE / TILE))
+      plaster.push(...moveGeos(b, HX, HZ))
+
+      const slope = Math.hypot(W / 2, RISE)
+      const pitch = Math.atan2(RISE, W / 2)
+      const r: BufferGeometry[] = []
+      for (const s of [-1, 1]) {
+        const slab = new BoxGeometry(slope + 0.36, 0.09, D + 0.46)
+        uvTranspose(slab)
+        uvScale(slab, (D + 0.46) / 1.2, (slope + 0.36) / 1.2)
+        slab.rotateZ(-s * pitch)
+        slab.translate((s * W) / 4, WALL + RISE / 2 + 0.03, 0)
+        r.push(slab)
+      }
+      r.push(uvScale(box(0.14, 0.08, D + 0.46, 0, WALL + RISE + 0.02, 0), 1, 3))
+      roof.push(...moveGeos(r, HX, HZ))
+
+      // door frame (west bay), window frame (east bay), trim
+      const t: BufferGeometry[] = []
+      t.push(uvScale(box(0.85, 1.8, 0.07, -0.8, 0.9, hz + 0.02), 0.7, 1.5))
+      for (const by of [0.42, 1.32]) t.push(box(0.78, 0.08, 0.04, -0.8, by, hz + 0.06))
+      for (const sx of [-1, 1]) t.push(box(0.09, 1.85, 0.08, -0.8 + sx * 0.47, 0.925, hz + 0.02))
+      t.push(box(1.04, 0.1, 0.09, -0.8, 1.9, hz + 0.02))
+      t.push(box(1.2, 0.08, 0.07, 0.8, 1.8, hz + 0.04))
+      t.push(box(1.2, 0.1, 0.11, 0.8, 0.98, hz + 0.05))
+      for (const sx of [-1, 1]) t.push(box(0.09, 0.8, 0.07, 0.8 + sx * 0.56, 1.38, hz + 0.04))
+      wood.push(...moveGeos(t, HX, HZ))
+
+      // clock face above the door on the gable (signAtlas 0,128)-(256,192)
+      const clockFace = new PlaneGeometry(0.72, 0.36)
+      clockFace.translate(HX, WALL + RISE * 0.55, HZ + hz + 0.02)
+      signGeos.push(uvRegion(clockFace, 0, 128, 256, 192, 256, 256))
+
+      // warm window glow (right-bay window)
+      const win = new PlaneGeometry(1.0, 0.76)
+      win.translate(HX + 0.8, 1.38, HZ + hz + 0.025)
+      glow.push(uvRegion(win, 0, 0, 96, 120, 256, 256))
+    }
+
+    // -- platform + canopy: x [47.5..54.5], z [10.0..10.8] ----------------------
+    {
+      const PX0 = 47.5; const PX1 = 54.5
+      const PZ0 = 10.0; const PZ1 = 10.8
+      const PCX = (PX0 + PX1) / 2; const PCZ = (PZ0 + PZ1) / 2
+      const PLenX = PX1 - PX0; const PLenZ = PZ1 - PZ0
+      const POST_Y = 2.0
+
+      // platform deck + front fascia
+      wood.push(uvScale(box(PLenX, 0.12, PLenZ, PCX, 0.06, PCZ), PLenX / TILE, PLenZ / TILE))
+      wood.push(uvScale(box(PLenX, 0.18, 0.05, PCX, 0.15, PZ0 - 0.025), PLenX / TILE, 0.2))
+
+      // 4 iron canopy posts
+      for (const [posX, posZ] of [
+        [PX0 + 0.6, PZ0 + 0.15], [PX0 + 0.6, PZ1 - 0.15],
+        [PX1 - 0.6, PZ0 + 0.15], [PX1 - 0.6, PZ1 - 0.15],
+      ] as [number, number][]) {
+        const p = new CylinderGeometry(0.04, 0.05, POST_Y, 8)
+        p.translate(posX, POST_Y / 2 + 0.12, posZ)
+        iron.push(uvScale(p, 0.6, 1.5))
+      }
+      // canopy slab + front fascia
+      const canopySlabF = new BoxGeometry(PLenX + 0.4, 0.07, PLenZ * 0.6)
+      canopySlabF.translate(PCX, POST_Y + 0.14, PCZ - PLenZ * 0.2)
+      wood.push(uvScale(canopySlabF, PLenX / TILE, 0.6))
+      wood.push(uvScale(box(PLenX + 0.4, 0.22, 0.05, PCX, POST_Y + 0.05, PZ0 - 0.3), PLenX / TILE, 0.2))
+    }
+
+    // -- track: two rails + sleepers x [47..58] (world), z = TRAIN_Z ------------
+    {
+      const TRACK_X0 = 47.0; const TRACK_X1 = 58.0
+      const TRACK_LEN = TRACK_X1 - TRACK_X0
+      const TCX = (TRACK_X0 + TRACK_X1) / 2
+      const GAUGE = 0.62
+
+      for (const sz of [-GAUGE / 2, GAUGE / 2]) {
+        const rail = new BoxGeometry(TRACK_LEN, 0.07, 0.08)
+        rail.translate(TCX, 0.07, TRAIN_Z + sz)
+        iron.push(uvRegion(rail, 0, 0, 256, 32, 256, 256))
+      }
+      const nSleepers = Math.floor(TRACK_LEN / 0.6)
+      for (let i = 0; i <= nSleepers; i++) {
+        const sx = TRACK_X0 + i * (TRACK_LEN / nSleepers)
+        const sl = new BoxGeometry(0.12, 0.06, GAUGE + 0.28)
+        sl.translate(sx, 0.03, TRAIN_Z)
+        signGeos.push(uvRegion(sl, 0, 192, 256, 256, 256, 256))
+      }
+    }
+
+    // -- 2 static traveller figures (cross-billboard glow cards) -----------------
+    for (const [fx, fz] of [[49.2, 10.3], [51.8, 10.35]] as [number, number][]) {
+      for (const ry of [0, Math.PI / 2]) {
+        const card = new PlaneGeometry(0.38, 0.7)
+        card.rotateY(ry)
+        card.translate(fx, 0.47, fz)
+        glow.push(uvRegion(card, 160, 0, 256, 96, 256, 256))
+      }
+    }
+
+    this.addFused(stage, px, pz, plaster, plasterMat)
+    this.addFused(stage, px, pz, roof, roofMat)
+    this.addFused(stage, px, pz, wood, this.woodMat)
+    this.addFused(stage, px, pz, iron, ironMat)
+    this.addFused(stage, px, pz, signGeos, signMat)
+    this.addFused(stage, px, pz, glow, this.glowMat, false)
+    return stage
+  }
+
+  /** the movable train (lives on root, animated by trainRun). Engine with a
+   * boiler, funnel and dome + one coupled carriage; nose points -x so rolling
+   * in from high X brakes westward to the platform stop. 2 draws: body
+   * (dark slate clapboard), metal (wheels — reuse ironMat). */
+  private buildTrain(rng: Rng): Group {
+    const g = new Group()
+    // dark slate body paint — new material, different from any building
+    const bodyMat = new MeshStandardMaterial({
+      map: toTexture(clapboardCanvas(rng, '#2e3638', 'rgba(14,16,18,0.4)'), true),
+      roughness: 0.75,
+    })
+    const ironMat = new MeshStandardMaterial({ map: toTexture(ironCanvas(rng)), roughness: 0.6, metalness: 0.35 })
+
+    const body: BufferGeometry[] = []
+    const metal: BufferGeometry[] = []
+
+    // -- engine at local [0, 0] (nose in -x direction) ---------------------------
+    {
+      // boiler cylinder
+      const boiler = new CylinderGeometry(0.42, 0.42, 1.6, 12)
+      boiler.rotateZ(Math.PI / 2)
+      boiler.translate(-0.4, 0.72, 0)
+      body.push(uvScale(boiler, 2.5, 1.5))
+      // cab box
+      body.push(uvScale(box(1.2, 0.9, 0.88, 0.55, 0.7, 0), 1.0, 0.7))
+      // cab roof
+      body.push(uvScale(box(1.25, 0.09, 1.0, 0.55, 1.18, 0), 1.0, 0.9))
+      // front buffer beam (nose at -x)
+      body.push(box(0.08, 0.6, 0.9, -1.3, 0.3, 0))
+      // funnel / chimney stack
+      const funnel = new CylinderGeometry(0.09, 0.07, 0.5, 9)
+      funnel.translate(-1.0, 1.25, 0)
+      body.push(uvScale(funnel, 0.6, 0.5))
+      const funnelCap = new CylinderGeometry(0.12, 0.09, 0.09, 9)
+      funnelCap.translate(-1.0, 1.52, 0)
+      body.push(funnelCap)
+      // boiler dome
+      const dome = new CylinderGeometry(0.14, 0.14, 0.24, 9)
+      dome.translate(-0.2, 1.16, 0)
+      body.push(uvScale(dome, 0.5, 0.3))
+    }
+
+    // -- carriage coupled east of the engine (local x offset +2.2) ---------------
+    {
+      const CX = 2.2
+      body.push(uvScale(box(1.9, 0.7, 0.8, CX, 0.72, 0), 1.6, 0.6))
+      body.push(uvScale(box(1.95, 0.09, 0.88, CX, 1.1, 0), 1.6, 0.7))
+      // coupling link
+      body.push(box(0.22, 0.06, 0.06, CX - 0.96, 0.38, 0))
+    }
+
+    // -- wheels: 4 drive wheels (engine) + 4 small wheels (carriage) -------------
+    for (const [wx, wz] of [
+      [-0.6, -0.44], [-0.6, 0.44], [0.35, -0.44], [0.35, 0.44],
+    ] as [number, number][]) {
+      const w = new CylinderGeometry(0.26, 0.26, 0.1, 10)
+      w.rotateX(Math.PI / 2)
+      w.translate(wx, 0.26, wz)
+      metal.push(uvScale(w, 1, 1))
+    }
+    for (const [wx, wz] of [
+      [1.6, -0.38], [1.6, 0.38], [2.8, -0.38], [2.8, 0.38],
+    ] as [number, number][]) {
+      const w = new CylinderGeometry(0.2, 0.2, 0.1, 9)
+      w.rotateX(Math.PI / 2)
+      w.translate(wx, 0.2, wz)
+      metal.push(uvScale(w, 1, 1))
+    }
+
+    const bodyMesh = fuse(body, bodyMat)
+    if (bodyMesh) { bodyMesh.castShadow = true; g.add(bodyMesh) }
+    const metalMesh = fuse(metal, ironMat)
+    if (metalMesh) { metalMesh.castShadow = true; g.add(metalMesh) }
+    return g
   }
 
   /** the friendly town bus: warm-red coachwork with a cream band, a strip of

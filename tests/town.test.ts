@@ -9,6 +9,9 @@ import {
   BAKERY_WHEAT,
   busWindow,
   busWindowPm,
+  CAFE_EGGS,
+  CAFE_RATE,
+  cafeOrderReady,
   nextTownAct,
   recessNow,
   TOWN_ACTS,
@@ -46,12 +49,15 @@ describe('town act gating', () => {
     expect(townStatus(cottages, s)).toBe('ok')
   })
 
-  it('acts come up one at a time on the board', () => {
+  it('acts come up one at a time on the board — all 7', () => {
     const s = rich()
-    expect(nextTownAct(s)!.id).toBe('bakery')
-    s.town.built.bakery = true
-    expect(nextTownAct(s)!.id).toBe('cottages')
-    for (const a of TOWN_ACTS) s.town.built[a.id] = true
+    const order: string[] = []
+    for (const a of TOWN_ACTS) {
+      expect(nextTownAct(s)!.id).toBe(a.id)
+      order.push(a.id)
+      s.town.built[a.id] = true
+    }
+    expect(order).toEqual(['bakery', 'cottages', 'school', 'works', 'cafe', 'square', 'station'])
     expect(nextTownAct(s)).toBeNull()
   })
 
@@ -156,6 +162,80 @@ describe('day-clock windows', () => {
   })
 })
 
+describe('acts 5-7 gating (cafe / square / station)', () => {
+  it('cafe is gated behind works', () => {
+    const cafe = townActDef('cafe')
+    const s = rich((x) => { x.town.delivered = 99 })
+    expect(townStatus(cafe, s)).toBe('after')
+    s.town.built.works = true
+    expect(townStatus(cafe, s)).toBe('ok')
+    s.town.built.cafe = true
+    expect(townStatus(cafe, s)).toBe('owned')
+  })
+
+  it('square is gated behind cafe, station behind square', () => {
+    const square = townActDef('square')
+    const station = townActDef('station')
+    const s = rich((x) => { x.town.delivered = 99 })
+    expect(townStatus(square, s)).toBe('after')
+    s.town.built.cafe = true
+    expect(townStatus(square, s)).toBe('ok')
+    expect(townStatus(station, s)).toBe('after')
+    s.town.built.square = true
+    expect(townStatus(station, s)).toBe('ok')
+  })
+
+  it('buyTownAct spends cafe coins+wheat exactly once', () => {
+    const def = townActDef('cafe')
+    const s = rich((x) => {
+      x.town.delivered = 99
+      x.town.built.bakery = true
+      x.town.built.cottages = true
+      x.town.built.school = true
+      x.town.built.works = true
+    })
+    const g = new Game(s)
+    expect(g.buyTownAct('cafe')).toBe(true)
+    expect(s.coins).toBe(99999 - def.coins)
+    expect(s.wheat).toBe(999 - def.wheat)
+    expect(s.town.built.cafe).toBe(true)
+    expect(g.buyTownAct('cafe')).toBe(false) // owned
+  })
+})
+
+describe("The Copper Kettle's standing egg order", () => {
+  it('sells 3 eggs at the premium once per day, hands-free', () => {
+    const s = rich((x) => {
+      x.town.built.cafe = true
+      x.eggs = 10
+    })
+    expect(cafeOrderReady(s, 'day-1')).toBe(true)
+    s.town.lastCafeDay = 'day-1'
+    expect(cafeOrderReady(s, 'day-1')).toBe(false) // already filled today
+    expect(cafeOrderReady(s, 'day-2')).toBe(true)  // new day
+  })
+
+  it('waits when the egg basket is short', () => {
+    const s = rich((x) => {
+      x.town.built.cafe = true
+      x.eggs = CAFE_EGGS - 1
+    })
+    expect(cafeOrderReady(s, 'day-1')).toBe(false)
+  })
+
+  it('is silent before the café is built', () => {
+    const s = rich((x) => { x.eggs = 99 })
+    expect(cafeOrderReady(s, 'day-1')).toBe(false)
+  })
+
+  it('CAFE_EGGS and CAFE_RATE are the right shape', () => {
+    expect(CAFE_EGGS).toBe(3)
+    expect(CAFE_RATE).toBe(20)
+    // 3 eggs × 20c = 60c/day — a notch above bakery (4 wheat × 9c = 36c)
+    expect(CAFE_EGGS * CAFE_RATE).toBe(60)
+  })
+})
+
 describe('the farmstead deeds (Act 4 land)', () => {
   it('tiers 5 and 6 follow the crossroad lot', () => {
     expect(nextTier(4)!.name).toBe("Old Tom's Farmstead")
@@ -185,6 +265,6 @@ describe('migration', () => {
     const raw = JSON.parse(serialize(initialState(11))) as Record<string, unknown>
     delete raw.town
     const back = deserialize(JSON.stringify(raw))!
-    expect(back.town).toEqual({ delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null })
+    expect(back.town).toEqual({ delivered: 0, built: {}, lastBakeryDay: null, lastCafeDay: null, lastBusDay: null, lastTrainDay: null })
   })
 })

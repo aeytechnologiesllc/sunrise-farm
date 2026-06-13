@@ -229,6 +229,9 @@ describe('priority 8: affordable upgrade', () => {
       x.town.built.cottages = true
       x.town.built.school = true
       x.town.built.works = true
+      x.town.built.cafe = true
+      x.town.built.square = true
+      x.town.built.station = true
       x.town.delivered = 20
       x.wheat = 999
       // No upgrades owned yet; ghwing costs 2400 — cheapest
@@ -265,6 +268,9 @@ describe('priority 9: affordable fence skin', () => {
       x.town.built.cottages = true
       x.town.built.school = true
       x.town.built.works = true
+      x.town.built.cafe = true
+      x.town.built.square = true
+      x.town.built.station = true
       x.town.delivered = 20
       x.wheat = 999
       // All upgrades owned
@@ -303,6 +309,9 @@ describe('priority 10: affordable decor', () => {
       x.town.built.cottages = true
       x.town.built.school = true
       x.town.built.works = true
+      x.town.built.cafe = true
+      x.town.built.square = true
+      x.town.built.station = true
       x.town.delivered = 20
       x.wheat = 999
       x.upgrades = { ghwing: true, market: true, pasture: true, tackroom: true, homereno: true }
@@ -347,6 +356,9 @@ describe('whale save — nextGoal is never null', () => {
       x.town.built.cottages = true
       x.town.built.school = true
       x.town.built.works = true
+      x.town.built.cafe = true
+      x.town.built.square = true
+      x.town.built.station = true
       x.town.delivered = 50
       x.wheat = 0
       // All upgrades
@@ -364,7 +376,7 @@ describe('whale save — nextGoal is never null', () => {
       // Not enough coins or wheat for anything
       x.coins = 0
       // Contracts all done for this day
-      x.contracts = { day: x.day, progress: [], done: [true, true, true] }
+      x.contracts = { day: x.day, goods: [], progress: [], done: [true, true, true] }
     })
   }
 
