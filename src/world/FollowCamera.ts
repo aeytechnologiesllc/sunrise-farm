@@ -291,6 +291,13 @@ export class FollowCamera {
   /** teleport follow: snap the smoothed anchor/focus to a far point so an
    * interior-set door transition doesn't fly the camera 170u across the map */
   snapTo(p: Vector3): void {
+    // a focusOn ceremony tween (e.g. the crate flourish) may still be driving
+    // focusPoint toward an OLD farm target — kill it, or after a room teleport
+    // the aim drags to the room's aimBox wall and the farmer stares at it for
+    // up to ~2s. Hand attention straight back to the farmer (focusW 0).
+    gsap.killTweensOf(this.focusPoint)
+    gsap.killTweensOf(this.focusW)
+    this.focusW.value = 0
     this.anchor.set(p.x, p.y + 0.9, p.z)
     this.focusPoint.copy(this.anchor)
     this.occlClamp = Number.POSITIVE_INFINITY
@@ -345,6 +352,9 @@ export class FollowCamera {
 
   /** glide attention to a world point; returns the tween for sequencing */
   focusOn(p: Vector3, dur = 0.9): gsap.core.Tween {
+    // kill any in-flight focusPoint tween too (gsap overwrite defaults to off) —
+    // two tweens fighting focusPoint alternate frames and wobble the look-target
+    gsap.killTweensOf(this.focusPoint)
     gsap.killTweensOf(this.focusW)
     if (this.focusW.value === 0) this.focusPoint.copy(this.anchor)
     gsap.to(this.focusPoint, { x: p.x, y: p.y, z: p.z, duration: dur, ease: 'power2.inOut' })
@@ -359,6 +369,7 @@ export class FollowCamera {
 
   /** retarget the focus point mid-hold (comeback pan sequences) */
   moveFocus(p: Vector3, dur = 0.9): gsap.core.Tween {
+    gsap.killTweensOf(this.focusPoint) // same overwrite guard as focusOn
     return gsap.to(this.focusPoint, { x: p.x, y: p.y, z: p.z, duration: dur, ease: 'power2.inOut' })
   }
 
@@ -538,9 +549,12 @@ export class FollowCamera {
         this.clearT = 0
       } else if (want > this.occlClamp) {
         // ease out only after a clear beat — and all the way out (a release
-        // band here once stranded the clamp 0.3 short of the zoom, forever)
-        this.clearT += this.lastDt
-        if (this.clearT >= 0.35) this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * this.lastDt)
+        // band here once stranded the clamp 0.3 short of the zoom, forever).
+        // cap the step so one long frame (tab refocus, dt clamped to 0.1s)
+        // can't blast through the gate or pop the release.
+        const step = Math.min(this.lastDt, 1 / 60)
+        this.clearT += step
+        if (this.clearT >= 0.35) this.occlClamp += (want - this.occlClamp) * Math.min(1, 3.5 * step)
       }
       dist = Math.min(dist, this.occlClamp)
     }
@@ -555,7 +569,11 @@ export class FollowCamera {
     // Smoothed: rises fast (the wall is here NOW), relaxes slow (no pops).
     if (!this.cineTarget) {
       const asked = Math.max(0.001, this.smoothDist * kAspect)
-      const got = Math.min(dist, this.desired.distanceTo(t))
+      // tightness tracks the OCCLUSION pull-in (dist), NOT the confiner's lateral
+      // slide: in a room corner the clamp shortens lens->farmer distance without
+      // the farmer actually filling the frame, which used to false-trigger the
+      // pitch-raise + FOV-widen reframe
+      const got = dist
       const kRaw = Math.max(0, 1 - got / asked)
       const rate = kRaw > this.kTight ? 8 : 3
       this.kTight += (kRaw - this.kTight) * Math.min(1, rate * this.lastDt)

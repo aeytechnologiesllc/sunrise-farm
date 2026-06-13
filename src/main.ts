@@ -862,7 +862,11 @@ async function boot(): Promise<void> {
     sfx.crate()
     chicken.dropCrate()
     cam.focusOn(CRATE_POS, 0.9)
-    gsap.delayedCall(2.1, () => cam.release(1.0))
+    // hand back after the beat — unless a cutscene grabbed the lens meanwhile
+    // (a construction within 2.1s would otherwise drift its focus away)
+    gsap.delayedCall(2.1, () => {
+      if (!construction.active && !fetchCine) cam.release(1.0)
+    })
   })
 
   // ---- restore visuals from save ------------------------------------------
@@ -3570,8 +3574,10 @@ async function boot(): Promise<void> {
     camDispVel.set((player.pos.x - lastCamPos.x) / camDt, 0, (player.pos.z - lastCamPos.z) / camDt)
     // low-pass the fixed-step-quantized displacement into a steady velocity so
     // the look-ahead stops juddering the camera when the farmer runs (~85ms TC:
-    // averages out the 0/1x/2x per-frame jitter, still tracks real speed changes)
-    const kVel = 1 - Math.exp(-12 * camDt)
+    // averages out the 0/1x/2x per-frame jitter, still tracks real speed changes).
+    // a touch faster (~50ms) while riding so the look-ahead keeps up on a hard
+    // canter turn without the rider sliding off-centre
+    const kVel = 1 - Math.exp(-(riding ? 20 : 12) * camDt)
     camVelSmooth.set(
       camVelSmooth.x + (camDispVel.x - camVelSmooth.x) * kVel,
       0,
@@ -3850,6 +3856,10 @@ async function boot(): Promise<void> {
     } else if (hiddenAt) {
       const away = (Date.now() - hiddenAt) / 1000
       hiddenAt = 0
+      // a resumed tab lands one long frame (dt clamped to 0.1s) with the sim
+      // having stepped — keep that out of the look-ahead so it doesn't lurch
+      lastCamPos.copy(player.pos)
+      camVelSmooth.set(0, 0, 0)
       if (away > 3) {
         const res = catchUp(state, away)
         for (let i = 0; i < plots.length; i++) {
@@ -4055,6 +4065,12 @@ async function boot(): Promise<void> {
       player.pos.set(x, 0, z)
       prevPos.x = x
       prevPos.z = z
+      // a warp is a teleport: cut the camera cleanly (no glide / look-ahead fling)
+      // so QA snapshots are accurate the instant after the jump
+      lastCamPos.copy(player.pos)
+      camVelSmooth.set(0, 0, 0)
+      cam.snapTo(player.pos)
+      cam.clearWhiskers()
     },
     // ---- fences (E2E) ----
     fence: (x0: number, z0: number, x1: number, z1: number) => {
