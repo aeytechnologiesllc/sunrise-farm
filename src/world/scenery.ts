@@ -31,7 +31,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mulberry32, type Rng } from '../game/rng'
-import { allFieldRects, fenceFor, inRect, PEN, SOUTH_GATE } from '../game/expansion'
+import { fenceFor, inRect, PEN, SOUTH_GATE, TIERS } from '../game/expansion'
 import {
   BARN_AT,
   CRATE_AT,
@@ -165,7 +165,10 @@ function fieldRectsNow(): Array<{ x0: number; z0: number; x1: number; z1: number
   for (const id of PLACE_IDS) {
     const t = fieldTierOf(id)
     if (t < 0) continue
-    const f = allFieldRects()[t]
+    // index TIERS by tier, NOT the compacted allFieldRects() — the fieldless
+    // crossroad lot (tier 4) shifts that array under the farmstead tiers
+    const f = TIERS[t].field
+    if (!f) continue
     const pl = LV[id]
     const d = DEFAULT_PLACES[id]
     out.push({ x0: f.x0 + pl.x - d.x, z0: f.z0 + pl.z - d.z, x1: f.x1 + pl.x - d.x, z1: f.z1 + pl.z - d.z })

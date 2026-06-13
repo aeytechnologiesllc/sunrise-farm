@@ -39,6 +39,8 @@ export class Customers {
   readonly queue: Customer[] = []
   /** set false during FTUE; main flips it on after the first harvest */
   active = false
+  /** cadence multiplier — the cottages' families shop here too (<1 = busier) */
+  pace = 1
   /** pay multiplier — the Farm Shop project raises it above the base */
   premium = CUSTOMER_PREMIUM
   /** queue cap — the Farm Shop fits more browsers */
@@ -68,7 +70,7 @@ export class Customers {
     // very next restock produces a visitor — feels alive, never unfair
     const want = this.rollWant(stock)
     if (!want) return
-    this.nextIn = this.roll(CUSTOMER_DELAY)
+    this.nextIn = this.roll(CUSTOMER_DELAY) * this.pace
     const c: Customer = {
       id: this.nextId++,
       seed: (this.rng.next() * 0xffffffff) >>> 0,

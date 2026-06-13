@@ -93,6 +93,16 @@ export interface GameState {
   hazel: { hearts: number; lastPetDay: string | null; lastFedDay: string | null }
   /** the once-a-day hello inside the farmhouse (pure warmth, a dab of XP) */
   familyGreetDay: string | null
+  /** MILLBROOK: the town the farm builds (see game/town.ts) */
+  town: {
+    /** lifetime deliveries Hazel has completed — the town's trust meter */
+    delivered: number
+    built: Partial<Record<string, boolean>>
+    /** the bakery's standing order fires once per day */
+    lastBakeryDay: string | null
+    /** the morning bus comes once per day */
+    lastBusDay: string | null
+  }
   chicken: ChickenState
   chipsDone: Record<ChipId, boolean>
   rng: number
@@ -133,6 +143,7 @@ export function initialState(seed: number): GameState {
     coopFlock: foundingFlock((seed ^ 0xc00b) >>> 0),
     hazel: { hearts: 0, lastPetDay: null, lastFedDay: null },
     familyGreetDay: null,
+    town: { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null },
     chicken: {
       arrived: false,
       name: null,
@@ -200,6 +211,7 @@ export function catchUp(s: GameState, elapsedSec: number): CatchUpResult {
     })
     if (ev.deliveryReturned) {
       s.coins += 34
+      if (s.town) s.town.delivered += 1
       offlineDelivery = true
     }
   }
@@ -232,6 +244,12 @@ export function deserialize(json: string | null): GameState | null {
     // Hazel's affection arrived after the stable did — old saves start cold
     s.hazel ??= { hearts: 0, lastPetDay: null, lastFedDay: null }
     s.familyGreetDay ??= null
+    // Millbrook arrived late — old saves start with an empty town square
+    s.town ??= { delivered: 0, built: {}, lastBakeryDay: null, lastBusDay: null }
+    s.town.delivered ??= 0
+    s.town.built ??= {}
+    s.town.lastBakeryDay ??= null
+    s.town.lastBusDay ??= null
     // henhouse migration: the founding four get boxes; a pending batch from
     // the OLD single-latch coop becomes ready boxes (nobody loses eggs)
     if (!s.coopFlock) {

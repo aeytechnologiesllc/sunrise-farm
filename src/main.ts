@@ -100,6 +100,8 @@ import {
 } from './world/scenery'
 import { BARN_AT, BARN_ROT } from './game/geo'
 import { keeperName, tomorrowLines } from './game/tomorrow'
+import { busWindow, nextTownAct, recessNow, TOWN_ACTS } from './game/town'
+import { TownSet } from './world/townSet'
 import { sheepCount, TIERS, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
@@ -135,6 +137,14 @@ import { HEN_CAPACITY, henCost, MAX_COOP_TIER, WING_COST, WING_LEVEL, type CoopF
 import { buildCoopAnnex, buildCoopHouse, CoopHens } from './world/coop'
 import { AnimationMixer, type AnimationAction } from 'three'
 
+// a boot that dies must CONFESS: headless consoles and some WebViews
+// swallow unhandled async rejections, and a silent 'loading 54/54' freeze
+// is undebuggable from a phone (cost us an hour in QA)
+addEventListener('unhandledrejection', (e) => {
+  const r = (e as PromiseRejectionEvent).reason as Error | undefined
+  console.error('[boot-failure]', r?.stack ?? String(r))
+})
+
 const HEN_NAMES = ['Henrietta', 'Clucky', 'Pearl', 'Butterscotch', 'Nugget', 'Daisy', 'Pepper', 'Marigold']
 
 /** every walk-in room (the registry in boot() holds each room's door,
@@ -153,6 +163,8 @@ const PLACE_NAMES: Record<PlaceId, string> = {
   field1: 'the East Meadow field',
   field2: 'the Far East field',
   field3: 'the Old Pasture field',
+  field5: "Old Tom's Field",
+  field6: 'the Birch Field',
 }
 const GOOD_EMOJI: Record<GoodKind, string> = {
   wheat: '\u{1F33E}',
@@ -219,6 +231,7 @@ declare global {
       flock: () => CoopFlock
       cam: () => ReturnType<FollowCamera['probe']>
       camMat: () => Record<string, unknown>
+      town: () => GameState['town']
     }
     __step: (s: number) => void
   }
@@ -330,6 +343,8 @@ async function boot(): Promise<void> {
   const stableInterior = new StableInterior(scene, assets)
   // the FARMHOUSE by day — the family's room, the dusk supper untouched
   const farmhouseInterior = new FarmhouseInterior(scene, assets)
+  // MILLBROOK: the town the farm builds, living scenery east of the gate
+  const townSet = new TownSet(scene, assets)
   /** which walk-in room the player is inside (null = out on the farm).
    * ANY-room gates read `room !== null`, room-specific verbs read
    * `room === 'coop'` — a new room inherits every gate for free. */
@@ -586,8 +601,17 @@ async function boot(): Promise<void> {
     sfx.chime()
     chicken.showEgg(false)
   })
+  game.on('bakerySold', (e) => {
+    hud.setWheat(state.wheat)
+    if (!sleepActive && !construction.active) {
+      hud.showBanner("Rosie's standing order \u{1F956}", `4 wheat baked into +${e.coins}c`)
+      sfx.kaching()
+    }
+  })
   game.on('deliveryDone', (e) => {
     grazers.setHidden('horse', false) // back from town, whatever the path
+    // the town board appears after the first delivery — refresh its state
+    if (state.town.delivered <= TOWN_ACTS[0].needDelivered + 1) refreshTownSign()
     // if the farmer is standing in her stall when she gets back, she
     // appears home — the room mirrors the delivery truth, always
     if (room === 'stable') stableInterior.sync({ horseOwned: game.hasProject('horse'), horseHome: true })
@@ -1378,6 +1402,9 @@ async function boot(): Promise<void> {
   for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
   // the room mirrors the flock from the first frame (plaques, eggs, hens)
   coopInterior.sync(state.coopFlock)
+  // Millbrook stands back up exactly as far as the farm has built it
+  for (const a of TOWN_ACTS) if (state.town.built[a.id]) townSet.reveal(a.id, false)
+  townSet.setShift(state.town.built.works === true)
   // reloaded mid-delivery? Hazel is still in town, not grazing at the stable
   if (state.produce.deliveryT > 0) grazers.setHidden('horse', true)
 
@@ -1420,6 +1447,26 @@ async function boot(): Promise<void> {
     }
   }
   refreshProjectSigns()
+
+  // ---- the MILLBROOK board: one act for sale at a time --------------------
+  const TOWN_SIGN_AT = new Vector3(19.4, 0, 13.2)
+  let townSign: Group | null = null
+  const refreshTownSign = (): void => {
+    if (townSign) {
+      scene.remove(townSign)
+      disposeMaterials(townSign)
+      townSign = null
+    }
+    const def = nextTownAct(state)
+    // the town notices the farm after its first delivery — before that the
+    // board would just be noise on the roadside
+    if (!def || state.town.delivered < 1) return
+    townSign = buildDeedSign(def.name, def.coins, 'MILLBROOK', '#7a4a9e')
+    townSign.position.copy(TOWN_SIGN_AT)
+    townSign.rotation.y = Math.atan2(PLAYER_SPAWN.x - TOWN_SIGN_AT.x, PLAYER_SPAWN.z - TOWN_SIGN_AT.z)
+    scene.add(townSign)
+  }
+  refreshTownSign()
 
   // ---- buying land -----------------------------------------------------------
   /** the dig: a crew arrives, letterbox drops, shovels swing — then the new
@@ -1634,6 +1681,8 @@ async function boot(): Promise<void> {
     roomDoor: null as RoomId | null,
     /** at the doorway, inside: the exit button shows */
     roomExit: false,
+    /** at the Millbrook board by the gate */
+    town: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -2185,6 +2234,39 @@ async function boot(): Promise<void> {
           },
         })
       }
+    } else if (id === 'townbuild' && near.town) {
+      const def = nextTownAct(state)
+      if (def && game.buyTownAct(def.id)) {
+        hud.setCoins(state.coins)
+        hud.setWheat(state.wheat)
+        sfx.kaching()
+        const spendAt = cam.screenPos(TOWN_SIGN_AT.clone().setY(1.6))
+        if (!spendAt.behind) hud.floatText(spendAt, `-${def.coins}c  -${def.wheat}\u{1F33E}`)
+        hud.dismissBanner()
+        construction.play({
+          site: new Vector3(def.lot[0], 0, def.lot[1]),
+          yaw: def.yaw,
+          footprint: def.footprint,
+          cost: def.coins,
+          dig: false,
+          reveal: () => {
+            townSet.reveal(def.id, true)
+            if (def.id === 'works') townSet.setShift(true)
+          },
+          done: () => {
+            hud.showBanner(`${def.name}!`, def.earns)
+            music.duck()
+            sfx.fanfare()
+            rareSlowMo()
+            refreshTownSign()
+            if (queuedLevelUp) {
+              gsap.delayedCall(1.2, queuedLevelUp)
+              queuedLevelUp = null
+            }
+            saveNow()
+          },
+        })
+      }
     } else if (id === 'deed' && near.deed) {
       const def = game.expand()
       if (def) {
@@ -2399,6 +2481,28 @@ async function boot(): Promise<void> {
         else near.growingPlot = i
       }
       near.deed = deedSign !== null && p.distanceTo(deedSign.at) < 2.5
+      near.town = townSign !== null && p.distanceTo(TOWN_SIGN_AT) < 2.6
+      // ---- Millbrook breathes on the day clock ----
+      customers.pace = state.town.built.cottages ? 0.7 : 1
+      if (
+        state.town.built.bakery &&
+        busWindow(dayCycle.phase) &&
+        state.town.lastBusDay !== `day-${state.day}` &&
+        !sleepActive &&
+        !construction.active
+      ) {
+        state.town.lastBusDay = `day-${state.day}`
+        townSet.busRun()
+        sfx.bell()
+        hud.showBanner('The morning bus \u{1F68C}', 'visitors ride in from Millbrook')
+        saveNow()
+      }
+      const recess = state.town.built.school === true && recessNow(dayCycle.phase) && !sleepActive
+      if (recess !== recessWas) {
+        recessWas = recess
+        townSet.setRecess(recess)
+        if (recess) sfx.bell() // the schoolbell — once, gentle
+      }
       near.tractor = tractor !== null && p.distanceTo(tractor.position) < 2.9
       near.dog = !flock.missionActive && p.distanceTo(dog.group.position) < 2.6
       near.home = !sleepActive && dayCycle.atDusk && p.distanceTo(homestead.doorPos) < 3.2
@@ -2572,6 +2676,28 @@ async function boot(): Promise<void> {
           label: `Exit ${ROOMS[room].label}`,
           sub: 'back to the farm',
         })
+      }
+      if (near.town && room === null) {
+        const def = nextTownAct(state)
+        if (def) {
+          const st = game.townStatusOf(def.id)
+          actions.push({
+            id: 'townbuild',
+            emoji: '\u{1F3D8}\u{FE0F}',
+            label: `Build ${def.name}`,
+            sub:
+              st === 'ok'
+                ? `${def.coins}c + ${def.wheat} wheat`
+                : st === 'delivered'
+                  ? `make ${def.needDelivered - state.town.delivered} more deliveries`
+                  : st === 'coins'
+                    ? `${def.coins}c — need ${def.coins - state.coins} more`
+                    : st === 'wheat'
+                      ? `needs ${def.wheat} wheat in the pantry`
+                      : 'the town builds in order',
+            locked: st !== 'ok',
+          })
+        }
       }
       if (room === 'coop') {
         // the henhouse's own verbs — the farm's buttons stay outside
@@ -2989,6 +3115,7 @@ async function boot(): Promise<void> {
     coopInterior.update(dt)
     stableInterior.update(dt)
     farmhouseInterior.update(dt)
+    townSet.update(dt)
     carry.frame(dt)
     hud.setDay(state.day, dayCycle.label)
     // homestead windows warm up as the sun sinks (and stay lit all night)
@@ -3055,6 +3182,7 @@ async function boot(): Promise<void> {
   let driftTick = 0
   let uiTick = 0
   let shadowTick = 0
+  let recessWas = false
   /** stressed: pinned at the DPR floor AND still missing budget — shed the
    * invisible extras (shadow cadence, whisker ray) before anything the eye
    * would catch. Releases with hysteresis so it never flickers. */
@@ -3476,6 +3604,7 @@ async function boot(): Promise<void> {
     },
     flock: () => JSON.parse(JSON.stringify(state.coopFlock)) as CoopFlock,
     cam: () => cam.probe(),
+    town: () => JSON.parse(JSON.stringify(state.town)) as GameState['town'],
     camMat: () => ({
       pos: cam.camera.position.toArray().map((v) => +v.toFixed(2)),
       aspect: cam.camera.aspect,

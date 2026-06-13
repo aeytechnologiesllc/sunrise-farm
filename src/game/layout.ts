@@ -38,6 +38,8 @@ export type PlaceId =
   | 'field1'
   | 'field2'
   | 'field3'
+  | 'field5'
+  | 'field6'
 
 export interface Place {
   x: number
@@ -88,6 +90,9 @@ export const DEFAULT_PLACES: Record<PlaceId, Place> = {
   field1: fieldHome(1),
   field2: fieldHome(2),
   field3: fieldHome(3),
+  // tier 4 (the crossroad lot) has no field — the ids skip to the farmsteads
+  field5: fieldHome(5),
+  field6: fieldHome(6),
 }
 
 export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]

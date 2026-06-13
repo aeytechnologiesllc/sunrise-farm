@@ -51,6 +51,15 @@ import {
   wingStatus,
   type HenDef,
 } from './henhouse'
+import {
+  BAKERY_RATE,
+  BAKERY_WHEAT,
+  bakeryOrderReady,
+  townActDef,
+  townStatus,
+  woolMult,
+  type TownActId,
+} from './town'
 import { mulberry32, type Rng } from './rng'
 import type { ChipId, GameState, PlotState } from './state'
 
@@ -87,6 +96,8 @@ export interface GameEvents {
   milkReady: undefined
   coopReady: undefined
   deliveryDone: { coins: number }
+  townBuilt: { id: TownActId }
+  bakerySold: { coins: number }
 }
 
 type Listener<K extends keyof GameEvents> = (payload: GameEvents[K]) => void
@@ -178,6 +189,14 @@ export class Game {
       const hev = tickHenhouse(s.coopFlock, dt)
       if (hev.readyBoxes.length) this.emit('coopReady', undefined)
     }
+    // Rosie's standing order: 4 wheat at a premium, once a day, hands-free
+    if (bakeryOrderReady(s, this.todayFn())) {
+      s.town.lastBakeryDay = this.todayFn()
+      s.wheat -= BAKERY_WHEAT
+      const pay = BAKERY_WHEAT * BAKERY_RATE
+      this.grantCoins(pay)
+      this.emit('bakerySold', { coins: pay })
+    }
     if (pev.deliveryReturned) {
       // a loved horse haggles better: +1c per heart on LIVE returns only
       // (offline catch-up stays the flat 34 — the absentee-landlord rule)
@@ -185,6 +204,7 @@ export class Game {
       this.syncRng()
       this.grantCoins(coins)
       this.grantXp(XP_GAIN.deliver)
+      s.town.delivered += 1
       this.emit('deliveryDone', { coins })
     }
   }
@@ -459,10 +479,28 @@ export class Game {
 
   // ---- produce (everything you own EARNS — with a little upkeep) ------------
 
+  /** fund the next act of Millbrook: coins AND wheat (Hazel hauled it) */
+  townStatusOf(id: TownActId): ReturnType<typeof townStatus> {
+    return townStatus(townActDef(id), this.state)
+  }
+
+  buyTownAct(id: TownActId): boolean {
+    const def = townActDef(id)
+    if (townStatus(def, this.state) !== 'ok') return false
+    this.state.coins -= def.coins
+    this.state.wheat -= def.wheat
+    this.state.town.built[id] = true
+    this.emit('coins', { total: this.state.coins, delta: -def.coins })
+    this.grantXp(XP_GAIN.expand)
+    this.emit('townBuilt', { id })
+    return true
+  }
+
   /** shear the whole flock: coins per sheep, wool timer restarts */
   shearFlock(sheepCount: number): number {
     if (sheepCount <= 0 || !shearWool(this.state.produce)) return 0
-    const coins = WOOL_COIN_PER_SHEEP * sheepCount
+    // the wool works pays half again more (town additions only ever ADD)
+    const coins = Math.round(WOOL_COIN_PER_SHEEP * sheepCount * woolMult(this.state))
     this.grantCoins(coins)
     this.grantXp(XP_GAIN.shear)
     return coins

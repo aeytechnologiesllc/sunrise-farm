@@ -137,6 +137,36 @@ export const TIERS: TierDef[] = [
     gates: [SOUTH_GATE, PASTURE_WEST_GATE],
     sign: [3.8, 12.9],
   },
+  // ---- Millbrook Act 4: the neighboring farmsteads fold in --------------
+  {
+    name: "Old Tom's Farmstead",
+    flavor: 'Tom retires to a town cottage, smiling — his north field is yours now.',
+    cost: 1500,
+    level: 13,
+    field: { x0: -15.0, z0: -12.8, x1: -8.6, z1: -9.2 },
+    plots: [
+      [-13.4, -11.0],
+      [-10.4, -11.0],
+    ],
+    fence: { minX: -15.2, maxX: 20.6, minZ: -13.0, maxZ: 10.2 },
+    gates: [SOUTH_GATE, PASTURE_WEST_GATE],
+    sign: [-11.8, -7.6],
+  },
+  {
+    name: 'The Birch Farmstead',
+    flavor: 'The Birch family moves to Millbrook — and waves from your stand line.',
+    cost: 2200,
+    level: 15,
+    field: { x0: -4.0, z0: -12.8, x1: 3.6, z1: -9.2 },
+    plots: [
+      [-2.4, -11.0],
+      [1.8, -11.0],
+    ],
+    fence: { minX: -15.2, maxX: 20.6, minZ: -13.0, maxZ: 10.2 },
+    gates: [SOUTH_GATE, PASTURE_WEST_GATE],
+    sign: [0.0, -7.6],
+    sheep: 2,
+  },
 ]
 
 export const MAX_TIER = TIERS.length - 1
