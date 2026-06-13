@@ -2287,6 +2287,10 @@ async function boot(): Promise<void> {
     if (carry.carrying || carry.settling || fenceEditor.active) return false
     if (sleepActive || construction.active || fetchCine || roomBusy || room !== null || hud.modalOpen) return false
     if (id === 'farmhand') return false // he's a PERSON — he walks himself
+    // fields stay where they're laid out — carrying them dropped the player into
+    // "something little lives there" dead-ends near the home-yard landmarks, with
+    // no clear spot (owner's call: lock fields, keep buildings movable)
+    if (fieldTierOf(id) >= 0) return false
     const ft = fieldTierOf(id)
     const owned =
       ft >= 0
