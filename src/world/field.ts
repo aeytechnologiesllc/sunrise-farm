@@ -91,6 +91,16 @@ function sharedDirt(): CanvasTexture {
   return dirtTex
 }
 
+// ONE soil material shared across every field parcel's slab — the endless field
+// can grow to many parcels, and a fresh MeshStandardMaterial per slab is a
+// distinct GPU material-state change each. Three.js batches by material
+// identity, so a single shared instance lets the driver draw all soil together.
+let soilMat: MeshStandardMaterial | null = null
+function sharedSoilMat(): MeshStandardMaterial {
+  if (!soilMat) soilMat = new MeshStandardMaterial({ map: sharedDirt(), vertexColors: true, roughness: 1 })
+  return soilMat
+}
+
 /** build one field slab; `plots` are world-space plot centers inside it. The
  * soil samples the SHARED dirt texture by WORLD position and bakes its furrow
  * light/shade — plus a faint flush "worked" patch over each plant spot — into
@@ -132,7 +142,7 @@ export function buildField(rect: FieldRect, plots: Array<[number, number]>, _see
   }
   geo.setAttribute('color', new Float32BufferAttribute(col, 3))
   geo.computeVertexNormals()
-  const soil = new Mesh(geo, new MeshStandardMaterial({ map: sharedDirt(), vertexColors: true, roughness: 1 }))
+  const soil = new Mesh(geo, sharedSoilMat())
   soil.position.set(cx, 0.012, cz)
   soil.receiveShadow = true
   group.add(soil)

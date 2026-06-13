@@ -214,7 +214,7 @@ export function pointInBuilding(s: LayoutHost, x: number, z: number, skip: Place
     if (id === skip || id === 'pen' || fieldTierOf(id) >= 0) continue
     const exists =
       id === 'tractor'
-        ? s.expansion >= 2
+        ? s.fieldParcels >= 3
         : id === 'stand'
           ? s.projects.stand === true && s.projects.shop !== true
           : s.projects[id] === true
@@ -491,7 +491,7 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
     if (other === id) continue
     const exists =
       other === 'tractor'
-        ? s.expansion >= 2
+        ? s.fieldParcels >= 3
         : other === 'pen'
           ? false // its layout-aware rect is checked above
           : other === 'stand'

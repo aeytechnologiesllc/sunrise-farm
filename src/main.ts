@@ -701,14 +701,14 @@ async function boot(): Promise<void> {
   // that the fanfare means nothing)
   const LEVEL_NEWS: Record<number, string> = {
     2: 'The roadside stand is on sale! \u{1F3D5}',
-    3: 'Sheep — and the East Meadow deed \u{1F411}',
-    5: 'Goat friends, and the Far East Field with Grandpa’s tractor \u{1F69C}',
-    6: 'Big day: the Coop, the Old Pasture deed, a Stable — and Hazel \u{1F434}',
-    8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
+    3: 'Sheep join the flock — and your field can stretch east \u{1F411}',
+    5: 'Goat friends — and the Tractor rolls in as your field grows \u{1F69C}',
+    6: 'Big day: the Coop, a Stable — and Hazel \u{1F434}',
+    8: 'A real Farm Shop unlocks across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
     12: "The coop's east wing — room for three more hens \u{1F414}",
-    13: "Another coop wing, and Old Tom's farmstead is up for sale \u{1FAB4}",
-    15: 'The Birch Farmstead — the last of the open land \u{1F333}',
+    13: "Another coop wing — room for a fuller flock \u{1F414}",
+    15: 'Your east field rolls on — always another parcel to claim \u{1F331}',
     16: 'A bigger Greenhouse — four more beds under glass \u{1F33F}',
     18: 'The coop can grow a third wing — the Long Roost \u{1F414}',
     20: 'The Market Awning: richer customers come to the shop \u{1F3EA}',
@@ -1115,7 +1115,7 @@ async function boot(): Promise<void> {
     let target = player.pos.clone().add(dir.clone().multiplyScalar(4))
     for (let r = 7.5 + Math.random() * 3.5; r >= 3.5; r -= 1.1) {
       const t = player.pos.clone().add(dir.clone().multiplyScalar(r))
-      t.x = Math.max(WORLD_BOUNDS.minX + 1.5, Math.min(WORLD_BOUNDS.maxX - 1.5, t.x))
+      t.x = Math.max(WORLD_BOUNDS.minX + 1.5, Math.min(worldMaxX(state.fieldParcels) - 1.5, t.x))
       t.z = Math.max(WORLD_BOUNDS.minZ + 1.5, Math.min(WORLD_BOUNDS.maxZ - 1.5, t.z))
       if (!groundClear(t.x, t.z)) {
         target = t
