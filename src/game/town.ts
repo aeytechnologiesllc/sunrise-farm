@@ -7,8 +7,8 @@
  *   2. cottages — two homes; named neighbors join the customer pool
  *   3. school   — the kids arrive (recess on the day clock)
  *   4. works    — butcher, market square and the wool works (wool pays more)
- * The two farmstead deeds (Act 4 of the owner's plan) live in expansion.ts
- * as land tiers 5 and 6 — land is land, the deed flow already knows it. */
+ * Land growth now lives in the endless east-field deed flow; the old farmstead
+ * tier table remains as legacy geometry/story data, not the active deed path. */
 import type { GameState } from './state'
 
 export type TownActId = 'bakery' | 'cottages' | 'school' | 'works' | 'cafe' | 'square' | 'station'

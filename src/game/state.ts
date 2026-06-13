@@ -278,10 +278,13 @@ export function deserialize(json: string | null): GameState | null {
     s.eggplants ??= 0
     s.eggs ??= 0
     s.expansion = clampTier(s.expansion ?? 0)
-    // the crop field decoupled into endless parcels — derive the count from the
+    // the crop field decoupled into endless parcels — normalize against the
     // save's own plot array so no crop index is ever orphaned (4 plots/parcel,
-    // round UP: a partial old tier becomes a full parcel, gaining free soil)
-    s.fieldParcels ??= Math.max(1, Math.ceil(s.plots.length / PLOTS_PER))
+    // round UP: a partial old tier becomes a full parcel, gaining free soil).
+    // Some interim saves wrote 0; treat that as corrupt and infer from plots.
+    const inferredFieldParcels = Math.max(1, Math.ceil(s.plots.length / PLOTS_PER))
+    const savedFieldParcels = Number.isFinite(Number(s.fieldParcels)) ? Math.floor(Number(s.fieldParcels)) : 0
+    s.fieldParcels = Math.max(1, inferredFieldParcels, savedFieldParcels)
     s.herdsDone ??= 0
     s.projects ??= {}
     s.ghPlots ??= []
@@ -401,8 +404,8 @@ export function deserialize(json: string | null): GameState | null {
     // friendly first-time delay (reloading must never speed up payouts)
     s.timers ??= { sow: 0, fetch: 0, herd: s.harvests > 0 ? 150 : 45 }
     // the crop field is parcel-driven now: top up to one plot per owned parcel
-    // (the fieldParcels ??= above already derived the count from the old array,
-    // rounding UP, so this only grows — never orphans a saved crop index)
+    // (fieldParcels above already normalized against the old array, rounding UP,
+    // so this only grows — never orphans a saved crop index)
     while (s.plots.length < fieldPlotCount(s.fieldParcels)) s.plots.push({ crop: null })
     return s
   } catch {

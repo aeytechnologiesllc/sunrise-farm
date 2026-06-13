@@ -214,7 +214,8 @@ describe('priority 8: affordable upgrade', () => {
     const s = make((x) => {
       // High level so all level gates clear
       x.level = 30
-      // Max expansion so no deeds remain
+      // Legacy expansion is maxed; the endless field deed still exists, but
+      // affordable upgrades intentionally outrank evergreen land.
       x.expansion = 6
       // All projects owned
       x.projects.stand = true

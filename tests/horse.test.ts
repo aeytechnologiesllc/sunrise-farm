@@ -155,6 +155,21 @@ describe('migration', () => {
     for (const n of [4, 11, 12, 14, 16]) expect(mk(n).fieldParcels * 4).toBeGreaterThanOrEqual(n)
   })
 
+  it('repairs corrupt zero/low field parcel counts without orphaning plots', () => {
+    const mk = (plots: number, fieldParcels: number): GameState => {
+      const s = initialState(7)
+      s.plots = Array.from({ length: plots }, () => ({ crop: null }))
+      const raw = JSON.parse(serialize(s)) as Record<string, unknown>
+      raw.fieldParcels = fieldParcels
+      return deserialize(JSON.stringify(raw))!
+    }
+
+    expect(mk(4, 0).fieldParcels).toBe(1)
+    expect(mk(12, 0).fieldParcels).toBe(3)
+    expect(mk(12, 1).fieldParcels).toBe(3)
+    expect(mk(4, 3).fieldParcels).toBe(3)
+  })
+
   it('strips stale pre-lock field-position overrides so fields sit home (no seam)', () => {
     // a save that MOVED a field before the lock carried a layout.fieldN override —
     // it would re-open a soil-texture seam and strand the field off its tier
