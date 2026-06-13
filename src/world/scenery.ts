@@ -117,7 +117,10 @@ export function marketToShop(place: Place): void {
 // east fields run to the x=20.6 fence and the shop now sits ACROSS the road at z 15.6 — the player must reach both
 export const WORLD_BOUNDS = GEO_WORLD_BOUNDS
 
-const GROUND_SIZE = 96
+// covers x/z ∈ [-80, 80] so the textured lawn reaches far-east field parcels
+// (the field grows east forever; beyond ~parcel 12 the flat horizon skirt takes
+// over, which is rare given the parcel cost climbs exponentially)
+const GROUND_SIZE = 160
 const GROUND_BASE = '#6f9e4a'
 
 /** meshes the follow-camera must never hide behind (barn pushes itself in;
@@ -254,8 +257,11 @@ export function buildLights(scene: Scene): LightHandles {
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.02
   const c = sun.shadow.camera
-  c.left = c.bottom = -26
-  c.right = c.top = 26
+  // wide enough to cast shadows over the homestead AND the first several field
+  // parcels east (the field grows east; ±40 covers ~parcel 5 — past that the
+  // hard shadow fades but hemi/ambient/fill still light the crops)
+  c.left = c.bottom = -40
+  c.right = c.top = 40
   c.far = 80
   scene.add(sun)
   const hemi = new HemisphereLight('#bfe0ff', '#74934e', 0.75)

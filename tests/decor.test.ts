@@ -84,8 +84,8 @@ describe('canPlaceDecor: full', () => {
       placement(WORLD_BOUNDS.minX + 2 + i * (DECOR_CLEAR + 0.1), 0),
     )
     const s = withDecor(spots)
-    // open ground well inside bounds
-    expect(canPlaceDecor(s, 10, 0).ok).toBe(true)
+    // open homestead lawn (NOT the east crop field, NOT near the z=0 decor line)
+    expect(canPlaceDecor(s, 3, -6).ok).toBe(true)
   })
 })
 

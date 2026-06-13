@@ -1,5 +1,6 @@
 /** DECORATION catalog — repeatable cosmetic items the player buys and
  * places on the farm.  Pure module (no three/DOM/Date/Math.random). */
+import { fieldParcelRects } from './expansion'
 import { WORLD_BOUNDS } from './geo'
 import { pointInBuilding } from './layout'
 import type { GameState } from './state'
@@ -97,6 +98,12 @@ export function canPlaceDecor(s: GameState, x: number, z: number): DecorCheck {
 
   // no planting a bench inside the coop: respect building/pen/paddock footprints
   if (pointInBuilding(s, x, z)) return { ok: false, reason: 'occupied' }
+
+  // no decorating the crop field — its soil is for growing (mirrors canPlace's
+  // 'field' guard, which canPlaceDecor previously skipped: decor z-fought crops)
+  for (const fr of fieldParcelRects(s.fieldParcels)) {
+    if (x > fr.x0 && x < fr.x1 && z > fr.z0 && z < fr.z1) return { ok: false, reason: 'occupied' }
+  }
 
   return { ok: true }
 }
