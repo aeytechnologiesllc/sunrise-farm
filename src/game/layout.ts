@@ -22,6 +22,7 @@ import {
   ROAD_Z,
   TOWN_GATE_X,
   WORLD_BOUNDS,
+  worldMaxX,
 } from './geo'
 import { fenceFor, fieldParcel, fieldParcelRects, fieldPlotsAll, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
 import { PADDOCK, PROJECTS } from './projects'
@@ -160,14 +161,6 @@ export function penRect(s: LayoutHost): PenRect {
   }
 }
 
-/** a tier's soil rect, wherever its slab stands today */
-export function fieldRectFor(s: LayoutHost, tier: number): FieldRect {
-  const f = TIERS[tier].field!
-  if (!s.layout?.[('field' + tier) as PlaceId]) return f // unmoved: bit-exact
-  const p = placeOf(s, ('field' + tier) as PlaceId)
-  const d = DEFAULT_PLACES[('field' + tier) as PlaceId]
-  return { x0: f.x0 + p.x - d.x, z0: f.z0 + p.z - d.z, x1: f.x1 + p.x - d.x, z1: f.z1 + p.z - d.z }
-}
 
 /** every field plot center, in index order — now driven ENTIRELY by the
  * endless parcel count (the field is a fixed strip east of the homestead, no
@@ -399,7 +392,7 @@ export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): Plac
   // field across the south wall exactly this way)
   if (
     x < WORLD_BOUNDS.minX + 1 ||
-    x > WORLD_BOUNDS.maxX - 1 ||
+    x > worldMaxX(s.fieldParcels) - 1 || // east wall grows with the field
     z < WORLD_BOUNDS.minZ + 1 ||
     z > WORLD_BOUNDS.maxZ - 1
   ) {

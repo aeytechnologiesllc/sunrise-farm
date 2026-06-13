@@ -185,9 +185,8 @@ export interface ProjectGateState {
 export function projectStatus(
   def: ProjectDef,
   s: ProjectGateState
-): 'owned' | 'ok' | 'level' | 'coins' | 'land' | 'needs' {
+): 'owned' | 'ok' | 'level' | 'coins' | 'needs' {
   if (s.projects[def.id]) return 'owned'
-  if (s.expansion < def.requiresExpansion) return 'land'
   if (def.requires && !s.projects[def.requires]) return 'needs'
   if (s.level < def.level) return 'level'
   if (s.coins < def.cost) return 'coins'
@@ -200,15 +199,3 @@ export function availableProjects(s: ProjectGateState): ProjectDef[] {
   return PROJECTS.filter((p) => !s.projects[p.id] && s.expansion >= p.requiresExpansion)
 }
 
-/** Projects the player could aim for but can't build yet because the land deed
- * is missing — unowned, prerequisite project met (if any), level met, but
- * expansion falls short. Used by main.ts to render teaser signs on locked lots. */
-export function landBlockedProjects(s: ProjectGateState): ProjectDef[] {
-  return PROJECTS.filter(
-    (p) =>
-      !s.projects[p.id] &&
-      s.level >= p.level &&
-      s.expansion < p.requiresExpansion &&
-      (p.requires == null || !!s.projects[p.requires]),
-  )
-}

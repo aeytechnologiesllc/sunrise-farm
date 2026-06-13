@@ -3394,10 +3394,10 @@ async function boot(): Promise<void> {
         chipText = '\u{1F95A} The coop is full of eggs — go gather them'
       } else if (flock.missionActive) {
         chipText = `\u{1F411} ${flock.looseCount} loose — herd them back with Rex!`
-      } else if (game.deedStatus() === 'ok') {
-        chipText = `You can afford ${game.nextDeed()?.name}! Find the FOR-SALE sign \u{1F4DC}`
       } else if (buildable) {
         chipText = `You can afford ${buildable.def.name}! Find its BUILD sign \u{1F3D7}`
+      } else if (game.deedStatus() === 'ok') {
+        chipText = `You can afford ${game.nextDeed().name}! Find the FOR-SALE sign \u{1F4DC}`
       } else if (
         state.harvests === 0 &&
         state.plots.some((p) => p.crop) &&
@@ -3458,10 +3458,10 @@ async function boot(): Promise<void> {
         ? chicken.crateWorldPos
         : customerWaiting
           ? MARKET.pos
-          : game.deedStatus() === 'ok' && deedSign
-            ? deedSign.at
-            : buildSignAt
-              ? buildSignAt
+          : buildSignAt
+            ? buildSignAt
+            : game.deedStatus() === 'ok' && deedSign
+              ? deedSign.at
               : sug
                 ? sug.kind === 'plant' || sug.kind === 'harvest'
                   ? game.isGreenhouse(sug.plot)

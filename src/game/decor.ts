@@ -1,7 +1,7 @@
 /** DECORATION catalog — repeatable cosmetic items the player buys and
  * places on the farm.  Pure module (no three/DOM/Date/Math.random). */
 import { fieldParcelRects } from './expansion'
-import { WORLD_BOUNDS } from './geo'
+import { WORLD_BOUNDS, worldMaxX } from './geo'
 import { pointInBuilding } from './layout'
 import type { GameState } from './state'
 
@@ -85,7 +85,7 @@ export function canPlaceDecor(s: GameState, x: number, z: number): DecorCheck {
 
   if (
     x < WORLD_BOUNDS.minX + 1 ||
-    x > WORLD_BOUNDS.maxX - 1 ||
+    x > worldMaxX(s.fieldParcels) - 1 || // east wall grows with the field
     z < WORLD_BOUNDS.minZ + 1 ||
     z > WORLD_BOUNDS.maxZ - 1
   ) {

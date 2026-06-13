@@ -3,7 +3,6 @@
 import { describe, expect, it } from 'vitest'
 import { nextGoal } from '../src/game/goals'
 import { DECOR_MAX } from '../src/game/decor'
-import { landBlockedProjects } from '../src/game/projects'
 import { initialState, type GameState } from '../src/game/state'
 
 /** Construct a minimal save with controlled fields. */
@@ -397,24 +396,5 @@ describe('whale save — nextGoal is never null', () => {
   it('whale save pill is <= 40 chars', () => {
     const g = nextGoal(whaleSave())
     expect(g!.pill.length).toBeLessThanOrEqual(40)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// landBlockedProjects helper
-// ─────────────────────────────────────────────────────────────────────────────
-describe('landBlockedProjects — the land gate is gone', () => {
-  it('is always empty now (no project is blocked by land — every requiresExpansion is 0)', () => {
-    // a low-expansion save with money + level still has NO land-blocked projects:
-    // buildings are gated only by level/coins/prerequisite now
-    const s = {
-      level: 10,
-      coins: 9999,
-      expansion: 0,
-      projects: { stand: true, sheep: true, goats: true, coop: true } as Partial<Record<string, boolean>>,
-    }
-    expect(landBlockedProjects(s)).toEqual([])
-    // even at expansion 0 with nothing owned, still empty
-    expect(landBlockedProjects({ level: 1, coins: 0, expansion: 0, projects: {} })).toEqual([])
   })
 })
