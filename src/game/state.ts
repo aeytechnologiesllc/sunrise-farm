@@ -350,8 +350,12 @@ export function deserialize(json: string | null): GameState | null {
         s.coins += 1000
         delete s.projects.farmhand
       }
+      delete (s.layout as Record<string, unknown>).farmhand
     }
-    delete (s.layout as Record<string, unknown>).farmhand
+    // fields are locked in place now — drop any stale pre-lock position override
+    // so each field sits at its designed, gap-free home (a moved field also
+    // baked its soil UVs at the wrong world origin, re-opening a texture seam)
+    for (const k of Object.keys(s.layout)) if (/^field\d+$/.test(k)) delete (s.layout as Record<string, unknown>)[k]
     s.day ??= 1
     // older saves never tracked a dawn ledger — start counting from "now"
     s.dayStart ??= { coins: s.coins, harvests: s.harvests, eggs: s.chicken?.eggsLaid ?? 0 }

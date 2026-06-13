@@ -21,8 +21,6 @@ import { makeCanvas, toTexture, woodCanvas } from './textures'
 
 const FURROW_PERIOD = 0.55
 const FURROW_AMP = 0.085
-/** the flush worked-soil square hinting each plant spot is this wide (no frame) */
-export const PLOT_FRAME = 2.3
 /** soil surface height crops should sprout from */
 export const SOIL_TOP = 0.1
 /** world units per repeat of the shared dirt texture — ONE texture is sampled

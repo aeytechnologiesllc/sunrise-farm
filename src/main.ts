@@ -335,6 +335,11 @@ async function boot(): Promise<void> {
   if (rawSave && !loaded) localStorage.setItem(`${SAVE_KEY}.rescue`, rawSave)
   const state = loaded ?? initialState((Math.random() * 0xffffffff) >>> 0)
   const offline = loaded ? catchUp(state, (Date.now() - loaded.savedAt) / 1000) : null
+  // a save that just took the one-time farmhand-retirement migration (refund +
+  // flag) must be flushed at boot — an iOS kill before the first action/pagehide
+  // would otherwise re-run the refund on the next cold open (double-pay). Detect
+  // it from the PRE-migration raw save (loaded ⟹ rawSave parsed cleanly).
+  const migrationFlush = !!loaded && !!rawSave && !(JSON.parse(rawSave) as { farmhandRetired?: boolean }).farmhandRetired
   const game = new Game(state)
   // the saved LAYOUT drives where everything stands — scenery's ground art,
   // exclusion zones, and every anchor below resolve through it
@@ -680,6 +685,8 @@ async function boot(): Promise<void> {
   const saveNow = (): void => {
     if (!wiping) localStorage.setItem(SAVE_KEY, serialize(state))
   }
+  // persist a just-applied one-time migration immediately (see migrationFlush)
+  if (migrationFlush) saveNow()
 
   // ---- HUD sync -----------------------------------------------------------
   hud.setCoins(state.coins)
@@ -2225,18 +2232,6 @@ async function boot(): Promise<void> {
     } else if (id === 'shop') {
       marketToShop(p)
       reflowQueue()
-    } else if (fieldTierOf(id) >= 0) {
-      // the slab's plots ride along — same indices, new centers (the crops,
-      // their timers and FX anchors all follow)
-      const t = fieldTierOf(id)
-      let start = 0
-      for (let i = 0; i < t; i++) start += TIERS[i].plots.length
-      const positions = fieldPlotsFor(state)
-      for (let k = 0; k < TIERS[t].plots.length; k++) {
-        const i = start + k
-        plots[i]?.moveTo(new Vector3(positions[i][0], 0, positions[i][1]))
-        if (plots[i]) plots[i].group.visible = true
-      }
     } else if (id === 'pen') {
       const r = penRect(state)
       PEN_GATE.set(r.x1 + 0.4, 0, (r.gate.z0 + r.gate.z1) / 2)
@@ -2273,17 +2268,14 @@ async function boot(): Promise<void> {
     // "something little lives there" dead-ends near the home-yard landmarks, with
     // no clear spot (owner's call: lock fields, keep buildings movable)
     if (fieldTierOf(id) >= 0) return false
-    const ft = fieldTierOf(id)
     const owned =
-      ft >= 0
-        ? state.expansion >= ft
-        : id === 'tractor'
-          ? state.expansion >= 2
-          : id === 'pen'
-            ? state.projects.sheep === true
-            : id === 'stand'
-              ? state.projects.stand === true && state.projects.shop !== true
-              : state.projects[id] === true
+      id === 'tractor'
+        ? state.expansion >= 2
+        : id === 'pen'
+          ? state.projects.sheep === true
+          : id === 'stand'
+            ? state.projects.stand === true && state.projects.shop !== true
+            : state.projects[id] === true
     if (!owned) return false
     // Hazel can't come home to a missing stable
     if (id === 'stable' && state.produce.deliveryT > 0) return false
@@ -2296,16 +2288,6 @@ async function boot(): Promise<void> {
   const tryLift = (id: PlaceId): boolean => {
     if (!canLift(id)) return false
     if (!carry.lift(id, player.group)) return false
-    // a carried slab's plots vanish with it (crops keep growing in state;
-    // they re-appear at the landing spot)
-    const ft = fieldTierOf(id)
-    if (ft >= 0) {
-      let start = 0
-      for (let i = 0; i < ft; i++) start += TIERS[i].plots.length
-      for (let k = 0; k < TIERS[ft].plots.length; k++) {
-        if (plots[start + k]) plots[start + k].group.visible = false
-      }
-    }
     touch()
     sfx.crate()
     navigator.vibrate?.(20)

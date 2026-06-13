@@ -137,4 +137,16 @@ describe('migration', () => {
     delete raw.farmhandRetired
     expect(deserialize(JSON.stringify(raw))!.coins).toBe(200)
   })
+
+  it('strips stale pre-lock field-position overrides so fields sit home (no seam)', () => {
+    // a save that MOVED a field before the lock carried a layout.fieldN override —
+    // it would re-open a soil-texture seam and strand the field off its tier
+    const s = initialState(12)
+    s.expansion = 2
+    s.layout = { field1: { x: 3, z: 3 }, coop: { x: -6, z: 8 } }
+    const back = deserialize(serialize(s))!
+    expect((back.layout as Record<string, unknown>).field1).toBeUndefined()
+    // a moved BUILDING override is preserved — only fields are locked
+    expect((back.layout as Record<string, unknown>).coop).toEqual({ x: -6, z: 8 })
+  })
 })
