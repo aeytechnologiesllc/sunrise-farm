@@ -3,6 +3,7 @@ import type { CropKind } from './economy'
 import { clampTier, plotCount } from './expansion'
 import { ringEdges, type FenceState } from './fence'
 import { catchUpHenhouse, foundingFlock, type CoopFlock } from './henhouse'
+import { WORLD_BOUNDS } from './geo'
 import type { LayoutState } from './layout'
 import { initialProduce, tickProduce, type Produce } from './produce'
 import { GREENHOUSE_BEDS } from './projects'
@@ -238,6 +239,20 @@ export function deserialize(json: string | null): GameState | null {
     s.projects ??= {}
     s.ghPlots ??= []
     s.layout ??= {}
+    // rescue: anything a pre-guard save stranded beyond the walkable world
+    // quietly walks itself home (delete = back to its authored place)
+    for (const k of Object.keys(s.layout)) {
+      const pl = (s.layout as Record<string, { x: number; z: number } | undefined>)[k]
+      if (
+        !pl ||
+        pl.x < WORLD_BOUNDS.minX + 1 ||
+        pl.x > WORLD_BOUNDS.maxX - 1 ||
+        pl.z < WORLD_BOUNDS.minZ + 1 ||
+        pl.z > WORLD_BOUNDS.maxZ - 1
+      ) {
+        delete (s.layout as Record<string, unknown>)[k]
+      }
+    }
     // one-time fence migration: the authored picket ring becomes player
     // fence (its presence IS the migrated flag)
     s.fences ??= ringEdges(clampTier(s.expansion ?? 0))

@@ -264,6 +264,8 @@ export class FollowCamera {
     this.clearT = 0
     this.kTight = 0
     this.kCollapse = 0
+    this.whiskerL = null
+    this.whiskerR = null
   }
 
   /** room confinement on door transit: pass the camera volume + the aim
@@ -417,6 +419,10 @@ export class FollowCamera {
 
   private whiskerFlip = false
 
+  private whiskerL: number | null = null
+
+  private whiskerR: number | null = null
+
   private applyPose(): void {
     const w = this.focusW.value
     const t = this.tmp.copy(this.anchor).lerp(this.focusPoint, w)
@@ -468,9 +474,17 @@ export class FollowCamera {
       // are the spiky part of this budget.
       let blocked = this.occlusionTest(t, place(dist, this.desired))
       if (!this.lowSpec) {
+        // one whisker per frame, but BOTH sides stay in the verdict via a
+        // cache — alternating raw sides made the clamp flutter at half
+        // framerate near building edges (the landscape 'jitter': the
+        // closer ride amplifies every camera wobble ~1.5x on screen)
         this.whiskerFlip = !this.whiskerFlip
         const b = this.occlusionTest(t, place(dist, this.whisker, this.whiskerFlip ? 0.09 : -0.09))
-        if (b !== null && (blocked === null || b < blocked)) blocked = b
+        if (this.whiskerFlip) this.whiskerR = b
+        else this.whiskerL = b
+        for (const w of [this.whiskerL, this.whiskerR]) {
+          if (w !== null && (blocked === null || w < blocked)) blocked = w
+        }
       }
       this.lastBlocked = blocked
       // the lens always lands at least the near-plane margin in FRONT of a

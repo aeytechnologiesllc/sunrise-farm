@@ -21,6 +21,7 @@ import {
   ROAD_CLEAR,
   ROAD_Z,
   TOWN_GATE_X,
+  WORLD_BOUNDS,
 } from './geo'
 import { fenceFor, gatesFor, PEN, TIERS, type FieldRect } from './expansion'
 import { PADDOCK, PROJECTS } from './projects'
@@ -261,6 +262,7 @@ export function fenceEdgeAllowed(s: LayoutHost, mx: number, mz: number): boolean
 // ---- placement rules ---------------------------------------------------------
 
 export type PlaceBlock =
+  | 'far' // beyond where the farmer can walk — he could never lift it back
   | 'land' // outside what your deeds enclose
   | 'road' // the road must stay clear
   | 'field' // crops will grow there (any tier's soil)
@@ -400,6 +402,18 @@ function obbNearPoint(o: Obb, px: number, pz: number, r: number): boolean {
 /** May `id` stand at (x,z) right now? Pure — UI and tests share it. */
 export function canPlace(s: LayoutHost, id: PlaceId, x: number, z: number): PlaceCheck {
   if (id === 'stable' && (s.produce?.deliveryT ?? 0) > 0) return { ok: false, reason: 'hazel-out' }
+  // the farmer must be able to WALK BACK to whatever he sets down: the
+  // carry ghost aims past his nose, and a center beyond the walkable rect
+  // is a building nobody can ever pick up again (the owner stranded a
+  // field across the south wall exactly this way)
+  if (
+    x < WORLD_BOUNDS.minX + 1 ||
+    x > WORLD_BOUNDS.maxX - 1 ||
+    z < WORLD_BOUNDS.minZ + 1 ||
+    z > WORLD_BOUNDS.maxZ - 1
+  ) {
+    return { ok: false, reason: 'far' }
+  }
   // a building's AUTHORED home is always legal — the original farm was laid
   // out by hand (the stable/barn footprints even interpenetrate on paper and
   // coexist only by their rotations), and walking a building back home must

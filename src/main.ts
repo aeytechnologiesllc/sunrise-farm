@@ -2632,6 +2632,7 @@ async function boot(): Promise<void> {
     if (carry.carrying && !hud.modalOpen) {
       // one verb while a building is in your arms (the spot speaks via color)
       const why: Record<string, string> = {
+        far: "you couldn't walk back to it out there",
         land: "that's not your land yet",
         road: 'the road has to stay clear',
         field: 'crops will grow there',
