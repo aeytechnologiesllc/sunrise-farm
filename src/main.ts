@@ -105,6 +105,7 @@ import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS } from './gam
 import { nextGoal } from './game/goals'
 import {
   availableUpgrades,
+  greenhouseBeds,
   marketPremiumBonus,
   marketQueueBonus,
   pastureGoatBonus,
@@ -438,8 +439,15 @@ async function boot(): Promise<void> {
   // view order mirrors Game's combined index space: field plots, then
   // greenhouse planters (always at the tail so expansions insert BEFORE them)
   const plots = fieldPlotsFor(state).map(([px, pz]) => mkPlot(px, pz))
-  // greenhouse planters live INSIDE the walkable glasshouse set
-  if (state.projects.greenhouse) for (const b of ghInterior.bedPositions) plots.push(mkPlot(b.x, b.z, true))
+  // greenhouse planters live INSIDE the walkable glasshouse set — only as many
+  // as the greenhouse owns (8, or 12 once the "Bigger Greenhouse" wing is up)
+  if (state.projects.greenhouse) {
+    const nb = greenhouseBeds(state)
+    for (let i = 0; i < nb; i++) plots.push(mkPlot(ghInterior.bedPositions[i].x, ghInterior.bedPositions[i].z, true))
+    if (nb >= 12) ghInterior.revealWing()
+  }
+  // the home renovation shows on boot if it's been bought
+  if (state.upgrades.homereno) farmhouseInterior.setRenovated(true)
   const lastGlow: Array<'none' | 'shimmer' | 'ready'> = plots.map(() => 'none')
 
   /** free GPU resources of a removed object tree (textures included) */
@@ -571,9 +579,11 @@ async function boot(): Promise<void> {
     8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
     10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
+    16: 'A bigger Greenhouse — four more beds under glass \u{1F33F}',
     18: 'The coop can grow a third wing — the Long Roost \u{1F414}',
     20: 'The Market Awning: richer customers come to the shop \u{1F3EA}',
     22: 'The Pasture Loft makes room for more sheep and a goat \u{1F411}',
+    26: 'Make the farmhouse cosier — shelves, curtains, a tiled hearth \u{1F3E1}',
   }
   /** a level-up mid-cutscene queues — the fanfare must never fire over the
    * crew's reveal (it lands ~1.2s after done(), the payday-banking pattern) */
@@ -632,13 +642,22 @@ async function boot(): Promise<void> {
   })
   game.on('upgraded', (e) => {
     const id = e.def.id
-    if (id === 'market') {
+    if (id === 'ghwing') {
+      // the new row of beds becomes plantable AND visible at once
+      for (let i = 8; i < greenhouseBeds(state); i++) {
+        plots.push(mkPlot(ghInterior.bedPositions[i].x, ghInterior.bedPositions[i].z, true))
+        lastGlow.push('none')
+      }
+      ghInterior.revealWing()
+    } else if (id === 'market') {
       customers.premium = SHOP_PREMIUM + marketPremiumBonus(state)
       customers.queueMax = SHOP_QUEUE_MAX + marketQueueBonus(state)
     } else if (id === 'pasture') {
       // the loft makes room: two more sheep at the pen, one more goat
       for (let i = 0; i < 2; i++) flock.addSheep()
       grazers.add('goat', GOAT_RECT, 1)
+    } else if (id === 'homereno') {
+      farmhouseInterior.setRenovated(true)
     }
     refreshUpgradeSigns()
     if (!sleepActive && !construction.active) {
@@ -1439,8 +1458,8 @@ async function boot(): Promise<void> {
     } else if (def.id === 'greenhouse') {
       addBuilding(buildGreenhouse, def, fresh)
       if (fresh)
-        for (const b of ghInterior.bedPositions) {
-          plots.push(mkPlot(b.x, b.z, true))
+        for (let i = 0; i < greenhouseBeds(state); i++) {
+          plots.push(mkPlot(ghInterior.bedPositions[i].x, ghInterior.bedPositions[i].z, true))
           lastGlow.push('none')
         }
     } else if (def.id === 'farmhand') {
@@ -1834,11 +1853,16 @@ async function boot(): Promise<void> {
   // (the greenhouse wing, the tack room, the home reno land in later arcs;
   // these are the ones whose effect is live today)
   const UPGRADE_SITE: Partial<Record<UpgradeId, () => Vector3>> = {
+    ghwing: () => {
+      const p = placeOf(state, 'greenhouse')
+      return new Vector3(p.x, 0, p.z + 3.4)
+    },
     market: () => {
       const p = placeOf(state, 'shop')
       return new Vector3(p.x - 2.8, 0, p.z + 1.9)
     },
     pasture: () => PEN_CENTER.clone().add(new Vector3(0, 0, -3.4)),
+    homereno: () => homestead.doorPos.clone().add(new Vector3(2.4, 0, 0.4)),
   }
   const upgradeSigns = new Map<UpgradeId, { group: Group; at: Vector3 }>()
   const refreshUpgradeSigns = (): void => {

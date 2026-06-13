@@ -465,6 +465,108 @@ function wareCanvas(rng: Rng): HTMLCanvasElement {
   return c
 }
 
+/** renovation: small encaustic tiles for the hearth surround — warm ivory
+ * field, a repeating 4×4 hand-painted motif (sage cross + rust corner dots) */
+function tiledHearthCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(128, 128)
+  g.fillStyle = '#e8d9be'
+  g.fillRect(0, 0, 128, 128)
+  const TW = 32
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const x = col * TW
+      const y = row * TW
+      // grout line
+      g.fillStyle = 'rgba(120,102,72,0.55)'
+      g.fillRect(x, y, TW, 1)
+      g.fillRect(x, y, 1, TW)
+      // tile face with faint mottling
+      for (let i = 0; i < 18; i++) {
+        g.fillStyle = rng.next() > 0.5 ? 'rgba(255,248,232,0.12)' : 'rgba(100,80,52,0.08)'
+        g.fillRect(x + 2 + rng.next() * (TW - 4), y + 2 + rng.next() * (TW - 4), 2 + rng.next() * 3, 1 + rng.next() * 2)
+      }
+      // sage cross centred on the tile
+      const cx = x + TW / 2
+      const cy = y + TW / 2
+      g.fillStyle = '#7c9468'
+      g.fillRect(cx - 1.5, cy - 7, 3, 14) // vertical bar
+      g.fillRect(cx - 7, cy - 1.5, 14, 3) // horizontal bar
+      // rust corner dots
+      g.fillStyle = '#b5604a'
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as Array<[number, number]>) {
+        g.beginPath()
+        g.arc(cx + dx * 9, cy + dy * 9, 2, 0, Math.PI * 2)
+        g.fill()
+      }
+      // glazed edge highlight
+      g.fillStyle = 'rgba(255,252,240,0.18)'
+      g.fillRect(x + 2, y + 2, TW - 3, 2)
+      g.fillStyle = 'rgba(60,40,20,0.18)'
+      g.fillRect(x + 2, y + TW - 4, TW - 3, 2)
+    }
+  }
+  return c
+}
+
+/** renovation: a small framed pastoral — oil-sketch style, an old gilt frame.
+ * Painted onto the wall above the bedroom side table (warm tones, no sky) */
+function framedPictureCanvas(rng: Rng): HTMLCanvasElement {
+  const { c, g } = makeCanvas(80, 64)
+  // gilt frame
+  g.fillStyle = '#b8932a'
+  g.fillRect(0, 0, 80, 64)
+  g.fillStyle = 'rgba(255,220,120,0.35)'
+  g.fillRect(0, 0, 80, 5)
+  g.fillStyle = 'rgba(40,24,4,0.3)'
+  g.fillRect(0, 59, 80, 5)
+  for (let i = 0; i < 60; i++) {
+    g.fillStyle = rng.next() > 0.5 ? 'rgba(255,230,140,0.18)' : 'rgba(60,40,10,0.15)'
+    g.fillRect(rng.next() * 80, rng.next() * 64, 1.2 + rng.next() * 2, 1)
+  }
+  // painting interior
+  const inner = { x: 7, y: 7, w: 66, h: 50 }
+  // sky
+  const sky = g.createLinearGradient(inner.x, inner.y, inner.x, inner.y + 22)
+  sky.addColorStop(0, '#c8d8a8')
+  sky.addColorStop(1, '#e8d88c')
+  g.fillStyle = sky
+  g.fillRect(inner.x, inner.y, inner.w, 22)
+  // hills
+  g.fillStyle = '#6e8c4a'
+  g.beginPath()
+  g.moveTo(inner.x, inner.y + 26)
+  g.quadraticCurveTo(inner.x + 20, inner.y + 16, inner.x + 40, inner.y + 24)
+  g.quadraticCurveTo(inner.x + 56, inner.y + 18, inner.x + inner.w, inner.y + 22)
+  g.lineTo(inner.x + inner.w, inner.y + inner.h)
+  g.lineTo(inner.x, inner.y + inner.h)
+  g.closePath()
+  g.fill()
+  // foreground meadow
+  g.fillStyle = '#8aaa56'
+  g.fillRect(inner.x, inner.y + 34, inner.w, inner.h - 34)
+  // a single cottage
+  g.fillStyle = '#c8b48a'
+  g.fillRect(inner.x + 22, inner.y + 22, 14, 12)
+  g.fillStyle = '#a05a3a'
+  g.beginPath()
+  g.moveTo(inner.x + 20, inner.y + 22)
+  g.lineTo(inner.x + 29, inner.y + 16)
+  g.lineTo(inner.x + 38, inner.y + 22)
+  g.closePath()
+  g.fill()
+  // oil-sketch craquelure / brushstroke noise
+  for (let i = 0; i < 90; i++) {
+    const t = rng.next()
+    g.fillStyle = t > 0.5 ? 'rgba(255,245,220,0.10)' : 'rgba(40,30,10,0.09)'
+    g.fillRect(inner.x + rng.next() * inner.w, inner.y + rng.next() * inner.h, 1.5 + rng.next() * 2, 1)
+  }
+  // frame inner shadow
+  g.fillStyle = 'rgba(20,10,4,0.22)'
+  g.fillRect(inner.x, inner.y, inner.w, 2)
+  g.fillRect(inner.x, inner.y, 2, inner.h)
+  return c
+}
+
 /** the PATCHWORK QUILT — a 6x5 grid of warm patches, every patch hemmed in
  * hand stitches, every fill/fleck drawn off the seeded stream */
 function quiltCanvas(rng: Rng): HTMLCanvasElement {
@@ -594,6 +696,10 @@ export class FarmhouseInterior {
   private readonly wifeMixer: AnimationMixer
   private readonly kidMixer: AnimationMixer
   private t = 0
+  /** renovation: upgraded furnishings shown when homereno is purchased */
+  private readonly renoGroup = new Group()
+  /** base-only items hidden when renovated (the rocking horse, replaced by the bookshelf) */
+  private readonly baseOnlyGroup = new Group()
 
   constructor(scene: Scene, assets: Assets) {
     const rng = mulberry32(0xfa3057)
@@ -603,6 +709,9 @@ export class FarmhouseInterior {
     const hd = ROOM_D / 2
     this.root.position.copy(FARMHOUSE_ANCHOR)
     scene.add(this.root)
+    this.root.add(this.renoGroup)
+    this.root.add(this.baseOnlyGroup)
+    this.renoGroup.visible = false
 
     this.spawnPos = new Vector3(ax, 0, az + hd - 2.6)
     this.exitPos = new Vector3(ax, 0, az + hd - 0.4)
@@ -843,39 +952,52 @@ export class FarmhouseInterior {
     lid.translate(3.8, 0.52, -hd + 0.22)
     dark.push(lid)
     // the rocking horse — boxes + torus arcs, a wink at Hazel (~0.5u tall)
-    const horse: BufferGeometry[] = []
-    for (const s of [-1, 1]) {
-      const rocker = new TorusGeometry(0.28, 0.02, 6, 14, 1.7)
-      rocker.rotateZ(-Math.PI / 2 - 0.85) // arc cradles the floor
-      rocker.translate(0, 0.3, s * 0.09)
-      horse.push(rocker)
-    }
-    for (const sx of [-1, 1]) {
-      box(horse, 0.2, 0.02, 0.04, sx * 0.2, 0.115, 0) // cross slats
-      for (const sz of [-1, 1]) box(horse, 0.035, 0.24, 0.035, sx * 0.17, 0.21, sz * 0.09) // legs
-    }
-    box(horse, 0.36, 0.13, 0.16, 0, 0.37, 0) // body
-    const neck = new BoxGeometry(0.07, 0.2, 0.1)
-    neck.rotateZ(-0.35)
-    neck.translate(0.17, 0.47, 0)
-    horse.push(neck)
-    const head = new BoxGeometry(0.13, 0.08, 0.08)
-    head.rotateZ(-0.2)
-    head.translate(0.24, 0.55, 0)
-    horse.push(head)
-    box(horse, 0.025, 0.05, 0.03, 0.21, 0.6, 0) // ear
-    const peg = new CylinderGeometry(0.012, 0.012, 0.16, 6)
-    peg.rotateX(Math.PI / 2)
-    peg.translate(0.13, 0.5, 0)
-    horse.push(peg)
-    const tail = new BoxGeometry(0.05, 0.14, 0.03)
-    tail.rotateZ(0.5)
-    tail.translate(-0.2, 0.42, 0)
-    horse.push(tail)
-    for (const g of horse) {
-      g.rotateY(0.6)
-      g.translate(3.0, 0, -2.0)
-      wood.push(g)
+    // Baked into baseOnlyGroup so it can be hidden when the renovation replaces
+    // it with a bookshelf.  Costs one extra draw (16 base total).
+    {
+      const horse: BufferGeometry[] = []
+      for (const s of [-1, 1]) {
+        const rocker = new TorusGeometry(0.28, 0.02, 6, 14, 1.7)
+        rocker.rotateZ(-Math.PI / 2 - 0.85) // arc cradles the floor
+        rocker.translate(0, 0.3, s * 0.09)
+        horse.push(rocker)
+      }
+      for (const sx of [-1, 1]) {
+        box(horse, 0.2, 0.02, 0.04, sx * 0.2, 0.115, 0) // cross slats
+        for (const sz of [-1, 1]) box(horse, 0.035, 0.24, 0.035, sx * 0.17, 0.21, sz * 0.09) // legs
+      }
+      box(horse, 0.36, 0.13, 0.16, 0, 0.37, 0) // body
+      const neck = new BoxGeometry(0.07, 0.2, 0.1)
+      neck.rotateZ(-0.35)
+      neck.translate(0.17, 0.47, 0)
+      horse.push(neck)
+      const head = new BoxGeometry(0.13, 0.08, 0.08)
+      head.rotateZ(-0.2)
+      head.translate(0.24, 0.55, 0)
+      horse.push(head)
+      box(horse, 0.025, 0.05, 0.03, 0.21, 0.6, 0) // ear
+      const peg = new CylinderGeometry(0.012, 0.012, 0.16, 6)
+      peg.rotateX(Math.PI / 2)
+      peg.translate(0.13, 0.5, 0)
+      horse.push(peg)
+      const tail = new BoxGeometry(0.05, 0.14, 0.03)
+      tail.rotateZ(0.5)
+      tail.translate(-0.2, 0.42, 0)
+      horse.push(tail)
+      for (const hg of horse) {
+        hg.rotateY(0.6)
+        hg.translate(3.0, 0, -2.0)
+      }
+      const horseMerged = mergeGeometries(horse)
+      if (horseMerged) {
+        const horseMesh = new Mesh(
+          horseMerged,
+          new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#8a6a44'), true), roughness: 0.9 }),
+        )
+        horseMesh.castShadow = false
+        horseMesh.receiveShadow = false
+        this.baseOnlyGroup.add(horseMesh)
+      }
     }
 
     // ---- BEDROOM NOOK, south-west, behind the half-wall -----------------------
@@ -918,6 +1040,142 @@ export class FarmhouseInterior {
     ware.push(loaf)
     bake(ware, new MeshStandardMaterial({ map: toTexture(wareCanvas(rng)), roughness: 0.5 }))
     bake(curtains, new MeshStandardMaterial({ map: toTexture(curtainCanvas(rng)), roughness: 1, side: DoubleSide }))
+
+    // ---- RENOVATION LAYER (renoGroup, visible = false until homereno owned) -----
+    // DRAW 1 (reno): bookshelf + framed picture — warm wood material reused
+    {
+      const renoWood: BufferGeometry[] = []
+      const renoDark: BufferGeometry[] = []
+
+      // BOOKSHELF against the east wall, opening westward.
+      // Depth runs east-west (X axis); width runs north-south (Z axis).
+      // Back panel flush with east wall at x = hw.
+      const BSW = 1.0        // shelf width (Z span, north-south)
+      const BSH = 1.52       // total height
+      const BSD = 0.28       // shelf depth (X span, east-west)
+      // Center: depth center at hw - BSD/2; Z center midway in the kids corner
+      const BX = hw - BSD / 2  // depth center
+      const BZ = -1.55          // Z center (kids corner, between toy chest and rocking horse)
+      // side panels (north and south ends of the shelf, spanning X)
+      box(renoWood, BSD, BSH, 0.06, BX, BSH / 2, BZ - BSW / 2)
+      box(renoWood, BSD, BSH, 0.06, BX, BSH / 2, BZ + BSW / 2)
+      // top + bottom boards (spanning Z)
+      box(renoWood, BSD, 0.05, BSW + 0.06, BX, BSH - 0.025, BZ)
+      box(renoWood, BSD, 0.05, BSW + 0.06, BX, 0.025, BZ)
+      // three inner shelves (spanning Z)
+      for (const sy of [0.38, 0.76, 1.14]) box(renoWood, BSD - 0.02, 0.04, BSW - 0.04, BX, sy, BZ)
+      // back panel flush with east wall (dark wood, thin)
+      box(renoDark, 0.04, BSH - 0.06, BSW - 0.04, hw - 0.02, BSH / 2, BZ)
+
+      // BOOKS — standing on each shelf, spines face west (-X).
+      // Each book: thin in Z (spine thickness), tall in Y, shallow in X (depth on shelf).
+      // bz offset from BZ; sy = shelf Y; th = book thickness along Z
+      const bookRows: Array<{ sy: number; books: Array<{ bz: number; th: number; h: number }> }> = [
+        {
+          sy: 0.38,
+          books: [
+            { bz: -0.42, th: 0.055, h: 0.24 }, { bz: -0.36, th: 0.048, h: 0.22 },
+            { bz: -0.30, th: 0.06, h: 0.26 },  { bz: -0.23, th: 0.052, h: 0.20 },
+            { bz: -0.17, th: 0.058, h: 0.23 }, { bz: -0.10, th: 0.05, h: 0.21 },
+            { bz: -0.04, th: 0.055, h: 0.25 }, { bz: +0.03, th: 0.062, h: 0.22 },
+            { bz: +0.10, th: 0.05, h: 0.24 },  { bz: +0.16, th: 0.058, h: 0.20 },
+            { bz: +0.23, th: 0.052, h: 0.23 }, { bz: +0.29, th: 0.06, h: 0.21 },
+            { bz: +0.36, th: 0.048, h: 0.24 },
+          ],
+        },
+        {
+          sy: 0.76,
+          books: [
+            { bz: -0.43, th: 0.06, h: 0.25 },  { bz: -0.36, th: 0.05, h: 0.22 },
+            { bz: -0.30, th: 0.055, h: 0.24 }, { bz: -0.24, th: 0.048, h: 0.21 },
+            { bz: -0.18, th: 0.058, h: 0.26 }, { bz: -0.11, th: 0.052, h: 0.23 },
+            { bz: -0.05, th: 0.06, h: 0.22 },  { bz: +0.02, th: 0.055, h: 0.24 },
+            { bz: +0.08, th: 0.05, h: 0.20 },  { bz: +0.14, th: 0.062, h: 0.25 },
+            { bz: +0.21, th: 0.052, h: 0.23 }, { bz: +0.28, th: 0.058, h: 0.21 },
+            { bz: +0.36, th: 0.05, h: 0.24 },
+          ],
+        },
+        {
+          sy: 1.14,
+          books: [
+            { bz: -0.41, th: 0.058, h: 0.23 }, { bz: -0.35, th: 0.05, h: 0.20 },
+            { bz: -0.29, th: 0.055, h: 0.24 }, { bz: -0.23, th: 0.048, h: 0.21 },
+            { bz: -0.17, th: 0.062, h: 0.25 }, { bz: -0.10, th: 0.05, h: 0.22 },
+            { bz: -0.04, th: 0.055, h: 0.23 }, { bz: +0.02, th: 0.06, h: 0.20 },
+            { bz: +0.09, th: 0.05, h: 0.24 },  { bz: +0.16, th: 0.055, h: 0.22 },
+            { bz: +0.23, th: 0.048, h: 0.25 }, { bz: +0.30, th: 0.06, h: 0.21 },
+            { bz: +0.37, th: 0.052, h: 0.23 },
+          ],
+        },
+      ]
+      bookRows.forEach(({ sy, books }) => {
+        books.forEach(({ bz, th, h }, i) => {
+          // alternate warm / dark spines for visual variety
+          const arr = i % 3 === 1 ? renoDark : renoWood
+          // book: depth = BSD-0.06 (sits on shelf not clipping back), spine faces west
+          box(arr, BSD - 0.06, h, th, BX - 0.03, sy + h / 2 + 0.02, BZ + bz)
+        })
+      })
+
+      // FRAMED PICTURE on the south wall above the bedroom side table.
+      // Side table is at (-2.85, y, 3.18); south wall at z=hd=3.5.
+      const PIC_X = -2.85
+      const PIC_Y = 1.48
+      const PIC_Z = hd - 0.12  // south wall face
+      // outer frame moulding (four strips, proud of the plaster)
+      box(renoWood, 0.56, 0.055, 0.04, PIC_X, PIC_Y + 0.25, PIC_Z) // top rail
+      box(renoWood, 0.56, 0.055, 0.04, PIC_X, PIC_Y - 0.25, PIC_Z) // bottom rail
+      box(renoWood, 0.04, 0.46, 0.04, PIC_X - 0.26, PIC_Y, PIC_Z)  // left stile
+      box(renoWood, 0.04, 0.46, 0.04, PIC_X + 0.26, PIC_Y, PIC_Z)  // right stile
+
+      // Merge and add reno draws
+      const shelfMerged = mergeGeometries(renoWood)
+      if (shelfMerged) {
+        const shelfMesh = new Mesh(
+          shelfMerged,
+          new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#8a6a44'), true), roughness: 0.9 }),
+        )
+        shelfMesh.castShadow = false
+        shelfMesh.receiveShadow = false
+        this.renoGroup.add(shelfMesh)
+      }
+      const shelfDarkMerged = mergeGeometries(renoDark)
+      if (shelfDarkMerged) {
+        const shelfDarkMesh = new Mesh(
+          shelfDarkMerged,
+          new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#4d3826'), true), roughness: 0.95 }),
+        )
+        shelfDarkMesh.castShadow = false
+        shelfDarkMesh.receiveShadow = false
+        this.renoGroup.add(shelfDarkMesh)
+      }
+
+      // Picture face — unlit, same material class as the window views.
+      // PlaneGeometry default faces +Z; rotateY(PI) makes it face -Z (inward from south wall).
+      const picPlane = new PlaneGeometry(0.48, 0.46)
+      picPlane.rotateY(Math.PI)
+      const picMesh = new Mesh(
+        picPlane,
+        new MeshBasicMaterial({ map: toTexture(framedPictureCanvas(rng)) }),
+      )
+      picMesh.position.set(PIC_X, PIC_Y, PIC_Z - 0.005)
+      picMesh.castShadow = false
+      picMesh.receiveShadow = false
+      this.renoGroup.add(picMesh)
+
+      // TILED HEARTH FACING — a thin plane laid over the existing graystone surround,
+      // proud of the stone by ~0.02u so no z-fighting. Spans the two column faces.
+      const tilePane = new PlaneGeometry(1.74, 1.02)
+      tilePane.rotateY(Math.PI / 2)
+      const tileMesh = new Mesh(
+        tilePane,
+        new MeshStandardMaterial({ map: toTexture(tiledHearthCanvas(rng), true), roughness: 0.7 }),
+      )
+      tileMesh.position.set(-hw + 0.36, 0.81, FP_Z)
+      tileMesh.castShadow = false
+      tileMesh.receiveShadow = false
+      this.renoGroup.add(tileMesh)
+    }
 
     // ---- the south windows: same sunny view, shafts pouring through -----------
     for (const wx of [-3.4, 2.8]) {
@@ -1017,6 +1275,14 @@ export class FarmhouseInterior {
 
   get active(): boolean {
     return this.root.visible
+  }
+
+  /** Toggle the "A Cosier Home" renovation dressing.
+   * Call with on=true at boot if homereno is already owned, and on purchase.
+   * Idempotent: safe to call multiple times with the same value. */
+  setRenovated(on: boolean): void {
+    this.renoGroup.visible = on
+    this.baseOnlyGroup.visible = !on
   }
 
   /** flames lick, the hearth light breathes, motes drift, the family idles —

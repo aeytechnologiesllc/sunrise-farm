@@ -5,6 +5,8 @@
  * you walk between (owner: "once you enter, it needs to feel huge — a whole
  * building"). Daylight is the WORLD's light pouring through the panes; the
  * farm reads as hazy distance through the glass.
+ * Upgrade "A Bigger Greenhouse" adds a 3rd row of 4 beds (beds 8-11) housed
+ * in wingGroup (hidden until revealWing() is called; 2 extra draws).
  * Perf: merged statics per material (~12 draws), root hidden until entered.
  * House art rule: every surface canvas-painted — no flat-color blobs. */
 import {
@@ -204,7 +206,9 @@ export class GreenhouseInterior {
   readonly spawnPos: Vector3
   /** walking back to this point (the doorway) leaves the greenhouse */
   readonly exitPos: Vector3
-  /** the eight planter centers, world coords — main drops its plot views here */
+  /** the twelve planter centers, world coords — main drops its plot views here.
+   * Indices 0-7 are the original two rows (unchanged); indices 8-11 are the
+   * 3rd row added by the "A Bigger Greenhouse" upgrade (wingGroup). */
   readonly bedPositions: Vector3[]
   /** player walk bounds while inside (world coords) */
   readonly bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
@@ -214,6 +218,8 @@ export class GreenhouseInterior {
   readonly shell: Mesh[] = []
 
   private readonly root = new Group()
+  /** The 3rd-row planter furniture; hidden until revealWing() is called. */
+  readonly wingGroup = new Group()
   private readonly lampA: PointLight
   private readonly lampB: PointLight
   private readonly baskets: Group[] = []
@@ -229,23 +235,35 @@ export class GreenhouseInterior {
     const az = GH_ANCHOR.z
     this.root.position.copy(GH_ANCHOR)
     scene.add(this.root)
+    // wingGroup lives under root so it inherits the same offset; starts hidden
+    this.wingGroup.visible = false
+    this.root.add(this.wingGroup)
 
     // spawn far enough in that the follow camera (occlusion floor 2.4u)
     // lands INSIDE the south wall instead of kissing the glass
     this.spawnPos = new Vector3(ax, 0, az + ROOM_D / 2 - 3.0)
     this.exitPos = new Vector3(ax, 0, az + ROOM_D / 2 - 0.4)
-    // two rows of four with broad walking aisles — a real market garden
+    // rows 0-1: original two rows of four with broad walking aisles
+    // row 2 (beds 8-11): 3rd row at bz=5.2; south bed-edge = 5.2+1.1 = 6.3,
+    //   south wall at +8.0, clearance = 1.7u ≥ 1.5u required.
+    //   Aisle between row-1 south edge (1.1+1.1=2.2) and row-2 north edge
+    //   (5.2-1.1=4.1): 1.9u walkable. DO NOT reorder 0-7 (saved crop indices).
     this.bedPositions = []
     for (const bz of [-3.9, 1.1]) {
       for (const bx of [-8.7, -2.9, 2.9, 8.7]) {
         this.bedPositions.push(new Vector3(ax + bx, 0, az + bz))
       }
     }
+    for (const bx of [-8.7, -2.9, 2.9, 8.7]) {
+      this.bedPositions.push(new Vector3(ax + bx, 0, az + 5.2))
+    }
+    // bounds: widen maxZ slightly so the player can reach the new 3rd-row beds;
+    // south glass wall is at az+8.0, so az+7.3 keeps 0.7u inside the pane.
     this.bounds = {
       minX: ax - ROOM_W / 2 + 0.55,
       maxX: ax + ROOM_W / 2 - 0.55,
       minZ: az - ROOM_D / 2 + 0.55,
-      maxZ: az + ROOM_D / 2 - 0.3,
+      maxZ: az + ROOM_D / 2 - 0.7,
     }
 
     const bake = (geos: BufferGeometry[], mat: MeshBasicMaterial | MeshStandardMaterial): Mesh => {
@@ -371,7 +389,8 @@ export class GreenhouseInterior {
     const brown = new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#6b4d2e'), true), roughness: 0.9 })
     const wood: BufferGeometry[] = []
     const loam: BufferGeometry[] = []
-    for (const b of this.bedPositions) {
+    // beds 0-7: original two rows — baked into root (unchanged)
+    for (const b of this.bedPositions.slice(0, 8)) {
       const bx = b.x - ax
       const bz = b.z - az
       for (const s of [-1, 1]) {
@@ -383,6 +402,31 @@ export class GreenhouseInterior {
       loam.push(soil)
     }
     bake(loam, new MeshStandardMaterial({ map: toTexture(loamCanvas(rng), true), roughness: 1 }))
+
+    // beds 8-11: 3rd row — baked into wingGroup (hidden until revealWing())
+    // Uses the SAME textures/materials as the original beds; 2 extra draw calls.
+    const wingWoodGeos: BufferGeometry[] = []
+    const wingLoamGeos: BufferGeometry[] = []
+    for (const b of this.bedPositions.slice(8)) {
+      const bx = b.x - ax
+      const bz = b.z - az
+      for (const s of [-1, 1]) {
+        box(wingWoodGeos, 2.3, 0.22, 0.12, bx, 0.11, bz + s * 1.1)
+        box(wingWoodGeos, 0.12, 0.22, 2.32, bx + s * 1.1, 0.11, bz)
+      }
+      const soil = new BoxGeometry(2.1, 0.12, 2.1)
+      soil.translate(bx, 0.06, bz)
+      wingLoamGeos.push(soil)
+    }
+    const wingBakeTo = (geos: BufferGeometry[], mat: MeshBasicMaterial | MeshStandardMaterial): Mesh => {
+      const merged = mergeGeometries(geos)
+      const m = new Mesh(merged ?? new BoxGeometry(0.01, 0.01, 0.01), mat)
+      m.castShadow = false
+      m.receiveShadow = true
+      this.wingGroup.add(m)
+      return m
+    }
+    wingBakeTo(wingLoamGeos, new MeshStandardMaterial({ map: toTexture(loamCanvas(rng), true), roughness: 1 }))
     // potting bench along the west wall + crates + barrels
     box(wood, 0.95, 0.08, 6.4, -hw + 0.78, 0.78, -1.0)
     for (const z of [-4.0, -1.0, 2.0]) for (const s of [-1, 1]) box(wood, 0.08, 0.74, 0.08, -hw + 0.78 + s * 0.38, 0.37, z)
@@ -390,6 +434,7 @@ export class GreenhouseInterior {
     box(wood, 0.5, 0.5, 0.5, -hw + 0.9, 0.25, 5.3, 0.5)
     box(wood, 0.56, 0.56, 0.56, hw - 0.9, 0.28, -hd + 1.2, 0.3)
     bake(wood, brown)
+    wingBakeTo(wingWoodGeos, brown)
 
     const barrels: BufferGeometry[] = []
     for (const [px, pz] of [
@@ -603,6 +648,12 @@ export class GreenhouseInterior {
     this.lampB.intensity = i
     this.lampA.color.lerpColors(this.lampBase, this.lampWarm, this.nightK)
     this.lampB.color.copy(this.lampA.color)
+  }
+
+  /** Reveal the 3rd-row planters (beds 8-11). Idempotent — safe to call at
+   * boot when the upgrade is already owned, and again on purchase. */
+  revealWing(): void {
+    this.wingGroup.visible = true
   }
 
   /** show/hide the set + its lamps (they warm evenings under glass) */
