@@ -136,7 +136,6 @@ import { Grazers } from './world/animals'
 import { buildGreenhouse, buildShop, buildStable } from './world/buildings'
 import { Construction, Letterbox } from './world/cutscene'
 import { DayCycle } from './world/daycycle'
-import { FarmhandView } from './world/Farmhand'
 import { CoopInterior } from './world/coopInterior'
 import { STABLE_ANCHOR, StableInterior } from './world/stableInterior'
 import { FarmhouseInterior } from './world/farmhouseInterior'
@@ -175,7 +174,6 @@ const PLACE_NAMES: Record<PlaceId, string> = {
   stable: 'the Stable',
   greenhouse: 'the Greenhouse',
   tractor: 'the Tractor',
-  farmhand: "the Farmhand's post",
   pen: 'the Sheep Pen',
   field0: 'the Home Field',
   field1: 'the East Meadow field',
@@ -698,7 +696,6 @@ async function boot(): Promise<void> {
     6: 'Big day: the Coop, the Old Pasture deed, a Stable — and Hazel \u{1F434}',
     8: 'The Crossroad Lot is for sale — a real Farm Shop across the road \u{1F3EA}',
     9: 'The Greenhouse unlocks \u{1F33F}',
-    10: 'A farmhand can join you \u{1F9D1}‍\u{1F33E}',
     12: "The coop's east wing — room for three more hens \u{1F414}",
     13: "Another coop wing, and Old Tom's farmstead is up for sale \u{1FAB4}",
     15: 'The Birch Farmstead — the last of the open land \u{1F333}',
@@ -1537,7 +1534,6 @@ async function boot(): Promise<void> {
   }
   const penRect0 = penRect(state)
   const GOAT_RECT = { x0: penRect0.x0 + 0.7, z0: penRect0.z0 + 0.7, x1: penRect0.x1 - 0.7, z1: penRect0.z1 - 0.7 }
-  let farmhand: FarmhandView | null = null
   let coopHens: CoopHens | null = null
   let coopGroup: Group | null = null
   const coopPlace = placeOf(state, 'coop')
@@ -1639,17 +1635,6 @@ async function boot(): Promise<void> {
           plots.push(mkPlot(ghInterior.bedPositions[i].x, ghInterior.bedPositions[i].z, true))
           lastGlow.push('none')
         }
-    } else if (def.id === 'farmhand') {
-      const fh = placeOf(state, 'farmhand')
-      farmhand = new FarmhandView(assets, scene, new Vector3(fh.x, 0, fh.z))
-      // he harvests AND resows wheat behind himself — a self-running wheat
-      // loop is what a thousand coins of staff should feel like
-      farmhand.onHarvest = (i) => {
-        doHarvest(i)
-        if (!game.isGreenhouse(i) && !game.plotAt(i)?.crop && game.plant(i, 'wheat')) {
-          plots[i]?.setCrop('wheat', 0, true)
-        }
-      }
     }
   }
   for (const { def } of game.projectBoard()) if (game.hasProject(def.id)) applyProject(def, false)
@@ -2240,11 +2225,9 @@ async function boot(): Promise<void> {
     } else if (id === 'shop') {
       marketToShop(p)
       reflowQueue()
-    } else if (id === 'farmhand') {
-      farmhand?.setHome(new Vector3(p.x, 0, p.z))
     } else if (fieldTierOf(id) >= 0) {
       // the slab's plots ride along — same indices, new centers (the crops,
-      // their timers, the farmhand's rounds and FX anchors all follow)
+      // their timers and FX anchors all follow)
       const t = fieldTierOf(id)
       let start = 0
       for (let i = 0; i < t; i++) start += TIERS[i].plots.length
@@ -2286,7 +2269,6 @@ async function boot(): Promise<void> {
   const canLift = (id: PlaceId): boolean => {
     if (carry.carrying || carry.settling || fenceEditor.active) return false
     if (sleepActive || construction.active || fetchCine || roomBusy || room !== null || hud.modalOpen) return false
-    if (id === 'farmhand') return false // he's a PERSON — he walks himself
     // fields stay where they're laid out — carrying them dropped the player into
     // "something little lives there" dead-ends near the home-yard landmarks, with
     // no clear spot (owner's call: lock fields, keep buildings movable)
@@ -2796,16 +2778,6 @@ async function boot(): Promise<void> {
     // close the scene (the normal ending is scripted in onFetchDone)
     if (fetchCine && !cineEnding && !dog.fetching) endFetchCine()
     coopHens?.update(dt)
-    // the farmhand clocks off during cinematics (his coin fountains were
-    // landing on top of the goodnight scene)
-    if (farmhand && !sleepActive && !construction.active) {
-      // the glasshouse is off his rounds — its beds live on the off-world set
-      const info = plots.map((v, i) => {
-        const c = game.plotAt(i)?.crop
-        return { center: v.center, ready: !!c && c.remaining <= 0 && !game.isGreenhouse(i) }
-      })
-      farmhand.update(dt, info)
-    }
 
     // sheep slip out while you wait on crops (post-FTUE, one mission at a
     // time). Framed as an INVITATION, not an alarm (cozy rule: no needy
@@ -3608,7 +3580,6 @@ async function boot(): Promise<void> {
     dog.frame(dt)
     flock.frame(dt, player.pos)
     grazers.frame(dt, player.pos)
-    farmhand?.frame(dt)
     coopHens?.frame(dt, t)
     construction.frame(dt)
     dayCycle.update(dt)

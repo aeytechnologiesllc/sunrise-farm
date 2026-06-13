@@ -149,8 +149,8 @@ export class PlotView {
     }
   }
 
-  /** the field slab moved: the plot rides along (center drives proximity,
-   * FX anchors, the farmhand's rounds — all of it follows) */
+  /** the field slab moved: the plot rides along (center drives proximity
+   * and FX anchors — all of it follows) */
   moveTo(v: Vector3): void {
     this.center.copy(v)
     this.group.position.copy(v)

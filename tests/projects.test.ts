@@ -67,7 +67,6 @@ describe('project ladder', () => {
       stable: 650,
       shop: 800,
       greenhouse: 1200,
-      farmhand: 1500,
     }
     for (const p of PROJECTS) {
       const old = legacy[p.id]
@@ -187,7 +186,6 @@ describe('project ladder', () => {
       'goats',
       'coop',
       'greenhouse',
-      'farmhand',
     ])
 
     const atTier3 = availableProjects(gate({ expansion: 3 }))
@@ -199,7 +197,6 @@ describe('project ladder', () => {
       'stable',
       'horse',
       'greenhouse',
-      'farmhand',
     ])
 
     const atTier4 = availableProjects(gate({ expansion: 4 }))
@@ -211,6 +208,6 @@ describe('project ladder', () => {
         projects: { stand: true, sheep: true, goats: true, coop: true, shop: true },
       }),
     )
-    expect(owned.map((p) => p.id)).toEqual(['stable', 'horse', 'greenhouse', 'farmhand'])
+    expect(owned.map((p) => p.id)).toEqual(['stable', 'horse', 'greenhouse'])
   })
 })

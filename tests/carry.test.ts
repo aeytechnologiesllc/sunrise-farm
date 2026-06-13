@@ -7,7 +7,7 @@ function host(): LayoutHost {
   return {
     layout: {},
     expansion: 4,
-    projects: { shop: true, coop: true, stable: true, horse: true, greenhouse: true, farmhand: true, sheep: true, goats: true },
+    projects: { shop: true, coop: true, stable: true, horse: true, greenhouse: true, sheep: true, goats: true },
     produce: { deliveryT: 0 },
   }
 }
@@ -42,7 +42,7 @@ describe('carry math', () => {
 
   it('every movable has at least a handful of legal grid spots on the full farm', () => {
     const h = host()
-    const ids = ['coop', 'tractor', 'greenhouse', 'farmhand', 'stable'] as const
+    const ids = ['coop', 'tractor', 'greenhouse', 'stable'] as const
     for (const id of ids) {
       let count = 0
       for (let x = -14; x <= 20; x += 1) {

@@ -33,7 +33,6 @@ export type PlaceId =
   | 'stable'
   | 'greenhouse'
   | 'tractor'
-  | 'farmhand'
   | 'pen'
   | 'field0'
   | 'field1'
@@ -83,7 +82,6 @@ export const DEFAULT_PLACES: Record<PlaceId, Place> = {
   stable: siteOf('stable'),
   greenhouse: siteOf('greenhouse'),
   tractor: { x: -7.2, z: -6.6, yaw: -0.35 },
-  farmhand: siteOf('farmhand'),
   // the authored pen center — its rect/gate derive in penRect()
   pen: { x: (PEN.x0 + PEN.x1) / 2, z: (PEN.z0 + PEN.z1) / 2, yaw: 0 },
   // each tier's soil slab, centered on its authored rect
@@ -98,8 +96,8 @@ export const DEFAULT_PLACES: Record<PlaceId, Place> = {
 
 export const PLACE_IDS = Object.keys(DEFAULT_PLACES) as PlaceId[]
 
-/** footprints for placement math (PROJECTS for buildings; the tractor and
- * the farmhand's little post get sensible bodies) */
+/** footprints for placement math (PROJECTS for buildings; the tractor gets
+ * a sensible body) */
 export function footprintOf(id: PlaceId): { w: number; d: number } {
   if (id === 'tractor') return { w: 2.6, d: 1.6 }
   if (id === 'pen') return { w: PEN.x1 - PEN.x0, d: PEN.z1 - PEN.z0 }
@@ -222,7 +220,7 @@ export function deliveryRoute(s: LayoutHost): Array<[number, number]> {
 export function pointInBuilding(s: LayoutHost, x: number, z: number, skip: PlaceId | null = null): boolean {
   if (obbContains(HOME_OBB, x, z)) return true
   for (const id of PLACE_IDS) {
-    if (id === skip || id === 'pen' || fieldTierOf(id) >= 0 || id === 'farmhand') continue
+    if (id === skip || id === 'pen' || fieldTierOf(id) >= 0) continue
     const exists =
       id === 'tractor'
         ? s.expansion >= 2

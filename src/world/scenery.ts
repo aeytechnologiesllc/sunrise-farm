@@ -184,7 +184,7 @@ export function groundClear(x: number, z: number): boolean {
   // every building site — at its CURRENT layout position — stays clear
   // (owner's rule: the ground is ready before the crew arrives)
   for (const id of PLACE_IDS) {
-    if (id === 'tractor' || id === 'farmhand') continue // they stand ON the lawn
+    if (id === 'tractor') continue // it stands ON the lawn
     const pl = LV[id]
     const fp = footprintOf(id)
     if (

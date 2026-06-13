@@ -113,4 +113,28 @@ describe('migration', () => {
     s.hazel = { hearts: 5, lastPetDay: 'day-3', lastFedDay: 'day-2' }
     expect(deserialize(serialize(s))!.hazel).toEqual({ hearts: 5, lastPetDay: 'day-3', lastFedDay: 'day-2' })
   })
+
+  it('retires the farmhand: refunds 1000c exactly once, drops the flag + post override', () => {
+    const raw = JSON.parse(serialize(initialState(12))) as Record<string, unknown>
+    // an old save that hired the farmhand for 1000c and parked his post
+    raw.coins = 50
+    raw.projects = { coop: true, farmhand: true }
+    raw.layout = { farmhand: { x: -0.5, z: 5.2, yaw: 0 } }
+    delete raw.farmhandRetired
+    const back = deserialize(JSON.stringify(raw))!
+    expect(back.coins).toBe(1050) // 50 + 1000 refund
+    expect(back.projects.farmhand).toBeUndefined()
+    expect(back.farmhandRetired).toBe(true)
+    expect((back.layout as Record<string, unknown>).farmhand).toBeUndefined()
+    // idempotent: loading the refunded save again does NOT pay twice
+    expect(deserialize(serialize(back))!.coins).toBe(1050)
+  })
+
+  it('a save that never hired the farmhand keeps its coins on retirement', () => {
+    const raw = JSON.parse(serialize(initialState(12))) as Record<string, unknown>
+    raw.coins = 200
+    raw.projects = { coop: true }
+    delete raw.farmhandRetired
+    expect(deserialize(JSON.stringify(raw))!.coins).toBe(200)
+  })
 })

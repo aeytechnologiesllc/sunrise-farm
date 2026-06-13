@@ -14,7 +14,6 @@ export type ProjectId =
   | 'horse'
   | 'shop'
   | 'greenhouse'
-  | 'farmhand'
 
 export interface ProjectDef {
   id: ProjectId
@@ -34,7 +33,7 @@ export interface ProjectDef {
   /** building facing */
   yaw: number
   footprint: { w: number; d: number }
-  kind: 'building' | 'animals' | 'staff'
+  kind: 'building' | 'animals'
   /** one plain-spoken line: what this purchase DOES for the player — shown
    * on build-site signs and completion banners */
   earns: string
@@ -151,19 +150,6 @@ export const PROJECTS: ProjectDef[] = [
     footprint: { w: 4.8, d: 3.4 },
     kind: 'building',
     earns: 'A walk-in glasshouse: rare, pricier crops on beds that grow 40 percent faster.',
-  },
-  {
-    id: 'farmhand',
-    name: 'Hire a Farmhand',
-    flavor: 'You are not farming alone anymore.',
-    cost: 1000,
-    level: 10,
-    requiresExpansion: 2,
-    site: [-0.5, 5.2],
-    yaw: 0,
-    footprint: { w: 1.2, d: 1.2 },
-    kind: 'staff',
-    earns: 'A helper who harvests ripe crops AND resows wheat behind himself.',
   },
 ]
 

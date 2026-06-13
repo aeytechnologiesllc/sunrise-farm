@@ -26,7 +26,7 @@ function fullHost(over: Partial<LayoutHost> = {}): LayoutHost {
   return {
     layout: {},
     expansion: 4,
-    projects: { stand: false, shop: true, coop: true, stable: true, horse: true, greenhouse: true, farmhand: true, sheep: true, goats: true },
+    projects: { stand: false, shop: true, coop: true, stable: true, horse: true, greenhouse: true, sheep: true, goats: true },
     produce: { deliveryT: 0 },
     ...over,
   }
@@ -40,7 +40,6 @@ describe('defaults pin (the refactor must be invisible)', () => {
     expect(DEFAULT_PLACES.stable).toEqual({ x: -12.3, z: -0.6, yaw: 1.35 })
     expect(DEFAULT_PLACES.greenhouse).toEqual({ x: -5.2, z: -2.0, yaw: 0.1 })
     expect(DEFAULT_PLACES.tractor).toEqual({ x: -7.2, z: -6.6, yaw: -0.35 })
-    expect(DEFAULT_PLACES.farmhand).toEqual({ x: -0.5, z: 5.2, yaw: 0 })
   })
 
   it('footprints come from the project ladder', () => {

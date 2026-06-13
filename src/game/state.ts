@@ -67,6 +67,9 @@ export interface GameState {
   /** save knows Hazel is a SEPARATE purchase from the stable (pre-split
    * saves get her grandfathered exactly once — their stable included her) */
   horseSplit: boolean
+  /** the hired-farmhand feature was retired; saves that bought him get the
+   * 1000c refunded exactly once (flag is true from birth on new saves) */
+  farmhandRetired: boolean
   /** which day of farm life this is (sleep ritual advances it) */
   day: number
   /** totals at dawn — the goodnight scene shows today's tally against these */
@@ -153,6 +156,7 @@ export function initialState(seed: number): GameState {
     projects: {},
     ladder: true,
     horseSplit: true,
+    farmhandRetired: true,
     day: 1,
     dayStart: { coins: 0, harvests: 0, eggs: 0 },
     dayPhase: 0.32,
@@ -338,6 +342,16 @@ export function deserialize(json: string | null): GameState | null {
       s.horseSplit = true
       if (s.projects.stable) s.projects.horse = true
     }
+    // the farmhand hire was retired — refund the 1000c to anyone who bought
+    // him exactly once, drop the dead project flag, and strip his post override
+    if (!s.farmhandRetired) {
+      s.farmhandRetired = true
+      if (s.projects.farmhand) {
+        s.coins += 1000
+        delete s.projects.farmhand
+      }
+    }
+    delete (s.layout as Record<string, unknown>).farmhand
     s.day ??= 1
     // older saves never tracked a dawn ledger — start counting from "now"
     s.dayStart ??= { coins: s.coins, harvests: s.harvests, eggs: s.chicken?.eggsLaid ?? 0 }

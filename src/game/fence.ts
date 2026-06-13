@@ -9,8 +9,8 @@
  * Gates are edges too — rendered as an opening, crossable by everyone.
  *
  * Who fences stop: the PLAYER (and, from Phase 3, the sheep). Customers,
- * Hazel, Rex and the farmhand are polite neighbors — a guest stuck behind
- * fence art is a bug, not gameplay. Deeds gate where fences may go. */
+ * Hazel and Rex are polite neighbors — a guest stuck behind fence art is a
+ * bug, not gameplay. Deeds gate where fences may go. */
 import { fenceFor, gatesFor, type GateDef } from './expansion'
 
 /** encode range: cx, cz in [-64, 191] — far beyond the world bounds */

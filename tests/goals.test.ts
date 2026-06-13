@@ -32,7 +32,6 @@ describe('bridge case — stable blocked by missing Old Pasture deed', () => {
       s.projects.goats = true
       s.projects.coop = true
       // greenhouse (requiresExpansion 2, level 9) → level-blocked, won't fire as #1
-      // farmhand (requiresExpansion 2, level 10) → level-blocked
       // stable: requiresExpansion 3, level 6 — level met, expansion NOT met → bridge
     })
   }
@@ -238,7 +237,6 @@ describe('priority 8: affordable upgrade', () => {
       x.projects.horse = true
       x.projects.shop = true
       x.projects.greenhouse = true
-      x.projects.farmhand = true
       // All town acts built
       x.town.built.bakery = true
       x.town.built.cottages = true
@@ -278,7 +276,6 @@ describe('priority 9: affordable fence skin', () => {
       x.projects.horse = true
       x.projects.shop = true
       x.projects.greenhouse = true
-      x.projects.farmhand = true
       x.town.built.bakery = true
       x.town.built.cottages = true
       x.town.built.school = true
@@ -319,7 +316,6 @@ describe('priority 10: affordable decor', () => {
       x.projects.horse = true
       x.projects.shop = true
       x.projects.greenhouse = true
-      x.projects.farmhand = true
       x.town.built.bakery = true
       x.town.built.cottages = true
       x.town.built.school = true
@@ -365,7 +361,6 @@ describe('whale save — nextGoal is never null', () => {
       x.projects.horse = true
       x.projects.shop = true
       x.projects.greenhouse = true
-      x.projects.farmhand = true
       // All town acts
       x.town.built.bakery = true
       x.town.built.cottages = true
