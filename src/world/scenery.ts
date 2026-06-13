@@ -786,6 +786,8 @@ export function buildFenceEdges(
         r.translate(mx, y, mz)
         fenceGeos.push(r)
       }
+      picket.dispose() // templates are cloned per edge — free them after use
+      rail.dispose()
 
     } else if (style === 'picket') {
       // bright-white, taller, four narrower pickets per edge — pointed tops
@@ -932,13 +934,21 @@ export function buildFenceEdges(
         rootMesh = gm
       }
     }
+    for (const g of fenceGeos) g.dispose() // source primitives are spent post-merge
+    for (const g of gateGeos) g.dispose()
+    gatePost.dispose()
     return rootMesh
   }
 
   // all other styles: merge everything into 1 draw call
   const allGeos = [...fenceGeos, ...gateGeos]
-  if (allGeos.length === 0) return null
+  if (allGeos.length === 0) {
+    gatePost.dispose()
+    return null
+  }
   const merged = mergeGeometries(allGeos)
+  for (const g of allGeos) g.dispose() // free the spent source geometries
+  gatePost.dispose()
   if (!merged) return null
   const mesh = new Mesh(merged, mat)
   mesh.castShadow = true

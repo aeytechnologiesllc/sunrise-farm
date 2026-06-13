@@ -59,11 +59,15 @@ export function goodBaseValue(good: ContractGood): number {
 function eligibleGoods(s: GameState): ContractGood[] {
   const out: ContractGood[] = []
 
-  // crops: gate on unlockLevel
+  // crops: gate on unlockLevel — AND, for the glasshouse-only crops, on actually
+  // owning the greenhouse. Otherwise a level-9 player without the greenhouse gets
+  // "deliver 6 tomatoes" orders they physically cannot fulfil (dead slots).
   const cropGoods: ContractGood[] = ['wheat', 'corn', 'tomato', 'pepper', 'eggplant']
   for (const g of cropGoods) {
     const cropKey = g as keyof typeof CROPS
-    if (CROPS[cropKey].unlockLevel <= s.level) out.push(g)
+    if (CROPS[cropKey].unlockLevel > s.level) continue
+    if (CROPS[cropKey].greenhouse && s.projects.greenhouse !== true) continue
+    out.push(g)
   }
 
   // egg: coop project OR solo hen has arrived

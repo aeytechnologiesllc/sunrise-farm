@@ -262,12 +262,24 @@ export class Game {
     // re-roll only when the DAY turns (or the slot count changed, or an old save
     // has no frozen list yet) — never on a mid-day level-up, which would reshuffle
     // the goods under progress already banked into a slot
-    if (s.contracts.day !== s.day || s.contracts.goods.length !== slots) {
+    if (s.contracts.day !== s.day) {
+      // a new day turns the whole board over (fresh orders, fresh progress)
       s.contracts = {
         day: s.day,
         goods: rollContracts(s.chicken.seed, s.day, s),
         progress: new Array(slots).fill(0),
         done: new Array(slots).fill(false),
+      }
+    } else if (s.contracts.goods.length < slots) {
+      // the Station added a slot mid-day (or an old save had no frozen board):
+      // APPEND the new slot(s) instead of re-rolling, so today's banked progress
+      // survives. The first N goods are the same deterministic roll regardless
+      // of total slot count, so the existing orders are untouched.
+      const full = rollContracts(s.chicken.seed, s.day, s)
+      for (let i = s.contracts.goods.length; i < slots; i++) {
+        s.contracts.goods.push(full[i])
+        s.contracts.progress.push(0)
+        s.contracts.done.push(false)
       }
     }
     if (s.town.built.cottages === true) {
@@ -710,6 +722,15 @@ export class Game {
     this.state.coins -= def.coins
     this.state.wheat -= def.wheat
     this.state.town.built[id] = true
+    // the Festival Square pays its 1.5x from THIS week, not next: the festival
+    // order is frozen for the week, so apply the bonus to the live order in
+    // place (preserving goods + progress) instead of waiting for a re-roll
+    if (id === 'square') {
+      const fest = this.state.festival
+      if (!fest.done && fest.order.goods.length > 0) {
+        fest.order.payout = Math.round(fest.order.payout * 1.5)
+      }
+    }
     this.emit('coins', { total: this.state.coins, delta: -def.coins })
     this.grantXp(XP_GAIN.expand)
     this.emit('townBuilt', { id })
@@ -919,5 +940,13 @@ export class Game {
 
   private syncRng(): void {
     this.state.rng = this.rng.state()
+  }
+
+  /** a deterministic 0..1 draw from the save's seeded stream — for any sim
+   * value that must not use the non-seeded JS RNG (e.g. the saved herd timer) */
+  rollFloat(): number {
+    const v = this.rng.next()
+    this.syncRng()
+    return v
   }
 }

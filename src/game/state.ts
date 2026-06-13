@@ -308,6 +308,10 @@ export function deserialize(json: string | null): GameState | null {
     s.town.lastCafeDay ??= null
     s.town.lastBusDay ??= null
     s.town.lastTrainDay ??= null
+    // the bus latch grew an -am/-pm suffix when a second daily run was added;
+    // an old single-run value ("day-7") matches neither window key, so clear it
+    // rather than let the morning bus double-fire on the migrated day
+    if (s.town.lastBusDay && /^day-\d+$/.test(s.town.lastBusDay)) s.town.lastBusDay = null
     // henhouse migration: the founding four get boxes; a pending batch from
     // the OLD single-latch coop becomes ready boxes (nobody loses eggs)
     if (!s.coopFlock) {

@@ -17,7 +17,7 @@
  * 12. Order board (s.town.delivered >= 1) — evergreen endgame goal
  * 13. Gentle harvest nudge ('🌾 Tend your farm') — compass never goes dark */
 
-import { contractSlots, rollContracts } from './contracts'
+import { contractSlots } from './contracts'
 import { CROPS } from './economy'
 import { nextTier, TIERS } from './expansion'
 import { DECOR, DECOR_MAX } from './decor'
@@ -113,7 +113,10 @@ export function nextGoal(s: GameState): Goal | null {
       stableDef &&
       !s.projects.stable &&
       s.level >= stableDef.level &&
-      s.expansion < stableDef.requiresExpansion
+      s.expansion < stableDef.requiresExpansion &&
+      // only when the NEXT deed is the one that unblocks the stable — otherwise
+      // we'd point at a deed the player can't buy yet (deeds are sequential)
+      s.expansion + 1 === stableDef.requiresExpansion
     ) {
       // find the deed tier that unblocks the stable
       const tierIndex = stableDef.requiresExpansion
@@ -323,10 +326,11 @@ export function nextGoal(s: GameState): Goal | null {
   {
     if (s.town.delivered >= 1) {
       const slots = contractSlots(s)
-      const list = rollContracts(s.chicken.seed, s.day, s)
+      // read the FROZEN daily board, not a fresh roll — nextGoal runs ~20Hz and
+      // rollContracts allocates an Rng + arrays every call (hot-loop law)
       let open = 0
       for (let i = 0; i < slots; i++) if (!(s.contracts.done[i] ?? false)) open++
-      if (open > 0 && list.length > 0) {
+      if (open > 0 && s.contracts.goods.length > 0) {
         return {
           kind: 'contract',
           id: 'orders',

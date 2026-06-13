@@ -99,6 +99,12 @@ function fuse(
 ): Mesh | null {
   const parts = geos.map((g) => (g.index ? g.toNonIndexed() : g))
   const merged = mergeGeometries(parts)
+  // free the source geometries (incl. the toNonIndexed copies) — they are spent
+  // once merged; town stages build once at boot but the geos still strand RAM
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] !== geos[i]) parts[i].dispose() // the toNonIndexed copy
+    geos[i].dispose()
+  }
   if (!merged) return null
   const m = new Mesh(merged, material)
   m.castShadow = cast
@@ -910,6 +916,8 @@ export class TownSet {
 
   // shared materials (textures painted once, reused across acts)
   private readonly woodMat: MeshStandardMaterial
+  /** cold rail/canopy metal — shared by the station AND the train */
+  private readonly ironMat: MeshStandardMaterial
   private readonly whiteMat: MeshStandardMaterial
   private readonly brickMat: MeshStandardMaterial
   private readonly stripeMat: MeshStandardMaterial
@@ -949,6 +957,7 @@ export class TownSet {
     const rng = mulberry32(0x70b11)
 
     this.woodMat = new MeshStandardMaterial({ map: toTexture(woodCanvas(rng, '#6f5234'), true), roughness: 0.95 })
+    this.ironMat = new MeshStandardMaterial({ map: toTexture(ironCanvas(rng)), roughness: 0.6, metalness: 0.35 })
     this.whiteMat = new MeshStandardMaterial({ map: toTexture(whitePaintCanvas(rng), true), roughness: 0.6 })
     this.brickMat = new MeshStandardMaterial({ map: toTexture(brickCanvas(rng), true), roughness: 0.92 })
     this.stripeMat = new MeshStandardMaterial({ map: toTexture(stripesCanvas(rng)), roughness: 0.9, side: DoubleSide })
@@ -2253,7 +2262,7 @@ export class TownSet {
       roughness: 0.95,
     })
     // new: dark iron for rails and canopy posts
-    const ironMat = new MeshStandardMaterial({ map: toTexture(ironCanvas(rng)), roughness: 0.6, metalness: 0.35 })
+    const ironMat = this.ironMat // shared station+train metal (built once in ctor)
     const signMat = new MeshStandardMaterial({ map: toTexture(signAtlasCanvas(rng)), roughness: 0.85 })
 
     const plaster: BufferGeometry[] = []
@@ -2395,7 +2404,7 @@ export class TownSet {
       map: toTexture(clapboardCanvas(rng, '#2e3638', 'rgba(14,16,18,0.4)'), true),
       roughness: 0.75,
     })
-    const ironMat = new MeshStandardMaterial({ map: toTexture(ironCanvas(rng)), roughness: 0.6, metalness: 0.35 })
+    const ironMat = this.ironMat // shared station+train metal (built once in ctor)
 
     const body: BufferGeometry[] = []
     const metal: BufferGeometry[] = []

@@ -151,6 +151,8 @@ export class FollowCamera {
     this.whiskerR = null
     this.occlClamp = Number.POSITIVE_INFINITY
     this.clearT = 0
+    this.kTight = 0 // the old shot geometry is invalid after a jump — probe fresh
+    this.kCollapse = 0
   }
 
   /** right-stick orbit (called per frame with the stick vector).

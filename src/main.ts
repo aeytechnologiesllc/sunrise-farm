@@ -41,7 +41,7 @@ import {
   type GoodKind,
 } from './game/economy'
 import { Customers } from './game/customers'
-import { DECOR, decorDef, type DecorId } from './game/decor'
+import { DECOR, decorDef, DECOR_MAX, type DecorId } from './game/decor'
 import { blockByEdges, encodeEdge, expandRing, FENCE_STYLES, nearestEdge, toSets, toState } from './game/fence'
 import { Game, type Suggestion } from './game/Game'
 import {
@@ -104,7 +104,7 @@ import {
 } from './world/scenery'
 import { BARN_AT, BARN_ROT } from './game/geo'
 import { keeperName, tomorrowLines } from './game/tomorrow'
-import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS } from './game/town'
+import { busWindow, busWindowPm, nextTownAct, recessNow, TOWN_ACTS, woolMult } from './game/town'
 import { nextGoal } from './game/goals'
 import {
   availableUpgrades,
@@ -626,7 +626,7 @@ async function boot(): Promise<void> {
       title: d.name,
       sub: state.level < d.level ? `unlocks at level ${d.level}` : d.blurb,
       price: `${d.cost}c`,
-      locked: state.level < d.level || state.coins < d.cost,
+      locked: state.level < d.level || state.coins < d.cost || state.decor.length >= DECOR_MAX,
     }))
     const styleCards = FENCE_STYLES.map((s) => {
       const owned = game.ownedFenceStyles().includes(s.id)
@@ -648,7 +648,8 @@ async function boot(): Promise<void> {
         const id = cardId.slice(2) as DecorId
         const d = decorDef(id)
         if (state.level < d.level) return hud.floatText(hud.coinPillPos(), `level ${d.level} \u{1F512}`)
-        if (state.decor.length >= 24) return hud.floatText(hud.coinPillPos(), 'the farm is full')
+        if (state.decor.length >= DECOR_MAX)
+          return hud.floatText(hud.coinPillPos(), 'the farm is full — pick one up to re-arrange')
         if (state.coins < d.cost) return hud.floatText(hud.coinPillPos(), 'not enough coins')
         hud.hideCardPanel()
         startPlacingDecor(id)
@@ -702,9 +703,11 @@ async function boot(): Promise<void> {
    * crew's reveal (it lands ~1.2s after done(), the payday-banking pattern) */
   let queuedLevelUp: (() => void) | null = null
   const levelUpBeat = (e: { level: number; unlocked: CropKind[] }): void => {
-    const sub = e.unlocked.length
-      ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!`
-      : (LEVEL_NEWS[e.level] ?? 'The whole town hears the news \u{1F4EF}')
+    // show BOTH the building/town news AND any crop unlock — the crop text used
+    // to mask the more important pointer (e.g. lvl 2 "the roadside stand is on sale")
+    const news = LEVEL_NEWS[e.level]
+    const crops = e.unlocked.length ? `${e.unlocked.map((k) => CROPS[k].label).join(', ')} unlocked!` : ''
+    const sub = news && crops ? `${news} \u{2014} ${crops}` : news || crops || 'The whole town hears the news \u{1F4EF}'
     hud.showBanner(`Level ${e.level}!`, sub)
     music.duck()
     sfx.fanfare()
@@ -797,7 +800,7 @@ async function boot(): Promise<void> {
   })
   game.on('festivalDone', (e) => {
     if (!sleepActive && !construction.active && !hud.modalOpen) {
-      hud.showBanner('Festival ribbon! \u{1F380}', `the whole town celebrates \u{2014} +${e.payout}c`)
+      hud.showBanner(`Festival ribbon #${e.ribbons} \u{1F380}`, `the whole town celebrates \u{2014} +${e.payout}c`)
       sfx.fanfare()
       rareSlowMo()
     }
@@ -976,7 +979,7 @@ async function boot(): Promise<void> {
   // mission cadence survives reload (no more refresh-to-farm-sheep)
   let herdTimer = state.timers.herd > 0
     ? state.timers.herd
-    : HERD_FIRST_DELAY[0] + Math.random() * (HERD_FIRST_DELAY[1] - HERD_FIRST_DELAY[0])
+    : HERD_FIRST_DELAY[0] + game.rollFloat() * (HERD_FIRST_DELAY[1] - HERD_FIRST_DELAY[0])
   let flankTick = 0
   let lastBaa = -10
   flock.onBaa = (at) => {
@@ -999,7 +1002,7 @@ async function boot(): Promise<void> {
     fountainFrom(PEN_GATE.clone().setY(0.8), res.coins, false)
     heartBurst(scene, dog.group.position.clone().setY(0.7))
     rareSlowMo()
-    herdTimer = HERD_COOLDOWN[0] + Math.random() * (HERD_COOLDOWN[1] - HERD_COOLDOWN[0])
+    herdTimer = HERD_COOLDOWN[0] + game.rollFloat() * (HERD_COOLDOWN[1] - HERD_COOLDOWN[0])
     saveNow()
   }
 
@@ -1328,6 +1331,7 @@ async function boot(): Promise<void> {
       dayCycle.startNewDay()
       game.sleep()
       grass.rebuild()
+      decorSet.refresh(state.decor, state.day) // saplings grow with the new day
     }, undefined, 15.4)
     // dawn washes the stars away
     tl.to(nightDial, { k: 0, duration: 2.8, ease: 'sine.inOut', onUpdate: applyNight }, 15.8)
@@ -1999,6 +2003,8 @@ async function boot(): Promise<void> {
     ride: false,
     /** at the Farm Shop with the catalog open to browse decor + fence skins */
     catalog: false,
+    /** standing on a placed decoration — can pick it up to re-arrange / free a slot */
+    decor: false,
   }
   /** Hazel's stall gate + muzzle anchors (the stable hall is a fixed set) */
   const STALL_GATE = STABLE_ANCHOR.clone().add(new Vector3(-1.2, 0, -2.6))
@@ -2411,7 +2417,7 @@ async function boot(): Promise<void> {
     touch()
     // belt-and-braces: a stale button can never start a second scene
     // (roomBusy: nor act through the door-transition's dip to black)
-    if (sleepActive || construction.active || roomBusy) return
+    if (sleepActive || construction.active || roomBusy || fetchCine) return
     if (id === 'setdown') setDown()
     else if (id === 'carryback') cancelCarry()
     else if (id === 'enterroom' && near.roomDoor !== null) throughDoor(near.roomDoor, true)
@@ -2426,6 +2432,14 @@ async function boot(): Promise<void> {
     else if (id === 'ride' && near.ride) mountHazel()
     else if (id === 'hopoff' && riding) dismountHazel()
     else if (id === 'catalog' && near.catalog) openCatalog()
+    else if (id === 'decorpick' && near.decor) {
+      // remove the nearest placed decoration so the player can re-arrange or
+      // free a slot (no refund — decorChanged refreshes the world)
+      if (game.removeDecorNear(player.pos.x, player.pos.z, 1.3)) {
+        sfx.pop()
+        hud.floatText(cam.screenPos(player.pos.clone().setY(0.6)), 'picked up \u{1F33C}')
+      }
+    }
     else if (id === 'decorplace' && placingDecor) commitDecor()
     else if (id === 'decorcancel') cancelDecorPlace()
     else if (id === 'upgrade' && near.upgrade) {
@@ -2923,6 +2937,11 @@ async function boot(): Promise<void> {
         !riding && canRideHazel(state) && state.produce.deliveryT <= 0 && p.distanceTo(PADDOCK_CENTER) < 3.6
       near.catalog =
         !placingDecor && !riding && game.hasProject('shop') && MARKET.atShop && p.distanceTo(MARKET.pos) < 3.4
+      near.decor =
+        !placingDecor &&
+        !riding &&
+        !carry.carrying &&
+        state.decor.some((d) => (d.x - p.x) ** 2 + (d.z - p.z) ** 2 < 1.69)
       near.project = null
       let signD = 2.6
       for (const [id, s] of projectSigns) {
@@ -2996,7 +3015,7 @@ async function boot(): Promise<void> {
       near.fence = nearestEdge(fences, p.x, p.z, 3.0)
       // nearest building you could pick up (fallback button + discoverability)
       near.movable = null
-      if (!carry.carrying && !carry.settling) {
+      if (!carry.carrying && !carry.settling && !riding) {
         let md = 3.4
         for (const id of PLACE_IDS) {
           if (!canLift(id)) continue
@@ -3171,7 +3190,7 @@ async function boot(): Promise<void> {
           actions.push({
             id: 'wing',
             emoji: '\u{1F528}',
-            label: tier === 0 ? 'Open the east wing' : 'Open the long wing',
+            label: tier === 0 ? 'Open the east wing' : tier === 1 ? 'Open the long wing' : 'Open the Long Roost',
             sub:
               ws === 'ok'
                 ? `${WING_COST[tier]}c — room for ${HEN_CAPACITY[tier + 1]} hens`
@@ -3309,7 +3328,7 @@ async function boot(): Promise<void> {
           id: 'shear',
           emoji: '\u{2702}\u{FE0F}',
           label: 'Shear the flock',
-          sub: `${flock.sheep.length} sheep \u{2192} ${flock.sheep.length * WOOL_COIN_PER_SHEEP}c`,
+          sub: `${flock.sheep.length} sheep \u{2192} ${Math.round(flock.sheep.length * WOOL_COIN_PER_SHEEP * woolMult(state))}c`,
         })
       }
       if (near.coop && game.coopReadyCount() > 0) {
@@ -3337,7 +3356,7 @@ async function boot(): Promise<void> {
             label: 'Send Hazel to town',
             sub:
               ds === 'ok'
-                ? `feed 1 \u{1F33E} \u{2192} 26-42c \u{B7} ${Math.round(DELIVERY_RUN_TIME)}s trip`
+                ? `feed 1 \u{1F33E} \u{2192} 26-50c \u{B7} ${Math.round(DELIVERY_RUN_TIME)}s trip`
                 : ds === 'feed'
                   ? 'needs 1 wheat to feed her'
                   : ds === 'out'
@@ -3352,6 +3371,9 @@ async function boot(): Promise<void> {
       }
       if (near.catalog) {
         actions.push({ id: 'catalog', emoji: '\u{1F380}', label: 'The Catalog', sub: 'decorations & fence skins' })
+      }
+      if (near.decor) {
+        actions.push({ id: 'decorpick', emoji: '\u{1F91A}', label: 'Pick it up', sub: 're-arrange or free a slot' })
       }
       if (near.dog && !dog.fetching && fetchCool <= 0) {
         actions.push({ id: 'stick', emoji: '\u{1FAB5}', label: 'Throw the stick', sub: 'Rex loves this' })

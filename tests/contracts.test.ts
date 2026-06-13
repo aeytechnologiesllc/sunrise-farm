@@ -25,7 +25,9 @@ function richSave(): GameState {
   s.projects.coop = true
   s.projects.sheep = true
   s.projects.goats = true
-  // greenhouse crops unlock at 9-11, level 30 clears all
+  // greenhouse crops unlock at 9-11 AND require owning the greenhouse to produce,
+  // so a contract can only ask for them once the project is bought
+  s.projects.greenhouse = true
   return s
 }
 
@@ -168,6 +170,25 @@ describe('rollContracts eligibility', () => {
     expect(goods.has('wool')).toBe(false)
     expect(goods.has('milk')).toBe(false)
     expect(goods.has('egg')).toBe(false)
+  })
+
+  it('greenhouse crops stay OUT of contracts until the greenhouse is owned', () => {
+    const s = freshSave()
+    s.level = 30 // clears every crop unlock level
+    const goods = new Set<ContractGood>()
+    for (let day = 1; day <= 40; day++) {
+      for (const c of rollContracts(s.chicken.seed, day, s)) goods.add(c.good)
+    }
+    // without the greenhouse, an order for these would be unfillable
+    expect(goods.has('tomato')).toBe(false)
+    expect(goods.has('pepper')).toBe(false)
+    expect(goods.has('eggplant')).toBe(false)
+    s.projects.greenhouse = true
+    const goods2 = new Set<ContractGood>()
+    for (let day = 1; day <= 40; day++) {
+      for (const c of rollContracts(s.chicken.seed, day, s)) goods2.add(c.good)
+    }
+    expect(goods2.has('tomato') || goods2.has('pepper') || goods2.has('eggplant')).toBe(true)
   })
 
   it('egg becomes eligible when solo hen has arrived', () => {

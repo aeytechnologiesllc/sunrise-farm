@@ -181,5 +181,7 @@ export function busWindowPm(phase: number): boolean {
 /** recess: kids spill into the schoolyard mid-day — two bands: morning recess
  * and post-lunch play (~47% of the day, up from ~17%) */
 export function recessNow(phase: number): boolean {
-  return (phase >= 0.3 && phase <= 0.44) || (phase >= 0.48 && phase <= 0.66)
+  // morning band starts at 0.33, just AFTER the bus window opens (0.30), so the
+  // school bell and the morning-bus bell don't ring on the same frame
+  return (phase >= 0.33 && phase <= 0.44) || (phase >= 0.48 && phase <= 0.66)
 }
