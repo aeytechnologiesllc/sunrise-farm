@@ -1,16 +1,34 @@
 /** Next-goal oracle — tells the player what to save for next.
  * Pure module: no three/DOM imports, no rng, no Date, no side effects.
- * Single entry point: nextGoal(s) → the highest-priority actionable goal. */
+ * Single entry point: nextGoal(s) → the highest-priority actionable goal.
+ *
+ * Priority chain (highest → lowest):
+ *  1. Affordable project (level + coins met)
+ *  2. Affordable deed (level + coins met)
+ *  3. Affordable town act (status === 'ok')
+ *  4. Bridge case — stable blocked by missing deed
+ *  5. First-delivery nudge (horse owned, delivered === 0)
+ *  6. Coins-blocked project / deed / town act (cheapest)
+ *  7. Wheat-blocked town act
+ *  8. Affordable building upgrade (upgradeStatus === 'ok', cheapest)
+ *  9. Affordable fence skin (level met, coins met, not yet owned)
+ * 10. Affordable decor (level met, coins met, decor.length < DECOR_MAX)
+ * 11. Level wall (lowest level gate above s.level across ALL content)
+ * 12. Order board (s.town.delivered >= 1) — evergreen endgame goal
+ * 13. Gentle harvest nudge ('🌾 Tend your farm') — compass never goes dark */
 
 import { contractSlots, rollContracts } from './contracts'
 import { CROPS } from './economy'
 import { nextTier, TIERS } from './expansion'
+import { DECOR, DECOR_MAX } from './decor'
+import { FENCE_STYLES } from './fence'
 import { availableProjects, PROJECTS, projectStatus } from './projects'
 import type { GameState } from './state'
 import { nextTownAct, townStatus } from './town'
+import { availableUpgrades, upgradeStatus } from './upgrades'
 
 export interface Goal {
-  kind: 'project' | 'deed' | 'townact' | 'delivery' | 'levelwall' | 'contract'
+  kind: 'project' | 'deed' | 'townact' | 'delivery' | 'levelwall' | 'contract' | 'upgrade' | 'fencestyle' | 'decor'
   id: string
   /** <= 40 chars incl emoji — what the HUD shows */
   pill: string
@@ -204,7 +222,58 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 8. LEVEL WALL ────────────────────────────────────────────────────────
+  // ─── 8. Cheapest AFFORDABLE building upgrade ──────────────────────────────
+  {
+    const avail = availableUpgrades(s)
+    const affordable = avail.filter((u) => upgradeStatus(u, s) === 'ok')
+    if (affordable.length > 0) {
+      const def = affordable.reduce((a, b) => (a.cost <= b.cost ? a : b))
+      return {
+        kind: 'upgrade',
+        id: def.id,
+        pill: pill40('🔧 ', def.name, ` — ${def.cost}c`),
+        blocked: null,
+      }
+    }
+  }
+
+  // ─── 9. Cheapest AFFORDABLE fence skin not yet owned ─────────────────────
+  {
+    const affordable = FENCE_STYLES.filter(
+      (f) =>
+        s.level >= f.level &&
+        s.coins >= f.cost &&
+        !(s.fenceStyles as Partial<Record<string, boolean>>)[f.id],
+    )
+    if (affordable.length > 0) {
+      const def = affordable.reduce((a, b) => (a.cost <= b.cost ? a : b))
+      return {
+        kind: 'fencestyle',
+        id: def.id,
+        pill: pill40('🎨 ', def.name, ` fence — ${def.cost}c`),
+        blocked: null,
+      }
+    }
+  }
+
+  // ─── 10. Cheapest AFFORDABLE decoration ───────────────────────────────────
+  {
+    const placed = (s as GameState & { decor?: unknown[] }).decor ?? []
+    if (placed.length < DECOR_MAX) {
+      const affordable = DECOR.filter((d) => s.level >= d.level && s.coins >= d.cost)
+      if (affordable.length > 0) {
+        const def = affordable.reduce((a, b) => (a.cost <= b.cost ? a : b))
+        return {
+          kind: 'decor',
+          id: def.id,
+          pill: pill40('🌷 ', def.name, ` — ${def.cost}c`),
+          blocked: null,
+        }
+      }
+    }
+  }
+
+  // ─── 11. LEVEL WALL ───────────────────────────────────────────────────────
   {
     // collect every level gate strictly above s.level from unowned things
     const walls: Array<{ level: number; label: string }> = []
@@ -248,7 +317,7 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 9. THE ORDER BOARD never runs dry — the evergreen endgame goal ───────
+  // ─── 12. THE ORDER BOARD never runs dry — the evergreen endgame goal ──────
   // Once the town knows the farm (first delivery), there are always daily
   // orders to fill. This is what keeps a maxed-out farm from going silent.
   {
@@ -269,6 +338,19 @@ export function nextGoal(s: GameState): Goal | null {
     }
   }
 
-  // ─── 10. Nothing remains ───────────────────────────────────────────────────
-  return null
+  // ─── 13. GENTLE FALLBACK — the compass must never go dark ────────────────
+  // If we reach here: no purchases remain, no level gate, and the town board
+  // is completely quiet. This is theoretically unreachable in a live game (the
+  // level-wall and order-board catches always have content), but we return a
+  // soft nudge rather than null so the compass pin is never empty. The only
+  // way nextGoal returns null is the truly-impossible edge case: a test state
+  // that has no projects/deeds/town/content AND no deliveries AND no level
+  // gates ahead AND no affordable cosmetics — in practice this cannot happen
+  // in a live save, but the function contract allows it for purity.
+  return {
+    kind: 'contract',
+    id: 'tend',
+    pill: '🌾 Tend your farm',
+    blocked: null,
+  }
 }

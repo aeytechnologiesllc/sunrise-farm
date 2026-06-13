@@ -2,6 +2,7 @@
  * Mirrors town.test.ts style — no Game class, pure state construction. */
 import { describe, expect, it } from 'vitest'
 import { nextGoal } from '../src/game/goals'
+import { DECOR_MAX } from '../src/game/decor'
 import { landBlockedProjects } from '../src/game/projects'
 import { initialState, type GameState } from '../src/game/state'
 
@@ -201,6 +202,191 @@ describe('pill length <= 40 chars', () => {
       })
     }
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Priority 8: affordable upgrade fires after coins-blocked checks
+// ─────────────────────────────────────────────────────────────────────────────
+describe('priority 8: affordable upgrade', () => {
+  it('surfaces an upgrade when all projects/deeds/town owned but upgrade affordable', () => {
+    const s = make((x) => {
+      // High level so all level gates clear
+      x.level = 30
+      // Max expansion so no deeds remain
+      x.expansion = 6
+      // All projects owned
+      x.projects.stand = true
+      x.projects.sheep = true
+      x.projects.goats = true
+      x.projects.coop = true
+      x.projects.stable = true
+      x.projects.horse = true
+      x.projects.shop = true
+      x.projects.greenhouse = true
+      x.projects.farmhand = true
+      // All town acts built
+      x.town.built.bakery = true
+      x.town.built.cottages = true
+      x.town.built.school = true
+      x.town.built.works = true
+      x.town.delivered = 20
+      x.wheat = 999
+      // No upgrades owned yet; ghwing costs 2400 — cheapest
+      x.upgrades = {}
+      x.coins = 2400
+    })
+    const g = nextGoal(s)
+    expect(g).not.toBeNull()
+    expect(g!.kind).toBe('upgrade')
+    expect(g!.blocked).toBeNull()
+    expect(g!.pill).toContain('🔧')
+    expect(g!.pill.length).toBeLessThanOrEqual(40)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Priority 9: affordable fence skin
+// ─────────────────────────────────────────────────────────────────────────────
+describe('priority 9: affordable fence skin', () => {
+  it('surfaces a fence skin when everything else owned/unaffordable but skin affordable', () => {
+    const s = make((x) => {
+      x.level = 30
+      x.expansion = 6
+      x.projects.stand = true
+      x.projects.sheep = true
+      x.projects.goats = true
+      x.projects.coop = true
+      x.projects.stable = true
+      x.projects.horse = true
+      x.projects.shop = true
+      x.projects.greenhouse = true
+      x.projects.farmhand = true
+      x.town.built.bakery = true
+      x.town.built.cottages = true
+      x.town.built.school = true
+      x.town.built.works = true
+      x.town.delivered = 20
+      x.wheat = 999
+      // All upgrades owned
+      x.upgrades = { ghwing: true, market: true, pasture: true, tackroom: true, homereno: true }
+      // No fence skins owned yet (picket costs 600, level 9 — both met)
+      x.fenceStyles = {}
+      x.coins = 600
+    })
+    const g = nextGoal(s)
+    expect(g).not.toBeNull()
+    expect(g!.kind).toBe('fencestyle')
+    expect(g!.blocked).toBeNull()
+    expect(g!.pill).toContain('🎨')
+    expect(g!.pill.length).toBeLessThanOrEqual(40)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Priority 10: affordable decor
+// ─────────────────────────────────────────────────────────────────────────────
+describe('priority 10: affordable decor', () => {
+  it('surfaces decor when upgrades+fences all owned but decor below DECOR_MAX', () => {
+    const s = make((x) => {
+      x.level = 30
+      x.expansion = 6
+      x.projects.stand = true
+      x.projects.sheep = true
+      x.projects.goats = true
+      x.projects.coop = true
+      x.projects.stable = true
+      x.projects.horse = true
+      x.projects.shop = true
+      x.projects.greenhouse = true
+      x.projects.farmhand = true
+      x.town.built.bakery = true
+      x.town.built.cottages = true
+      x.town.built.school = true
+      x.town.built.works = true
+      x.town.delivered = 20
+      x.wheat = 999
+      x.upgrades = { ghwing: true, market: true, pasture: true, tackroom: true, homereno: true }
+      // All fence skins owned
+      x.fenceStyles = { picket: true, cedar: true, stone: true }
+      // Decor below DECOR_MAX, flowerbed costs 150 (cheapest, level 8 — met)
+      x.decor = []
+      x.coins = 150
+    })
+    const g = nextGoal(s)
+    expect(g).not.toBeNull()
+    expect(g!.kind).toBe('decor')
+    expect(g!.blocked).toBeNull()
+    expect(g!.pill).toContain('🌷')
+    expect(g!.pill.length).toBeLessThanOrEqual(40)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CRITICAL PIN: whale save — compass must NEVER go dark
+// ─────────────────────────────────────────────────────────────────────────────
+describe('whale save — nextGoal is never null', () => {
+  /** A save that owns literally everything purchasable. The design law is
+   * "the player must always have something to save for" — nextGoal must
+   * return a non-null contract/tend goal even for the most maxed-out farm. */
+  function whaleSave(): GameState {
+    return make((x) => {
+      x.level = 30
+      x.expansion = 6
+      // All projects
+      x.projects.stand = true
+      x.projects.sheep = true
+      x.projects.goats = true
+      x.projects.coop = true
+      x.projects.stable = true
+      x.projects.horse = true
+      x.projects.shop = true
+      x.projects.greenhouse = true
+      x.projects.farmhand = true
+      // All town acts
+      x.town.built.bakery = true
+      x.town.built.cottages = true
+      x.town.built.school = true
+      x.town.built.works = true
+      x.town.delivered = 50
+      x.wheat = 0
+      // All upgrades
+      x.upgrades = { ghwing: true, market: true, pasture: true, tackroom: true, homereno: true }
+      // All fence skins
+      x.fenceStyles = { picket: true, cedar: true, stone: true }
+      // Decor at cap
+      x.decor = Array.from({ length: DECOR_MAX }, (_, i) => ({
+        item: 'flowerbed' as const,
+        x: i * 2,
+        z: 0,
+        rot: 0,
+        d: 1,
+      }))
+      // Not enough coins or wheat for anything
+      x.coins = 0
+      // Contracts all done for this day
+      x.contracts = { day: x.day, progress: [], done: [true, true, true] }
+    })
+  }
+
+  it('returns a non-null goal for a fully maxed farm (the compass never goes dark)', () => {
+    const g = nextGoal(whaleSave())
+    expect(g).not.toBeNull()
+  })
+
+  it('whale save goal has blocked null (not a blocked goal — a real invitation)', () => {
+    const g = nextGoal(whaleSave())
+    expect(g!.blocked).toBeNull()
+  })
+
+  it('whale save goal kind is contract (order board or tend fallback)', () => {
+    const g = nextGoal(whaleSave())
+    expect(g!.kind).toBe('contract')
+  })
+
+  it('whale save pill is <= 40 chars', () => {
+    const g = nextGoal(whaleSave())
+    expect(g!.pill.length).toBeLessThanOrEqual(40)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
