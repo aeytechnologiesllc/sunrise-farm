@@ -44,6 +44,7 @@ export interface SunriseTelemetryMessage {
   snapshot?: SunriseFarmSnapshot
   sessionId: string
   sentAt: number
+  ingestKey?: string
 }
 
 interface TelemetryOptions {
@@ -91,6 +92,11 @@ function endpointFromUrl(): string | undefined {
   return url.searchParams.get('telemetry') || undefined
 }
 
+function ingestKeyFromUrl(): string | undefined {
+  const url = new URL(location.href)
+  return url.searchParams.get('telemetry_key') || url.searchParams.get('ingest_key') || undefined
+}
+
 function isAdminMessage(data: unknown): data is AdminMessage {
   if (!data || typeof data !== 'object') return false
   const d = data as AdminMessage
@@ -105,6 +111,7 @@ export function createTelemetry(options: TelemetryOptions): {
   const sessionId = makeSessionId()
   const milestones = new Set<string>()
   let endpoint = endpointFromUrl() || options.endpoint || import.meta.env.VITE_SUNRISE_TELEMETRY_URL || ''
+  const ingestKey = ingestKeyFromUrl() || import.meta.env.VITE_SUNRISE_TELEMETRY_KEY || ''
 
   const baseContext = (): Record<string, unknown> => ({
     build: options.build,
@@ -124,10 +131,15 @@ export function createTelemetry(options: TelemetryOptions): {
     window.parent.postMessage(message, '*')
   }
 
+  const withIngestKey = (message: SunriseTelemetryMessage): SunriseTelemetryMessage => {
+    if (!endpoint || !ingestKey) return message
+    return { ...message, ingestKey }
+  }
+
   const send = (message: SunriseTelemetryMessage): void => {
     postToParent(message)
     if (!endpoint) return
-    const body = JSON.stringify(message)
+    const body = JSON.stringify(withIngestKey(message))
     void fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'text/plain;charset=UTF-8' },

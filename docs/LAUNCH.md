@@ -15,8 +15,9 @@ The game now sends launch/FTUE/progression/crash events through a tiny vendor-ne
 
 - Set `VITE_SUNRISE_TELEMETRY_URL=https://YOUR_SUPABASE_REF.supabase.co/functions/v1/game-telemetry-ingest` before `npm run build`, or
 - Append `?telemetry=https://your-endpoint.example/events` to the game URL.
+- Optionally set `VITE_SUNRISE_TELEMETRY_KEY=your-public-ingest-key` before `npm run build`, or append `?telemetry_key=...` / `?ingest_key=...` to the game URL.
 
-Events are JSON strings sent as `text/plain;charset=UTF-8` with credentialless `fetch(..., mode: 'no-cors')`, so simple webhook/worker endpoints can receive them without preflight drama. If no endpoint is configured, the tracker stays safe/no-op except for iframe `postMessage` events.
+Events are JSON strings sent as `text/plain;charset=UTF-8` with credentialless `fetch(..., mode: 'no-cors')`, so simple webhook/worker endpoints can receive them without preflight drama. The ingest key is a public anti-spoofing signal, not a secret auth guarantee, and is only included in HTTP telemetry payloads. If no endpoint is configured, the tracker stays safe/no-op except for iframe `postMessage` events.
 
 Tracked events:
 
