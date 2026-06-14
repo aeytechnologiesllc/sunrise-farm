@@ -13,7 +13,7 @@ The zip contains the built `dist/` contents at the root, which is what itch expe
 
 The game now sends launch/FTUE/progression/crash events through a tiny vendor-neutral bridge:
 
-- Set `VITE_SUNRISE_TELEMETRY_URL` before `npm run build`, or
+- Set `VITE_SUNRISE_TELEMETRY_URL=https://YOUR_SUPABASE_REF.supabase.co/functions/v1/game-telemetry-ingest` before `npm run build`, or
 - Append `?telemetry=https://your-endpoint.example/events` to the game URL.
 
 Events are JSON strings sent as `text/plain;charset=UTF-8` with credentialless `fetch(..., mode: 'no-cors')`, so simple webhook/worker endpoints can receive them without preflight drama. If no endpoint is configured, the tracker stays safe/no-op except for iframe `postMessage` events.
