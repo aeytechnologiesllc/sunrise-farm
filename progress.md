@@ -15,3 +15,4 @@ TODO:
 - Verified iframe postMessage bridge and local telemetry endpoint on a 390x844 mobile viewport; boot/ready/snapshot messages worked.
 - Ran npm test, npm run package:itch, and the develop-web-game Playwright client; screenshots inspected.
 - Emergency rollback: user reported the `500aa23` mobile perf commit made the game unplayably laggy. Reverted it immediately; subagent flagged grass chunk sizing and shadow cadence as the most suspect areas for any smaller future retry.
+- Safe mobile retry: applied only a touch-device post-processing bypass in `src/main.ts`; did not touch grass chunking, shadow cadence, DPR, or world geometry. Verified against the correct Farm dev server on port 5199 with mobile smoke/profile plus npm test/build. Android emulator retry reached boot but ADB/CDP hung, so final validation used browser mobile viewport rather than unreliable emulator metrics.

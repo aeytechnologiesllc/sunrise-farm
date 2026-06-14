@@ -309,16 +309,18 @@ async function boot(): Promise<void> {
   let playerGhost = false
   const camHead = new Vector3()
 
-  // warm ACES grade; the effect pass (god rays + bloom + vignette) is added
-  // after the sky exists — god rays need the sun disk as a light source
-  const composer = new EffectComposer(renderer, { multisampling: isCoarse ? 0 : 4 })
-  composer.addPass(new RenderPass(scene, cam.camera))
+  // warm ACES grade; desktop keeps the cinematic effect pass. Touch devices
+  // render direct to the canvas so running/sun-view scenes do not pay a
+  // full-screen bloom/vignette pass every frame.
+  const composer = isCoarse ? null : new EffectComposer(renderer, { multisampling: 4 })
+  composer?.addPass(new RenderPass(scene, cam.camera))
   // manual info reset: the composer runs multiple passes per frame and
   // autoReset would hide the real draw-call total from the dev driver
   renderer.info.autoReset = false
   const engine = new Engine((dt) => {
     renderer.info.reset()
-    composer.render(dt)
+    if (composer) composer.render(dt)
+    else renderer.render(scene, cam.camera)
   })
 
   // gsap re-rooted on the engine clock: tweens advance only when the engine
@@ -418,17 +420,15 @@ async function boot(): Promise<void> {
    * ANY-room gates read `room !== null`, room-specific verbs read
    * `room === 'coop'` — a new room inherits every gate for free. */
   let room: RoomId | null = null
-  const bloom = new BloomEffect({
-    intensity: isCoarse ? 0.34 : 0.42,
-    luminanceThreshold: 0.82,
-    mipmapBlur: true,
-    levels: isCoarse ? 4 : 8,
-    resolutionScale: isCoarse ? 0.35 : 1,
-  })
-  const vignette = new VignetteEffect({ darkness: 0.3, offset: 0.26 })
-  if (isCoarse) {
-    composer.addPass(new EffectPass(cam.camera, bloom, vignette))
-  } else {
+  if (composer) {
+    const bloom = new BloomEffect({
+      intensity: 0.42,
+      luminanceThreshold: 0.82,
+      mipmapBlur: true,
+      levels: 8,
+      resolutionScale: 1,
+    })
+    const vignette = new VignetteEffect({ darkness: 0.3, offset: 0.26 })
     composer.addPass(
       new EffectPass(
         cam.camera,
@@ -3826,7 +3826,7 @@ async function boot(): Promise<void> {
     sizedH = viewH()
     cam.resize(sizedW, sizedH)
     renderer.setSize(sizedW, sizedH, false)
-    composer.setSize(sizedW, sizedH)
+    composer?.setSize(sizedW, sizedH)
     // the realloc hitch itself must not read as load: reset the frame
     // average and hold the DPR governor still while the dust settles —
     // rotation used to fire realloc -> panic down-step -> realloc -> ...
