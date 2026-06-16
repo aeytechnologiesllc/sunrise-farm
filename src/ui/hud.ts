@@ -64,8 +64,21 @@ const CSS = `
 .act .em{font-size:21px;line-height:1}
 .act .lbl{text-align:left;line-height:1.1}
 .act .lbl small{display:block;font-size:11px;font-weight:700;color:#8a7a5a}
+.act .keycap{display:none;margin-left:3px;padding:3px 7px;border-radius:8px;
+  background:#3a2d1e;color:#fff7e0;font-size:12px;line-height:1;font-weight:900}
 .act.locked{filter:grayscale(.85);opacity:.7}
 .act.locked .lbl small{color:#b3541e}
+#keyhelp{position:absolute;left:18px;bottom:22px;display:none;gap:8px;align-items:center;
+  background:rgba(255,252,240,.9);border-radius:18px;padding:10px 13px;
+  box-shadow:0 5px 16px rgba(60,40,10,.22);font-size:12px;font-weight:800;color:#4b3924}
+#keyhelp .keys{display:grid;grid-template-columns:repeat(3,22px);gap:3px}
+#keyhelp kbd{display:flex;align-items:center;justify-content:center;min-width:22px;height:20px;
+  border-radius:6px;background:#3a2d1e;color:#fff7e0;font:900 11px/1 system-ui,sans-serif;
+  box-shadow:inset 0 -2px 0 rgba(255,255,255,.16)}
+#keyhelp .wide{min-width:36px;padding:0 6px}
+#keyhelp .legend{line-height:1.25}
+#keyhelp .legend b{display:block;font-size:12px;color:#3a2d1e}
+#keyhelp .legend span{display:flex;align-items:center;gap:4px;font-size:11px;color:#7a6849;white-space:nowrap}
 .bubble{position:absolute;transform:translate(-50%,-100%);background:rgba(255,252,240,.96);
   border-radius:16px;padding:7px 13px;font-size:16px;font-weight:800;opacity:0;
   box-shadow:0 3px 12px rgba(60,40,10,.28);white-space:nowrap}
@@ -163,6 +176,7 @@ const CSS = `
   #musicbtn{width:34px;height:34px;font-size:15px}
   #fsbtn{width:34px;height:34px;font-size:14px;top:calc(max(6px,env(safe-area-inset-top)) + 42px)}
   .bubble{font-size:13px;padding:5px 10px}
+  #keyhelp{display:none!important}
 }
 @media (max-width: 560px) and (min-height: 501px){
   #chip{top:calc(max(10px,env(safe-area-inset-top)) + 166px);left:50%;right:auto;
@@ -171,7 +185,10 @@ const CSS = `
   #actions{right:calc(12px + env(safe-area-inset-right));
     bottom:calc(148px + env(safe-area-inset-bottom));gap:8px}
   .act{max-width:min(210px,calc(100vw - 24px))}
+  #keyhelp{display:none!important}
 }
+.desktop-controls .act .keycap{display:inline-flex}
+.desktop-controls #keyhelp{display:flex}
 #cardpanel-veil{position:fixed;inset:0;background:rgba(20,14,6,.5);
   pointer-events:auto;display:flex;align-items:center;justify-content:center;opacity:0;z-index:90}
 #cardpanel-col{background:#fffcf0;border-radius:22px;padding:22px 20px 18px;
@@ -223,6 +240,7 @@ export interface ActionDef {
   label: string
   sub?: string
   locked?: boolean
+  key?: string
 }
 
 /** one card in the showCardPanel modal list */
@@ -338,6 +356,10 @@ export class Hud {
     this.banner = el('div', 'banner', this.root)
     this.flash = el('div', 'flash', this.root)
     this.actionsBox = el('div', 'actions', this.root)
+    const keyHelp = el('div', 'keyhelp', this.root)
+    keyHelp.innerHTML =
+      '<div class="keys"><span></span><kbd>W</kbd><span></span><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>' +
+      '<div class="legend"><b>Move</b><span>WASD / arrows</span><span><kbd class="wide">Space</kbd> activate · <kbd class="wide">F</kbd> fences</span></div>'
     // three bubbles: the Farm Shop raises the queue to 3 browsers
     for (let i = 0; i < 3; i++) {
       const b = el('div', '', this.root, 'bubble')
@@ -366,9 +388,13 @@ export class Hud {
       '<button id="rotatex" aria-label="Dismiss">✕</button></div>'
     const portrait = matchMedia('(orientation: portrait)')
     const coarse = matchMedia('(pointer: coarse)')
+    let rotateHintReady = false
     const refreshHint = (): void => {
       const show =
-        portrait.matches && coarse.matches && safeSessionStorage.getItem('sunrise-farm.rotateDismissed') !== '1'
+        rotateHintReady &&
+        portrait.matches &&
+        coarse.matches &&
+        safeSessionStorage.getItem('sunrise-farm.rotateDismissed') !== '1'
       hint.classList.toggle('show', show)
     }
     portrait.addEventListener('change', refreshHint)
@@ -376,6 +402,10 @@ export class Hud {
       safeSessionStorage.setItem('sunrise-farm.rotateDismissed', '1')
       refreshHint()
     })
+    window.setTimeout(() => {
+      rotateHintReady = true
+      refreshHint()
+    }, 120000)
     refreshHint()
   }
 
@@ -569,7 +599,7 @@ export class Hud {
    * rebuilds when the set changes. Empty array hides the stack. */
   setActions(actions: ActionDef[], onAction: (id: string) => void): void {
     this.onAction = onAction
-    const key = actions.map((a) => `${a.id}:${a.label}:${a.locked ? 1 : 0}:${a.sub ?? ''}`).join('|')
+    const key = actions.map((a) => `${a.id}:${a.label}:${a.locked ? 1 : 0}:${a.sub ?? ''}:${a.key ?? ''}`).join('|')
     if (key === this.actionsKey) return
     this.actionsKey = key
     this.actionsBox.innerHTML = ''
@@ -578,7 +608,7 @@ export class Hud {
       b.className = a.locked ? 'act locked' : 'act'
       b.innerHTML = `<span class="em">${a.emoji}</span><span class="lbl">${a.label}${
         a.sub ? `<small>${a.sub}</small>` : ''
-      }</span>`
+      }</span>${a.key ? `<span class="keycap">${a.key}</span>` : ''}`
       b.addEventListener('pointerdown', (e) => {
         e.stopPropagation()
         if (a.locked) {

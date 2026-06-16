@@ -21,7 +21,7 @@ const CSS = `
   box-shadow:0 3px 10px rgba(40,25,0,.3), inset 0 -4px 0 rgba(150,120,60,.3)}
 .joy .joyglyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-size:15px;color:rgba(60,45,15,.5);pointer-events:none}
-@media (hover:hover) and (pointer:fine){ .joy{opacity:.55} }
+.desktop-controls .joy{display:none}
 @media (max-height: 500px){
   .joy{width:98px;height:98px;bottom:calc(12px + env(safe-area-inset-bottom))}
   .joyknob{width:44px;height:44px;margin:-22px 0 0 -22px}
@@ -89,6 +89,7 @@ export class Joystick {
     if (opts.keyboard) {
       addEventListener('keydown', (e) => {
         if (KEYMAP[e.code]) {
+          if (e.defaultPrevented) return
           this.keys.add(KEYMAP[e.code])
           this.recompute()
         }
@@ -100,6 +101,12 @@ export class Joystick {
         }
       })
     }
+  }
+
+  releaseKeyboard(): void {
+    if (this.keys.size === 0) return
+    this.keys.clear()
+    this.recompute()
   }
 
   private down = (e: PointerEvent): void => {

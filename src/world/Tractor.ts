@@ -51,7 +51,13 @@ function grillCanvas(): HTMLCanvasElement {
 
 export class TractorView {
   readonly group = new Group()
+  readonly saddleY = 1.05
   private smokeAt = new Vector3()
+  private wheels: Array<{ pivot: Group; tire: Mesh; hub: Mesh; front: boolean; radius: number }> = []
+  private steeringWheel: Mesh | null = null
+  private driveYaw = 0
+  private visualSteer = 0
+  private wheelSpin = 0
 
   constructor(private scene: Scene, pos: Vector3, yaw: number) {
     const red = new MeshStandardMaterial({ color: '#b73b26', roughness: 0.55, metalness: 0.15 })
@@ -101,6 +107,7 @@ export class TractorView {
     wheel.position.set(-0.06, 1.62, 0)
     wheel.rotation.z = 0.5 + Math.PI / 2
     this.group.add(wheel)
+    this.steeringWheel = wheel
     // exhaust stack
     const pipe = new Mesh(new CylinderGeometry(0.05, 0.06, 0.62, 7), dark)
     pipe.position.set(0.7, 1.5, 0.18)
@@ -108,29 +115,96 @@ export class TractorView {
     this.group.add(pipe)
     this.smokeAt.set(0.7, 1.85, 0.18)
     // wheels: big rear, small front
-    const mkWheel = (r: number, w: number, x: number, z: number): void => {
-      const t = new Mesh(new CylinderGeometry(r, r, w, 14), tire)
-      t.rotation.x = Math.PI / 2
-      t.position.set(x, r, z)
+    const mkWheel = (r: number, w: number, x: number, z: number, front: boolean): void => {
+      const pivot = new Group()
+      pivot.position.set(x, 0, z)
+      const tireGeo = new CylinderGeometry(r, r, w, 14)
+      tireGeo.rotateX(Math.PI / 2)
+      const t = new Mesh(tireGeo, tire)
+      t.position.set(0, r, 0)
       t.castShadow = true
-      this.group.add(t)
-      const h = new Mesh(new CylinderGeometry(r * 0.55, r * 0.55, w + 0.02, 12), hub)
-      h.rotation.x = Math.PI / 2
-      h.position.set(x, r, z)
-      this.group.add(h)
+      pivot.add(t)
+      const hubGeo = new CylinderGeometry(r * 0.55, r * 0.55, w + 0.02, 12)
+      hubGeo.rotateX(Math.PI / 2)
+      const h = new Mesh(hubGeo, hub)
+      h.position.set(0, r, 0)
+      pivot.add(h)
+      this.group.add(pivot)
+      this.wheels.push({ pivot, tire: t, hub: h, front, radius: r })
     }
-    mkWheel(0.62, 0.26, -0.75, 0.56)
-    mkWheel(0.62, 0.26, -0.75, -0.56)
-    mkWheel(0.34, 0.2, 0.78, 0.46)
-    mkWheel(0.34, 0.2, 0.78, -0.46)
+    mkWheel(0.62, 0.26, -0.75, 0.56, false)
+    mkWheel(0.62, 0.26, -0.75, -0.56, false)
+    mkWheel(0.34, 0.2, 0.78, 0.46, true)
+    mkWheel(0.34, 0.2, 0.78, -0.46, true)
 
     this.group.position.copy(pos)
     this.group.rotation.y = yaw
+    this.driveYaw = yaw
     scene.add(this.group)
   }
 
   get position(): Vector3 {
     return this.group.position
+  }
+
+  get heading(): number {
+    return this.visualYawToHeading(this.group.rotation.y)
+  }
+
+  get debug(): { visualYaw: number; frontSteer: number; wheelSpin: number } {
+    return {
+      visualYaw: +this.driveYaw.toFixed(3),
+      frontSteer: +this.visualSteer.toFixed(3),
+      wheelSpin: +this.wheelSpin.toFixed(3),
+    }
+  }
+
+  private headingToVisualYaw(heading: number): number {
+    // Player heading 0 faces +z. This primitive tractor's nose is authored +x.
+    return heading - Math.PI / 2
+  }
+
+  private visualYawToHeading(yaw: number): number {
+    let heading = yaw + Math.PI / 2
+    while (heading > Math.PI) heading -= Math.PI * 2
+    while (heading < -Math.PI) heading += Math.PI * 2
+    return heading
+  }
+
+  startDrive(pos: Vector3, heading: number): void {
+    const yaw = this.headingToVisualYaw(heading)
+    this.group.position.set(pos.x, 0, pos.z)
+    this.group.rotation.y = yaw
+    this.group.rotation.z = 0
+    this.driveYaw = yaw
+    this.visualSteer = 0
+    for (const w of this.wheels) w.pivot.rotation.y = 0
+  }
+
+  drive(dt: number, pos: Vector3, heading: number, speed: number, steer = 0): void {
+    this.group.position.set(pos.x, 0, pos.z)
+    const yaw = this.headingToVisualYaw(heading)
+    this.driveYaw = yaw
+    this.group.rotation.y = this.driveYaw
+    const absSpeed = Math.abs(speed)
+    this.group.rotation.z = Math.sin(performance.now() * 0.018) * Math.min(0.012, absSpeed * 0.003)
+    const steerTarget = Math.max(-0.55, Math.min(0.55, -steer * 0.55))
+    this.visualSteer += (steerTarget - this.visualSteer) * Math.min(1, dt * 10)
+    for (const w of this.wheels) {
+      w.pivot.rotation.y = w.front ? this.visualSteer : 0
+      const spin = speed * dt / Math.max(0.05, w.radius)
+      w.tire.rotation.z -= spin
+      w.hub.rotation.z -= spin
+      this.wheelSpin = w.tire.rotation.z
+    }
+    if (this.steeringWheel) this.steeringWheel.rotation.z = 0.5 + Math.PI / 2 - this.visualSteer * 1.2
+  }
+
+  park(): void {
+    this.group.rotation.z = 0
+    this.visualSteer = 0
+    for (const w of this.wheels) w.pivot.rotation.y = 0
+    if (this.steeringWheel) this.steeringWheel.rotation.z = 0.5 + Math.PI / 2
   }
 
   /** happy sow ceremony: body wobble + a few smoke puffs */

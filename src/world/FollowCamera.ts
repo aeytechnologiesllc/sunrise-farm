@@ -22,9 +22,11 @@ const LOOKAHEAD_MAX = 1.4
 /** desktop drag: radians per CSS pixel */
 const DRAG_RATE = 0.0042
 const FOV_BASE = 42
-/** trimmed with the tighter landscape frame — the wide-lens run nudge was
- * double-selling speed once the camera rode closer */
-const FOV_RUN = 45
+/** the run lens-widen is KILLED (set equal to base): the owner read the
+ * 42->45 swell on a sustained sprint (e.g. the long run east to the field) as
+ * the screen "breathing bigger" on mobile. A fixed lens reads as stable speed
+ * instead of a pumping zoom. (The kTight occlusion widen is separate + rare.) */
+const FOV_RUN = 42
 /** auto-follow: after this long hands-off, the camera eases around behind
  * the farmer's direction of travel — the player steers, the camera keeps up
  * (owner ask: "no constantly adjusting the camera by hand") */
@@ -113,6 +115,9 @@ export class FollowCamera {
   /** while riding Hazel the subject sits up on her back — lift the look anchor
    * so the shot frames the rider, not the horse's rear */
   rideLift = 0
+  /** Tractor driving keeps the same follow camera, but asks auto-follow to catch
+   * up quicker so "forward" does not read as sideways on touch screens. */
+  driveFollow = false
   /** eased toward rideLift so mounting/dismounting glides the ride framing in
    * (distance factor + look-down angle) instead of popping in one frame */
   private rideLiftS = 0
@@ -374,7 +379,9 @@ export class FollowCamera {
     if (this.moved) this.sinceManual = 0
     else this.sinceManual += dt
     const planar = Math.hypot(vel.x, vel.z)
-    if (!this.cineTarget && this.sinceManual > AUTO_FOLLOW_AFTER && planar > AUTO_FOLLOW_MIN_SPEED) {
+    const followAfter = this.driveFollow ? 0.1 : AUTO_FOLLOW_AFTER
+    const followMinSpeed = this.driveFollow ? 0.55 : AUTO_FOLLOW_MIN_SPEED
+    if (!this.cineTarget && this.sinceManual > followAfter && planar > followMinSpeed) {
       const want = Math.atan2(-vel.x, -vel.z) // camera sits opposite travel
       let d = want - this.yaw
       while (d > Math.PI) d -= Math.PI * 2
@@ -386,7 +393,8 @@ export class FollowCamera {
       // straight at the lens is how you look at your farmer's face anyway
       const ad = Math.abs(d)
       if (ad > 0.04 && ad < 3.05) {
-        const k = Math.min(1, planar / 3.2) * (1 - Math.exp(-AUTO_FOLLOW_RATE * dt))
+        const followRate = this.driveFollow ? 3.2 : AUTO_FOLLOW_RATE
+        const k = Math.min(1, planar / 3.2) * (1 - Math.exp(-followRate * dt))
         // urgency lives in the COURSE-CHANGE band (90°-160°): a held strafe
         // (90°) keeps its slow orbit, a real turn catches up briskly, and
         // dead-backward (180°) tapers back to slow — walking toward the lens
@@ -397,7 +405,9 @@ export class FollowCamera {
           urgency = Math.min(1, (ad - Math.PI / 2) / 0.85)
           if (ad > 2.75) urgency *= Math.max(0, (Math.PI - ad) / (Math.PI - 2.75))
         }
-        const cap = AUTO_FOLLOW_MAX_RATE + (AUTO_FOLLOW_FAST_RATE - AUTO_FOLLOW_MAX_RATE) * urgency
+        const slowCap = this.driveFollow ? 1.4 : AUTO_FOLLOW_MAX_RATE
+        const fastCap = this.driveFollow ? 3.0 : AUTO_FOLLOW_FAST_RATE
+        const cap = slowCap + (fastCap - slowCap) * urgency
         this.yaw += clampAbs(d * k, cap * dt)
       }
     }

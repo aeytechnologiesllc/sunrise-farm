@@ -9,6 +9,7 @@
 import {
   AnimationAction,
   AnimationMixer,
+  BoxGeometry,
   CapsuleGeometry,
   CylinderGeometry,
   Group,
@@ -45,6 +46,20 @@ const FADE = 0.24
 /** bank into turns: radians of lean per (rad/s of heading change) */
 const LEAN_GAIN = 0.05
 const LEAN_MAX = 0.14
+type MountPose = 'horse' | 'tractor'
+const TRACTOR_FORWARD_SPEED = 4.15
+const TRACTOR_REVERSE_SPEED = TRACTOR_FORWARD_SPEED
+const TRACTOR_ACCEL = 3.35
+const TRACTOR_BRAKE = 5.6
+const TRACTOR_DRAG = 3.8
+const TRACTOR_TURN_BASE = 0.15
+const TRACTOR_TURN_GAIN = 0.22
+const TRACTOR_STEER_SMOOTH = 7.2
+const HORSE_RIDER_Y_DROP = 0.06
+const HORSE_RIDER_X = 0
+const HORSE_RIDER_Z = -0.02
+const TRACTOR_RIDER_X = 0
+const TRACTOR_RIDER_Z = -0.84
 
 function suffixAction(mixer: AnimationMixer, root: Group, clips: AnimationClip[], name: string): AnimationAction | null {
   const clip = clips.find((c) => c.name.toLowerCase() === name || c.name.toLowerCase().endsWith(`|${name}`))
@@ -62,6 +77,11 @@ interface ProceduralRig {
 export class PlayerView {
   readonly group = new Group()
   readonly vel = new Vector3()
+  /** the TRUE fixed-step position — gameplay, collision and proximity read this
+   * via the `pos` getter. group.position is a RENDER-ONLY interpolation between
+   * prevPos and logicalPos, so the mesh glides between the 60Hz steps. */
+  private readonly logicalPos = new Vector3()
+  private readonly prevPos = new Vector3()
   /** current planar speed, units/s */
   speed = 0
   /** stick pushed past the run threshold (camera FOV nudge reads this) */
@@ -85,11 +105,18 @@ export class PlayerView {
   private lean = 0
   private baseScale = 1
   private rig: ProceduralRig | null = null
+  private horseRider: Group
+  private horseRiderBaseY = 0
+  private tractorRider: Group
+  private tractorRiderBaseY = 0
   private swingT = 0
   /** riding: the farmer MODEL lifts onto the saddle (pos stays ground-level so
    * proximity/camera are unaffected) and travels at a canter */
   private mounted = false
+  private mountPose: MountPose | null = null
   private rideBoost = 1
+  private vehicleSpeed = 0
+  private vehicleSteer = 0
   private bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
 
   constructor(assets: Assets, scene: Scene, spawn: Vector3, bounds: { minX: number; maxX: number; minZ: number; maxZ: number }) {
@@ -127,13 +154,55 @@ export class PlayerView {
       this.rig = rig
     }
     this.model = model
+    this.horseRider = buildHorseRider()
+    this.horseRider.visible = false
+    this.tractorRider = buildTractorRider()
+    this.tractorRider.visible = false
     this.group.add(model)
+    this.group.add(this.horseRider)
+    this.group.add(this.tractorRider)
     this.group.position.copy(spawn)
+    this.logicalPos.copy(spawn)
+    this.prevPos.copy(spawn)
     scene.add(this.group)
   }
 
   get pos(): Vector3 {
+    return this.logicalPos
+  }
+
+  /** the RENDER position (interpolated this frame). The camera and the sibling
+   * horse/tractor follow THIS so they stay locked to the smoothed farmer mesh
+   * rather than the 60Hz logical step. */
+  get renderPos(): Vector3 {
     return this.group.position
+  }
+
+  /** snapshot the logical position at the START of a fixed step — call once per
+   * fixed step, before movement integrates */
+  snapshotPrev(): void {
+    this.prevPos.copy(this.logicalPos)
+  }
+
+  /** commit the render transform: blend prevPos -> logicalPos by the engine's
+   * leftover accumulator fraction so the mesh glides between fixed steps. A jump
+   * bigger than any real step (>1.5u, ~13x a max horse step) is a teleport —
+   * snap, never slide (belt-and-suspenders for any missed teleport reset). */
+  renderInterpolated(alpha: number): void {
+    const dx = this.logicalPos.x - this.prevPos.x
+    const dz = this.logicalPos.z - this.prevPos.z
+    if (dx * dx + dz * dz > 2.25) {
+      this.prevPos.copy(this.logicalPos)
+      this.group.position.set(this.logicalPos.x, this.logicalPos.y, this.logicalPos.z)
+      return
+    }
+    this.group.position.set(this.prevPos.x + dx * alpha, this.logicalPos.y, this.prevPos.z + dz * alpha)
+  }
+
+  /** collapse interpolation after a teleport so the next frame shows no slide */
+  resetInterp(): void {
+    this.prevPos.copy(this.logicalPos)
+    this.group.position.copy(this.logicalPos)
   }
 
   /** cutscene escort: while set, the farmer walks himself here (joystick
@@ -157,14 +226,74 @@ export class PlayerView {
   /** mount/dismount Hazel: lifts the farmer model onto the saddle and lets him
    * canter. The group's position (pos) stays at ground level — only the model
    * child rises — so every proximity check and the camera anchor are unmoved. */
-  setMounted(on: boolean, saddleY = 0): void {
+  setMounted(on: boolean, saddleY = 0, pose: MountPose = 'horse'): void {
     this.mounted = on
+    this.mountPose = on ? pose : null
     this.rideBoost = on ? RIDE_BOOST : 1
-    this.model.position.y = on ? saddleY : 0
+    if (!on || pose !== 'tractor') {
+      this.vehicleSpeed = 0
+      this.vehicleSteer = 0
+    }
+    const horsePose = on && pose === 'horse'
+    const tractorPose = on && pose === 'tractor'
+    this.model.visible = !horsePose && !tractorPose
+    this.model.position.set(0, 0, 0)
+    this.model.rotation.x = 0
+
+    this.horseRider.visible = horsePose
+    this.horseRiderBaseY = saddleY - HORSE_RIDER_Y_DROP
+    this.horseRider.position.set(HORSE_RIDER_X, this.horseRiderBaseY, HORSE_RIDER_Z)
+    this.horseRider.rotation.set(0, 0, 0)
+
+    this.tractorRider.visible = tractorPose
+    this.tractorRiderBaseY = saddleY + 0.06
+    this.tractorRider.position.set(TRACTOR_RIDER_X, this.tractorRiderBaseY, TRACTOR_RIDER_Z)
+    this.tractorRider.rotation.set(0, 0, 0)
   }
 
   get isMounted(): boolean {
     return this.mounted
+  }
+
+  setFacing(yaw: number): void {
+    this.heading = normalizeYaw(yaw)
+    this.headingRate = 0
+    this.group.rotation.y = this.heading
+  }
+
+  get tractorSignedSpeed(): number {
+    return this.vehicleSpeed
+  }
+
+  get tractorSteer(): number {
+    return this.vehicleSteer
+  }
+
+  stopTractor(): void {
+    this.vehicleSpeed = 0
+    this.speed = 0
+    this.running = false
+    this.vel.set(0, 0, 0)
+  }
+
+  bumpTractor(): void {
+    this.vehicleSpeed *= 0.22
+    if (Math.abs(this.vehicleSpeed) < 0.16) this.vehicleSpeed = 0
+    this.speed = Math.abs(this.vehicleSpeed)
+    this.running = this.speed > 1.9
+    this.vel.set(0, 0, 0)
+  }
+
+  tractorDebug(): { speed: number; steer: number; yaw: number; vx: number; vz: number; x: number; z: number } {
+    return {
+      speed: +this.vehicleSpeed.toFixed(2),
+      steer: +this.vehicleSteer.toFixed(2),
+      yaw: +this.heading.toFixed(2),
+      vx: +this.vel.x.toFixed(2),
+      vz: +this.vel.z.toFixed(2),
+      x: +this.logicalPos.x.toFixed(2),
+      z: +this.logicalPos.z.toFixed(2),
+    }
   }
 
   /** fixed-step: camera-relative input -> velocity -> clamped position.
@@ -173,7 +302,7 @@ export class PlayerView {
   update(dt: number, input: { x: number; y: number }, camYaw: number): void {
     // scripted walks override the stick with a synthetic gentle deflection
     if (this.autoTo) {
-      const to = this.autoTo.clone().sub(this.group.position).setY(0)
+      const to = this.autoTo.clone().sub(this.logicalPos).setY(0)
       if (to.length() < 0.22) {
         this.autoTo = null
         input = { x: 0, y: 0 }
@@ -202,7 +331,7 @@ export class PlayerView {
     if (mag > 0.02) {
       this.vel.set((dirX / mag) * speed, 0, (dirZ / mag) * speed)
       this.speed = speed
-      const p = this.group.position
+      const p = this.logicalPos
       p.x = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, p.x + this.vel.x * dt))
       p.z = Math.min(this.bounds.maxZ, Math.max(this.bounds.minZ, p.z + this.vel.z * dt))
       const want = Math.atan2(dirX, dirZ)
@@ -219,6 +348,46 @@ export class PlayerView {
       this.running = false
       this.headingRate = 0
     }
+  }
+
+  updateTractor(dt: number, input: { x: number; y: number }): void {
+    const throttleAxis = shapeVehicleAxis(input.y, 0.1)
+    const steerAxis = shapeVehicleAxis(input.x, 0.14)
+    const throttle = Math.sign(throttleAxis) * Math.min(1, Math.pow(Math.abs(throttleAxis), 0.55) * 1.16)
+    const steerTarget = Math.sign(steerAxis) * Math.pow(Math.abs(steerAxis), 0.88)
+    const targetSpeed = throttle >= 0 ? throttle * TRACTOR_FORWARD_SPEED : throttle * TRACTOR_REVERSE_SPEED
+    const accel =
+      throttle === 0
+        ? TRACTOR_DRAG
+        : Math.abs(targetSpeed) > Math.abs(this.vehicleSpeed)
+          ? TRACTOR_ACCEL
+          : TRACTOR_BRAKE
+    this.vehicleSpeed += (targetSpeed - this.vehicleSpeed) * Math.min(1, accel * dt)
+    if (Math.abs(this.vehicleSpeed) < 0.025 && throttle === 0) this.vehicleSpeed = 0
+    this.vehicleSteer += (steerTarget - this.vehicleSteer) * Math.min(1, TRACTOR_STEER_SMOOTH * dt)
+
+    const absSpeed = Math.abs(this.vehicleSpeed)
+    if (absSpeed > 0.035 && Math.abs(this.vehicleSteer) > 0.02) {
+      const reverse = this.vehicleSpeed < 0 ? -1 : 1
+      const turnRate = this.vehicleSteer * reverse * (TRACTOR_TURN_BASE + absSpeed * TRACTOR_TURN_GAIN)
+      this.heading += turnRate * dt
+      while (this.heading > Math.PI) this.heading -= Math.PI * 2
+      while (this.heading < -Math.PI) this.heading += Math.PI * 2
+      this.group.rotation.y = this.heading
+      this.headingRate = turnRate
+    } else {
+      this.headingRate = 0
+    }
+
+    this.vel.set(Math.sin(this.heading) * this.vehicleSpeed, 0, Math.cos(this.heading) * this.vehicleSpeed)
+    const p = this.logicalPos
+    const nextX = p.x + this.vel.x * dt
+    const nextZ = p.z + this.vel.z * dt
+    p.x = Math.min(this.bounds.maxX, Math.max(this.bounds.minX, nextX))
+    p.z = Math.min(this.bounds.maxZ, Math.max(this.bounds.minZ, nextZ))
+    if (p.x !== nextX || p.z !== nextZ) this.bumpTractor()
+    this.speed = Math.abs(this.vehicleSpeed)
+    this.running = this.speed > 1.9
   }
 
   /** frame-rate: animation crossfades, foot-locked playback rate, turn lean,
@@ -257,6 +426,14 @@ export class PlayerView {
       this.rig.legR.rotation.x = s * amp
       this.rig.body.position.y = moving ? Math.abs(Math.sin(this.swingT)) * 0.05 : Math.sin(t * 1.8) * 0.015
     }
+    if (this.mountPose === 'horse') {
+      this.horseRider.position.y = this.horseRiderBaseY + Math.sin(t * (moving ? 10 : 2.4)) * (moving ? 0.018 : 0.004)
+      this.horseRider.rotation.x = moving ? -0.04 : -0.025
+      this.horseRider.rotation.z = this.lean * 0.45
+    } else if (this.mountPose === 'tractor') {
+      this.tractorRider.position.y = this.tractorRiderBaseY + Math.sin(t * (moving ? 13 : 3.5)) * (moving ? 0.01 : 0.003)
+      this.tractorRider.rotation.z = this.lean * 0.35
+    }
   }
 
   /** little pick-up flourish on harvest/serve (skips silently if no clip) */
@@ -294,6 +471,12 @@ export class PlayerView {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
+}
+
+function normalizeYaw(yaw: number): number {
+  while (yaw > Math.PI) yaw -= Math.PI * 2
+  while (yaw < -Math.PI) yaw += Math.PI * 2
+  return yaw
 }
 
 // ---- procedural fallback farmer -------------------------------------------
@@ -359,4 +542,164 @@ function buildProceduralFarmer(): { group: Group; rig: ProceduralRig } {
   }
   body.add(armL, armR, legL, legR)
   return { group, rig: { armL, armR, legL, legR, body } }
+}
+
+function buildHorseRider(): Group {
+  const skin = new MeshStandardMaterial({ color: '#f2c79b', roughness: 0.9 })
+  const overall = new MeshStandardMaterial({ color: '#4f74b8', roughness: 0.95 })
+  const shirt = new MeshStandardMaterial({ color: '#d9543f', roughness: 0.95 })
+  const straw = new MeshStandardMaterial({ color: '#e3b95c', roughness: 1 })
+  const boot = new MeshStandardMaterial({ color: '#5b3d28', roughness: 1 })
+  const saddle = new MeshStandardMaterial({ color: '#4b3325', roughness: 0.95 })
+  const blanket = new MeshStandardMaterial({ color: '#b84a36', roughness: 0.9 })
+
+  const group = new Group()
+  const mk = (geo: BoxGeometry | CapsuleGeometry | SphereGeometry | CylinderGeometry, mat: MeshStandardMaterial): Mesh => {
+    const m = new Mesh(geo, mat)
+    m.castShadow = true
+    return m
+  }
+  const limb = (mat: MeshStandardMaterial, len: number, r: number): Group => {
+    const pivot = new Group()
+    const m = mk(new CapsuleGeometry(r, len, 4, 8), mat)
+    m.position.y = -(len / 2 + r)
+    pivot.add(m)
+    return pivot
+  }
+
+  const saddleBlanket = mk(new BoxGeometry(0.58, 0.055, 0.7), blanket)
+  saddleBlanket.position.set(0, -0.03, 0)
+  group.add(saddleBlanket)
+  const seat = mk(new BoxGeometry(0.38, 0.1, 0.5), saddle)
+  seat.position.set(0, 0.025, -0.01)
+  group.add(seat)
+
+  const hips = mk(new CapsuleGeometry(0.22, 0.18, 4, 10), overall)
+  hips.position.set(0, 0.14, -0.01)
+  hips.rotation.x = Math.PI / 2
+  hips.scale.set(1.1, 0.75, 0.9)
+  group.add(hips)
+
+  const torso = mk(new CapsuleGeometry(0.2, 0.34, 4, 10), shirt)
+  torso.position.set(0, 0.5, 0.03)
+  torso.rotation.x = -0.16
+  group.add(torso)
+  const bib = mk(new CapsuleGeometry(0.2, 0.23, 4, 10), overall)
+  bib.position.set(0, 0.39, 0.06)
+  bib.rotation.x = -0.16
+  group.add(bib)
+  const head = mk(new SphereGeometry(0.19, 14, 12), skin)
+  head.position.set(0, 0.86, 0.04)
+  group.add(head)
+  const brim = mk(new CylinderGeometry(0.34, 0.36, 0.045, 14), straw)
+  brim.position.set(0, 1.02, 0.04)
+  group.add(brim)
+  const crown = mk(new CylinderGeometry(0.16, 0.19, 0.14, 12), straw)
+  crown.position.set(0, 1.11, 0.04)
+  group.add(crown)
+
+  const armL = limb(skin, 0.36, 0.052)
+  armL.position.set(0.22, 0.58, 0.07)
+  armL.rotation.x = -0.95
+  armL.rotation.z = 0.2
+  const armR = limb(skin, 0.36, 0.052)
+  armR.position.set(-0.22, 0.58, 0.07)
+  armR.rotation.x = -0.95
+  armR.rotation.z = -0.2
+
+  const legL = limb(overall, 0.34, 0.07)
+  legL.position.set(0.23, 0.17, 0.02)
+  legL.rotation.x = -0.38
+  legL.rotation.z = -0.38
+  const legR = limb(overall, 0.34, 0.07)
+  legR.position.set(-0.23, 0.17, 0.02)
+  legR.rotation.x = -0.38
+  legR.rotation.z = 0.38
+  for (const leg of [legL, legR]) {
+    const b = mk(new SphereGeometry(0.078, 8, 8), boot)
+    b.position.y = -0.42
+    b.scale.set(1.1, 0.7, 1.45)
+    leg.add(b)
+  }
+  group.add(armL, armR, legL, legR)
+  group.scale.setScalar(0.94)
+  return group
+}
+
+function buildTractorRider(): Group {
+  const skin = new MeshStandardMaterial({ color: '#f2c79b', roughness: 0.9 })
+  const overall = new MeshStandardMaterial({ color: '#4f74b8', roughness: 0.95 })
+  const shirt = new MeshStandardMaterial({ color: '#d9543f', roughness: 0.95 })
+  const straw = new MeshStandardMaterial({ color: '#e3b95c', roughness: 1 })
+  const boot = new MeshStandardMaterial({ color: '#5b3d28', roughness: 1 })
+
+  const group = new Group()
+  const mk = (geo: BoxGeometry | CapsuleGeometry | SphereGeometry | CylinderGeometry, mat: MeshStandardMaterial): Mesh => {
+    const m = new Mesh(geo, mat)
+    m.castShadow = true
+    return m
+  }
+  const limb = (mat: MeshStandardMaterial, len: number, r: number): Group => {
+    const pivot = new Group()
+    const m = mk(new CapsuleGeometry(r, len, 4, 8), mat)
+    m.position.y = -(len / 2 + r)
+    pivot.add(m)
+    return pivot
+  }
+
+  const hips = mk(new BoxGeometry(0.42, 0.16, 0.28), overall)
+  hips.position.set(0, 0.11, -0.02)
+  hips.rotation.x = 0.08
+  group.add(hips)
+
+  const torso = mk(new CapsuleGeometry(0.2, 0.34, 4, 10), shirt)
+  torso.position.set(0, 0.47, 0.03)
+  torso.rotation.x = -0.16
+  group.add(torso)
+  const bib = mk(new CapsuleGeometry(0.2, 0.24, 4, 10), overall)
+  bib.position.set(0, 0.37, 0.06)
+  bib.rotation.x = -0.16
+  group.add(bib)
+  const head = mk(new SphereGeometry(0.2, 14, 12), skin)
+  head.position.set(0, 0.84, 0.08)
+  group.add(head)
+  const brim = mk(new CylinderGeometry(0.34, 0.36, 0.045, 14), straw)
+  brim.position.set(0, 1, 0.08)
+  group.add(brim)
+  const crown = mk(new CylinderGeometry(0.16, 0.19, 0.14, 12), straw)
+  crown.position.set(0, 1.09, 0.08)
+  group.add(crown)
+
+  const armL = limb(skin, 0.42, 0.055)
+  armL.position.set(0.2, 0.61, 0.08)
+  armL.rotation.x = -1.08
+  armL.rotation.z = 0.12
+  const armR = limb(skin, 0.42, 0.055)
+  armR.position.set(-0.2, 0.61, 0.08)
+  armR.rotation.x = -1.08
+  armR.rotation.z = -0.12
+  const legL = limb(overall, 0.24, 0.068)
+  legL.position.set(0.14, 0.18, 0)
+  legL.rotation.x = -1.48
+  legL.rotation.z = -0.08
+  const legR = limb(overall, 0.24, 0.068)
+  legR.position.set(-0.14, 0.18, 0)
+  legR.rotation.x = -1.48
+  legR.rotation.z = 0.08
+  for (const leg of [legL, legR]) {
+    const b = mk(new SphereGeometry(0.072, 8, 8), boot)
+    b.position.y = -0.31
+    b.scale.set(1.05, 0.62, 1.45)
+    leg.add(b)
+  }
+  group.add(armL, armR, legL, legR)
+  group.scale.setScalar(0.92)
+  return group
+}
+
+function shapeVehicleAxis(value: number, deadzone: number): number {
+  const clamped = clamp(value, -1, 1)
+  const magnitude = Math.abs(clamped)
+  if (magnitude <= deadzone) return 0
+  return Math.sign(clamped) * ((magnitude - deadzone) / (1 - deadzone))
 }

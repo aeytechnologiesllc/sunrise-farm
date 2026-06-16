@@ -18,13 +18,14 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   PCFShadowMap,
+  PerspectiveCamera,
   Raycaster,
   Scene,
   SkinnedMesh,
   Vector3,
   WebGLRenderer,
 } from 'three'
-import { BloomEffect, EffectComposer, EffectPass, GodRaysEffect, RenderPass, VignetteEffect } from 'postprocessing'
+import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } from 'postprocessing'
 import { Music } from './audio/music'
 import { Sfx } from './audio/sfx'
 import { Engine } from './engine/Engine'
@@ -70,6 +71,7 @@ import { DecorSet } from './world/decorSet'
 import { catchUp, deserialize, initialState, SAVE_KEY, serialize, type GameState } from './game/state'
 import { Joystick } from './input/joystick'
 import { Hud, type ActionDef } from './ui/hud'
+import { PerfHud } from './ui/perfHud'
 import { Assets } from './world/assets'
 import { ChickenView } from './world/Chicken'
 import { CustomerView } from './world/Customer'
@@ -122,7 +124,7 @@ import {
 } from './game/upgrades'
 import { RideRig } from './world/riding'
 import { TownSet } from './world/townSet'
-import { fieldParcel, sheepCount, type TierDef } from './game/expansion'
+import { FIELD_X0, FIELD_Z0, FIELD_Z1, fieldParcel, sheepCount, type TierDef } from './game/expansion'
 import { orderFor } from './game/orders'
 import {
   availableProjects,
@@ -231,6 +233,12 @@ declare global {
       fence: (x0: number, z0: number, x1: number, z1: number) => number
       unfence: (x: number, z: number) => boolean
       fences: () => number
+      tractor: () => { owned: boolean; driving: boolean; pos: [number, number] | null }
+      tractorDebug: () => Record<string, unknown>
+      driveTractor: () => boolean
+      parkTractor: () => void
+      workTractorRows: () => boolean
+      rideHazelTrail: () => boolean
       editor: {
         open: () => boolean
         close: () => void
@@ -251,27 +259,121 @@ declare global {
       camMat: () => Record<string, unknown>
       town: () => GameState['town']
       telemetry: () => SunriseFarmSnapshot
+      boot: () => typeof window.__sunriseBoot | undefined
     }
     __step: (s: number) => void
+    __sunriseBoot?: {
+      ready: boolean
+      hiddenMs: number
+      warmupMs: number
+      worstFrameMs: number
+      longFrames: number
+      veryLongFrames: number
+      forced: boolean
+    }
+    __sunrisePerf?: {
+      seconds: number
+      samples: number
+      avgFrameMs: number
+      maxFrameMs: number
+      longFrames: number
+      veryLongFrames: number
+      windowMaxFrameMs: number
+      windowLongFrames: number
+      windowVeryLongFrames: number
+      fps: number
+      dpr: number
+      calls: number
+      tris: number
+      pos: [number, number]
+      saves: number
+      saveMs: number
+      maxSaveMs: number
+      pendingSave: boolean
+    }
   }
 }
 
 async function boot(): Promise<void> {
   const bootStarted = performance.now()
+  const debugParams = new URLSearchParams(location.search)
+  const perfRun = debugParams.get('perfRun') === '1'
+  const perfScenario = perfRun ? debugParams.get('scenario') : null
+  const qaScenario = debugParams.get('qa')
+  const tractorDebugMode =
+    debugParams.get('tractorDebug') === '1' || debugParams.get('driveDebug') === '1' || debugParams.get('debug') === 'tractor'
+  if (perfRun || qaScenario) {
+    try {
+      sessionStorage.setItem('sunrise-farm.rotateDismissed', '1')
+    } catch {
+      // profiler mode is best-effort; storage can be denied in embedded browsers
+    }
+  }
+  // ---- PWA freshness ----------------------------------------------------
+  // There is no service worker, so a redeploy auto-busts the content-hashed JS;
+  // the only file that can go stale is index.html on an installed PWA / iOS
+  // home-screen app. Compare the baked build id to a no-store version.json and
+  // hard-reload past the cached HTML when a newer build is live. Guarded so it
+  // never loops, never runs in dev (build id 'local') and never fights QA.
+  const APP_BUILD = import.meta.env.VITE_APP_VERSION || 'local'
+  if (APP_BUILD !== 'local' && !perfRun && !qaScenario) {
+    let freshed = false
+    try {
+      freshed = sessionStorage.getItem('sunrise-farm.fresh') === '1'
+    } catch {
+      // private-mode storage is denied; the cache-busting query below still
+      // breaks any loop on its own, so failing open here is safe
+    }
+    if (!freshed) {
+      void fetch('./version.json', { cache: 'no-store' })
+        .then((r) => (r.ok ? (r.json() as Promise<{ build?: string }>) : null))
+        .then((v) => {
+          if (v && typeof v.build === 'string' && v.build !== APP_BUILD) {
+            try {
+              sessionStorage.setItem('sunrise-farm.fresh', '1')
+            } catch {
+              /* see note above */
+            }
+            const u = new URL(location.href)
+            u.searchParams.set('b', v.build) // a query the cached HTML lacks -> fresh fetch
+            location.replace(u.toString())
+          }
+        })
+        .catch(() => {
+          // offline, or an older deploy with no version.json — just run as-is
+        })
+    }
+  }
+
   // ---- loading veil -----------------------------------------------------
   const veil = document.createElement('div')
   veil.style.cssText =
     'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-    'background:#87b86a;color:#fff;font:800 28px Trebuchet MS,sans-serif;z-index:99;gap:10px'
-  veil.innerHTML = '<div>🌻 Sunrise Farm</div><div id="ldp" style="font-size:15px;font-weight:700">loading…</div>'
+    'background:linear-gradient(180deg,#b9d988,#87b86a);color:#fff;font:800 28px Trebuchet MS,sans-serif;z-index:99;gap:12px;' +
+    'text-shadow:0 2px 10px rgba(52,74,24,.28)'
+  veil.innerHTML =
+    '<div style="font-size:34px;line-height:1">🌻 Sunrise Farm</div>' +
+    '<div id="ldp" style="font-size:15px;font-weight:800">loading assets…</div>' +
+    '<div style="width:min(280px,70vw);height:8px;border-radius:999px;background:rgba(255,255,255,.32);overflow:hidden;box-shadow:inset 0 1px 2px rgba(60,90,30,.18)">' +
+    '<div id="ldbar" style="height:100%;width:0%;border-radius:inherit;background:#fff7c8;transition:width .12s ease-out"></div>' +
+    '</div>'
   document.body.appendChild(veil)
+  const ldp = veil.querySelector<HTMLDivElement>('#ldp')!
+  const ldbar = veil.querySelector<HTMLDivElement>('#ldbar')!
 
   // phones get a lighter pipeline: lower DPR cap, no MSAA, cheaper god rays —
   // the owner's device reported lag and post-processing is the big lever
   const isCoarse = matchMedia('(pointer: coarse)').matches
+  const mobilePerf =
+    isCoarse ||
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && Math.min(innerWidth, innerHeight) < 700)
+  const desktopControls = matchMedia('(hover:hover) and (pointer:fine)').matches && !mobilePerf
+  const shadowsEnabled = debugParams.get('shadows') === '1' && !mobilePerf
+  document.documentElement.classList.toggle('desktop-controls', desktopControls)
   const renderer = new WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' })
   renderer.toneMapping = ACESFilmicToneMapping
-  renderer.shadowMap.enabled = true
+  renderer.shadowMap.enabled = shadowsEnabled
   renderer.shadowMap.type = PCFShadowMap
   // the shadow map redraws on OUR schedule (every other frame — the sun
   // crawls, nobody can see a 33ms-stale shadow), not every frame
@@ -283,14 +385,15 @@ async function boot(): Promise<void> {
   // struggle. Boot 1.6 with headroom to 1.8 stays above the flat 1.5 cap
   // the owner once clocked as 'lost quality'; on a 460ppi panel at arm's
   // length the difference is at visual acuity in motion.
-  const DPR_MAX = Math.min(devicePixelRatio, isCoarse ? 1.8 : 2)
-  const DPR_MIN = isCoarse ? 1.1 : 1.5
-  let dpr = Math.min(devicePixelRatio, isCoarse ? 1.6 : 2)
+  const DPR_MAX = Math.min(devicePixelRatio, mobilePerf ? 1.25 : 2)
+  const DPR_MIN = mobilePerf ? 0.82 : 1.5
+  let dpr = Math.min(devicePixelRatio, mobilePerf ? 1.05 : 2)
   renderer.setPixelRatio(dpr)
   document.body.appendChild(renderer.domElement)
 
   const scene = new Scene()
   const cam = new FollowCamera(renderer.domElement, PLAYER_SPAWN)
+  cam.lowSpec = mobilePerf
   // displacement-based camera look-ahead (see the onFrame block): reset
   // alongside every player teleport or the first frame computes a huge jump
   /** occlusion-hull material: the proxy OBJECT is invisible (renderer
@@ -309,10 +412,10 @@ async function boot(): Promise<void> {
   let playerGhost = false
   const camHead = new Vector3()
 
-  // warm ACES grade; desktop keeps the cinematic effect pass. Touch devices
-  // render direct to the canvas so running/sun-view scenes do not pay a
-  // full-screen bloom/vignette pass every frame.
-  const composer = isCoarse ? null : new EffectComposer(renderer, { multisampling: 4 })
+  // warm ACES grade; post-processing is opt-in for release so sun-view scenes
+  // and embedded portals avoid fullscreen pass cost unless explicitly profiled.
+  const postFxEnabled = debugParams.get('postfx') === '1' && !isCoarse
+  const composer = postFxEnabled ? new EffectComposer(renderer, { multisampling: 4 }) : null
   composer?.addPass(new RenderPass(scene, cam.camera))
   // manual info reset: the composer runs multiple passes per frame and
   // autoReset would hide the real draw-call total from the dev driver
@@ -329,10 +432,15 @@ async function boot(): Promise<void> {
   engine.onFrame(() => gsap.updateRoot(engine.uTime.value))
 
   const assets = new Assets()
-  const ldp = veil.querySelector('#ldp')!
-  await assets.loadAll((d, t) => (ldp.textContent = `loading ${d}/${t}`))
+  await assets.loadAll((d, t) => {
+    ldp.textContent = `loading assets ${d}/${t}`
+    ldbar.style.width = `${Math.round((d / Math.max(1, t)) * 100)}%`
+  })
+  ldp.textContent = 'building the farm…'
+  ldbar.style.width = '100%'
 
   // ---- state first (scenery is tier-aware) --------------------------------
+  if ((perfRun || qaScenario) && debugParams.get('wipe') === '1') safeStorage.removeItem(SAVE_KEY)
   const rawSave = safeStorage.getItem(SAVE_KEY)
   const loaded = deserialize(rawSave)
   // a save that EXISTS but no longer parses is rescued, never clobbered: the
@@ -346,6 +454,38 @@ async function boot(): Promise<void> {
   // would otherwise re-run the refund on the next cold open (double-pay). Detect
   // it from the PRE-migration raw save (loaded ⟹ rawSave parsed cleanly).
   const migrationFlush = !!loaded && !!rawSave && !(JSON.parse(rawSave) as { farmhandRetired?: boolean }).farmhandRetired
+  const qaUnlockedScenario = perfScenario === 'horse' || perfScenario === 'tractor' || qaScenario === 'horse' || qaScenario === 'tractor'
+  if (qaUnlockedScenario) {
+    state.coins = Math.max(state.coins, 20000)
+    state.wheat = Math.max(state.wheat, 6)
+    state.level = Math.max(state.level, 24)
+    state.harvests = Math.max(state.harvests, 12)
+    state.day = Math.max(state.day, 3)
+    state.fieldParcels = Math.max(state.fieldParcels, 3)
+    state.projects = {
+      ...state.projects,
+      stand: true,
+      sheep: true,
+      goats: true,
+      coop: true,
+      stable: true,
+      horse: true,
+    }
+    state.upgrades = { ...state.upgrades, tackroom: true }
+    state.hazel.hearts = Math.max(state.hazel.hearts, 2)
+    state.chicken = { ...state.chicken, arrived: true, name: state.chicken.name ?? 'Mabel', hearts: Math.max(state.chicken.hearts, 2) }
+    state.timers.sow = 0
+    state.chipsDone = { plant: true, harvest: true, feed: true, collect: true, pet: true }
+    while (state.plots.length < 12) state.plots.push({ crop: null })
+    state.plots = state.plots.slice(0, 12).map((plot, i) => ({
+      crop:
+        i % 3 === 0
+          ? { kind: 'wheat', total: CROPS.wheat.growSec, remaining: 0, chimed: true }
+          : plot.crop && plot.crop.remaining <= 0
+            ? plot.crop
+            : null,
+    }))
+  }
   const game = new Game(state)
   let wiping = false
   const snapshot = (): SunriseFarmSnapshot => ({
@@ -390,7 +530,7 @@ async function boot(): Promise<void> {
   bindParcels(state.fieldParcels)
   if (!state.projects.shop) marketToStand(placeOf(state, 'stand'))
 
-  const lights = buildLights(scene)
+  const lights = buildLights(scene, { mobilePerf: mobilePerf || !shadowsEnabled })
   const sky = buildSky(scene)
   // the sun walks the sky: dawn -> noon -> golden hour, then PARKS at dusk
   // until the farmer goes to bed (the sleep ritual starts the next day).
@@ -429,23 +569,10 @@ async function boot(): Promise<void> {
       resolutionScale: 1,
     })
     const vignette = new VignetteEffect({ darkness: 0.3, offset: 0.26 })
-    composer.addPass(
-      new EffectPass(
-        cam.camera,
-        new GodRaysEffect(cam.camera, sky.sunDisk, {
-          density: 0.96,
-          decay: 0.93,
-          weight: 0.25,
-          samples: 32,
-          resolutionScale: 0.5,
-        }),
-        bloom,
-        vignette,
-      ),
-    )
+    composer.addPass(new EffectPass(cam.camera, bloom, vignette))
   }
   buildGround(scene)
-  const { grass, forest } = buildMeadow(scene, assets)
+  const { grass, forest } = buildMeadow(scene, assets, { mobilePerf })
   // level one starts from SCRATCH: the stand exists only once its project is
   // built (and the Farm Shop later replaces it)
   let standGroup: Group | null =
@@ -469,6 +596,40 @@ async function boot(): Promise<void> {
   const hud = new Hud()
   hud.mountMusicToggle(music.isMuted, (m) => music.setMuted(m))
   hud.mountFullscreenToggle()
+  // on-device perf readout — the only trustworthy fps comes from the real
+  // phone (simulator/emulator render on the desktop GPU). Toggle via ?fps=1, a
+  // three-finger tap, or window.__farmFps(); the choice persists across loads.
+  const perfHud = new PerfHud({
+    persist: (on) => {
+      if (on) safeStorage.setItem('sunrise-farm.fps', '1')
+      else safeStorage.removeItem('sunrise-farm.fps')
+    },
+  })
+  const fpsParam = debugParams.get('fps')
+  if (fpsParam === '0') safeStorage.removeItem('sunrise-farm.fps')
+  if (fpsParam === '1' || (fpsParam !== '0' && safeStorage.getItem('sunrise-farm.fps') === '1')) {
+    if (fpsParam === '1') safeStorage.setItem('sunrise-farm.fps', '1')
+    perfHud.setEnabled(true)
+  }
+  // three fingers toggles it on ANY device (1 finger walks/looks, 2 pinch-zoom;
+  // 3 is free) — works in an installed PWA with no address bar to add ?fps=1
+  addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length === 3) perfHud.toggle()
+    },
+    { passive: true },
+  )
+  Object.assign(window, { __farmFps: () => perfHud.toggle() })
+  const tractorDebugEl = tractorDebugMode ? document.createElement('pre') : null
+  if (tractorDebugEl) {
+    tractorDebugEl.style.cssText =
+      'position:fixed;left:50%;top:8px;z-index:24;margin:0;padding:5px 8px;border-radius:999px;transform:translateX(-50%);' +
+      'background:rgba(20,18,10,.64);color:#fff6c9;font:800 8.5px/1.18 ui-monospace,SFMono-Regular,Menlo,monospace;' +
+      'pointer-events:none;white-space:pre;text-align:center;text-shadow:0 1px 2px rgba(0,0,0,.55);max-width:min(250px,52vw)'
+    tractorDebugEl.textContent = 'tractor debug waiting…'
+    document.body.appendChild(tractorDebugEl)
+  }
   // ONE stick: LEFT walks the farmer (+WASD). The camera is direct-drag —
   // mouse on desktop, the free thumb anywhere on the world on touch.
   const joy = new Joystick({ side: 'left', keyboard: true })
@@ -595,10 +756,20 @@ async function boot(): Promise<void> {
       sparkleBurst(scene, new Vector3(x, 0.5, z), false, 4)
     },
     canOpen: () =>
-      !sleepActive && !construction.active && !fetchCine && !roomBusy && room === null && !carry.carrying && !hud.modalOpen && !riding && !placingDecor,
+      !sleepActive &&
+      !construction.active &&
+      !fetchCine &&
+      !roomBusy &&
+      room === null &&
+      !carry.carrying &&
+      !hud.modalOpen &&
+      !riding &&
+      !tractorDriving &&
+      !placingDecor,
     // editing wants OVERVIEW: pull back to see the line you're drawing
     // (the tight landscape ride is for walking, not surveying)
     onOpen: () => {
+      joy.releaseKeyboard()
       editSavedDist = cam.dist
       cam.dist = Math.max(cam.dist, 14)
       // the camera STOPS reading gestures while the editor owns the pointer —
@@ -727,8 +898,48 @@ async function boot(): Promise<void> {
   }
 
 
+  let savePending = false
+  let saveQueued = false
+  let saveCount = 0
+  let lastSaveMs = 0
+  let maxSaveMs = 0
+  const requestIdle =
+    window.requestIdleCallback ??
+    ((cb: IdleRequestCallback) =>
+      window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as IdleDeadline), 1))
+  const cancelIdle = window.cancelIdleCallback ?? window.clearTimeout
+  let saveIdleHandle: number | null = null
+  const writeSave = (): void => {
+    const started = performance.now()
+    safeStorage.setItem(SAVE_KEY, serialize(state))
+    lastSaveMs = performance.now() - started
+    maxSaveMs = Math.max(maxSaveMs, lastSaveMs)
+    saveCount += 1
+  }
+  const flushQueuedSave = (): void => {
+    if (saveIdleHandle !== null) {
+      cancelIdle(saveIdleHandle)
+      saveIdleHandle = null
+    }
+    savePending = false
+    saveQueued = false
+    if (!wiping) writeSave()
+  }
   const saveNow = (): void => {
-    if (!wiping) safeStorage.setItem(SAVE_KEY, serialize(state))
+    if (!wiping) flushQueuedSave()
+  }
+  const saveSoon = (): void => {
+    if (wiping) return
+    saveQueued = true
+    if (savePending) return
+    savePending = true
+    saveIdleHandle = requestIdle(() => {
+      saveIdleHandle = null
+      savePending = false
+      if (!saveQueued || wiping) return
+      saveQueued = false
+      writeSave()
+    }, { timeout: 1400 })
   }
   // persist a just-applied one-time migration immediately (see migrationFlush)
   if (migrationFlush) saveNow()
@@ -997,36 +1208,38 @@ async function boot(): Promise<void> {
   }
 
   // ---- proximity actions ------------------------------------------------------
-  const doHarvest = (i: number): void => {
+  const doHarvest = (i: number, persist = true, quiet = false): void => {
     const center = plots[i].center.clone().setY(0.9)
     const res = game.harvest(i)
     if (!res) return
     telemetry.milestone('first_harvest', { kind: res.kind, coins: res.coins, golden: res.golden })
-    plots[i].harvestPop(res.golden)
+    if (!quiet) plots[i].harvestPop(res.golden)
     plots[i].setCrop(null, 0, false)
     lastGlow[i] = 'none'
-    sfx.pop()
-    player.gesture(engine.uTime.value)
-    if (res.golden) {
-      sfx.golden()
-      sparkleBurst(scene, center, true, 16)
-      rareSlowMo()
-    } else {
-      sparkleBurst(scene, center, false, 6)
+    if (!quiet) {
+      sfx.pop()
+      player.gesture(engine.uTime.value)
+      if (res.golden) {
+        sfx.golden()
+        sparkleBurst(scene, center, true, 16)
+        rareSlowMo()
+      } else {
+        sparkleBurst(scene, center, false, 6)
+      }
+      fountainFrom(center, res.coins, res.golden)
+      const s = cam.screenPos(center.clone().setY(1.6))
+      if (!s.behind) hud.floatText(s, `+1 ${GOOD_EMOJI[res.kind]}`)
     }
-    fountainFrom(center, res.coins, res.golden)
-    const s = cam.screenPos(center.clone().setY(1.6))
-    if (!s.behind) hud.floatText(s, `+1 ${GOOD_EMOJI[res.kind]}`)
     hud.setWheat(state.wheat)
-    saveNow()
+    if (persist) saveNow()
   }
 
-  const plantAt = (i: number, kind: CropKind): void => {
+  const plantAt = (i: number, kind: CropKind, persist = true, quiet = false): void => {
     if (game.plant(i, kind)) {
       telemetry.milestone('first_crop_planted', { kind, plot: i })
-      plots[i].setCrop(kind, 0, true)
-      sfx.plant()
-      saveNow()
+      plots[i].setCrop(kind, 0, !quiet)
+      if (!quiet) sfx.plant()
+      if (persist) saveNow()
     }
   }
 
@@ -1305,6 +1518,7 @@ async function boot(): Promise<void> {
     // door) — the guard protects the dev driver and future callers from
     // auto-walking 170u toward a homestead the room bounds will never reach
     if (sleepActive || construction.active || fetchCine || room !== null || roomBusy || carry.carrying || !dayCycle.atDusk) return
+    parkTractor()
     dismountHazel() // you don't sleep in the saddle
     cancelDecorPlace() // and you don't leave a decoration floating overnight
     fenceEditor.close() // the day's fencing is done at dusk
@@ -1426,6 +1640,7 @@ async function boot(): Promise<void> {
       player.group.scale.setScalar(1)
       homestead.setDoorOpen(0)
       player.pos.copy(homestead.thresholdPos.addScaledVector(doorN, -0.4))
+      player.resetInterp()
       player.autoWalkTo(null)
       if (wife) {
         gsap.killTweensOf(wife.group.scale)
@@ -1565,22 +1780,60 @@ async function boot(): Promise<void> {
   const rideRig = new RideRig(scene, assets)
   let riding = false
   let rideSavedDist: number | null = null
+  let tractorDriving = false
+  let tractorSavedDist: number | null = null
+  let tractorSoundAt = 0
+  let rideSoundAt = 0
+  const tractorTouchedAt = new Map<number, number>()
+  let tractorRowRoute: Vector3[] = []
+  let tractorRowIndex = 0
+  let tractorRowStartedAt = 0
+  let horseTrailRoute: Vector3[] = []
+  let horseTrailIndex = 0
+  let horseTrailStartedAt = 0
+  const faceHazelTowardTrail = (): void => {
+    const next = deliveryRoute(state).find(([x, z]) => Math.hypot(x - player.pos.x, z - player.pos.z) > 0.8)
+    if (!next) return
+    const [x, z] = next
+    const dx = x - player.pos.x
+    const dz = z - player.pos.z
+    const dist = Math.hypot(dx, dz)
+    const step = Math.min(5.8, Math.max(0, dist - 0.6))
+    if (step > 0.5) {
+      player.pos.x += (dx / dist) * step
+      player.pos.z += (dz / dist) * step
+      player.resetInterp()
+      prevPos.x = player.pos.x
+      prevPos.z = player.pos.z
+      lastCamPos.copy(player.pos)
+      camVelSmooth.set(0, 0, 0)
+    }
+    player.setFacing(Math.atan2(x - player.pos.x, z - player.pos.z))
+    cam.yaw = player.facing - Math.PI / 2
+    cam.snapTo(player.pos)
+  }
   const mountHazel = (): void => {
-    if (riding || !canRideHazel(state) || state.produce.deliveryT > 0) return
+    if (tractorDriving || riding || !canRideHazel(state) || state.produce.deliveryT > 0) return
     riding = true
     grazers.setHidden('horse', true) // the grazing Hazel steps in to be ridden
+    faceHazelTowardTrail()
     rideRig.mount(player.pos, player.facing)
-    player.setMounted(true, rideRig.saddleY)
+    player.setMounted(true, rideRig.saddleY, 'horse')
     cam.rideLift = 0.85 // aim up at the rider, not the horse's back
     cam.clearWhiskers() // the +2.2u jump must not inherit the old orbit's hits
     rideSavedDist = cam.dist
     cam.dist = Math.min(17, cam.dist + 2.2) // sit back to frame horse + rider
+    rideSoundAt = engine.uTime.value
     sfx.hooves()
-    hud.showBanner('Up on Hazel \u{1F434}', 'ride out — press Hop down to dismount')
+    const mountedAt = cam.screenPos(player.pos.clone().setY(2.2))
+    if (!mountedAt.behind) hud.floatText(mountedAt, 'Up on Hazel \u{1F434}')
   }
   const dismountHazel = (): void => {
     if (!riding) return
     riding = false
+    horseTrailRoute = []
+    horseTrailIndex = 0
+    player.autoWalkTo(null)
     rideRig.dismount()
     player.setMounted(false)
     cam.rideLift = 0
@@ -1588,6 +1841,150 @@ async function boot(): Promise<void> {
     if (rideSavedDist !== null) cam.dist = rideSavedDist
     rideSavedDist = null
     cam.clearWhiskers() // dropping back to the closer orbit, same reason
+  }
+  const saveAfterTractorWork = (): void => {
+    if (mobilePerf) saveSoon()
+    else saveNow()
+  }
+  const fieldPlotCenters = (): Vector3[] => {
+    const centers: Vector3[] = []
+    for (let i = 0; i < state.plots.length; i++) centers.push(plots[i].center.clone().setY(0))
+    return centers
+  }
+  const buildFieldRoute = (): Vector3[] => {
+    const rows = new Map<number, Vector3[]>()
+    for (const center of fieldPlotCenters()) {
+      const key = Math.round(center.z * 10) / 10
+      const row = rows.get(key) ?? []
+      row.push(center)
+      rows.set(key, row)
+    }
+    const route: Vector3[] = []
+    ;[...rows.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .forEach(([, row], rowIndex) => {
+        row.sort((a, b) => (rowIndex % 2 === 0 ? a.x - b.x : b.x - a.x))
+        route.push(...row)
+      })
+    return route
+  }
+  const wrapPi = (v: number): number => {
+    while (v > Math.PI) v -= Math.PI * 2
+    while (v < -Math.PI) v += Math.PI * 2
+    return v
+  }
+  const clampUnit = (v: number): number => Math.max(-1, Math.min(1, v))
+  const tractorInputToTarget = (target: Vector3 | undefined): { x: number; y: number } => {
+    if (!target) return { x: 0, y: 0 }
+    const dx = target.x - player.pos.x
+    const dz = target.z - player.pos.z
+    const dist = Math.hypot(dx, dz)
+    if (dist < 0.2) return { x: 0, y: 0 }
+    const want = Math.atan2(dx, dz)
+    const turn = wrapPi(want - player.facing)
+    const absTurn = Math.abs(turn)
+    const steer = clampUnit(turn / 0.72)
+    const throttle = absTurn > 2.35 ? -0.38 : absTurn > 1.2 ? 0.48 : dist < 0.95 ? 0.45 : 0.9
+    return { x: steer, y: throttle }
+  }
+  const clearTractorRows = (): void => {
+    tractorRowRoute = []
+    tractorRowIndex = 0
+    player.autoWalkTo(null)
+  }
+  const clearHorseTrail = (): void => {
+    horseTrailRoute = []
+    horseTrailIndex = 0
+    player.autoWalkTo(null)
+  }
+  const fieldReadyPlots = (): number[] => {
+    const ready: number[] = []
+    for (let i = 0; i < state.plots.length; i++) {
+      const crop = game.plotAt(i)?.crop
+      if (crop && crop.remaining <= 0) ready.push(i)
+    }
+    return ready
+  }
+  const tractorHarvestAll = (): void => {
+    if (!tractor) return
+    const ready = fieldReadyPlots()
+    if (!ready.length) return
+    sfx.tractor()
+    tractor.chug()
+    const at = cam.screenPos(tractor.position.clone().setY(1.8))
+    if (!at.behind) hud.floatText(at, `${ready.length} harvested + replanted \u{1F69C}`)
+    ready.forEach((i, k) =>
+      gsap.delayedCall(0.08 + k * 0.08, () => {
+        doHarvest(i, false)
+        plantAt(i, 'wheat', false)
+      }),
+    )
+    gsap.delayedCall(0.12 + ready.length * 0.08, saveAfterTractorWork)
+  }
+  const mountTractor = (): boolean => {
+    if (!tractor || tractorDriving || riding || sleepActive || construction.active || fetchCine || roomBusy || room !== null || hud.modalOpen) {
+      return false
+    }
+    tractorDriving = true
+    tractorTouchedAt.clear()
+    clearHorseTrail()
+    player.setFacing(tractor.heading)
+    tractor.startDrive(player.pos, player.facing)
+    player.setMounted(true, tractor.saddleY, 'tractor')
+    cam.rideLift = 0.55
+    cam.clearWhiskers()
+    tractorSavedDist = cam.dist
+    cam.dist = Math.min(16, cam.dist + 1.6)
+    tractorSoundAt = engine.uTime.value
+    sfx.tractor()
+    tractor.chug()
+    hud.showBanner('On the tractor \u{1F69C}', desktopControls ? 'Space starts row assist' : 'Auto rows handles planting + harvest')
+    return true
+  }
+  const startTractorRows = (): boolean => {
+    if (!tractorDriving && !mountTractor()) return false
+    const route = buildFieldRoute()
+    if (!route.length) return false
+    tractorRowRoute = route
+    tractorRowIndex = 0
+    tractorRowStartedAt = engine.uTime.value
+    player.autoWalkTo(null)
+    sfx.tractor()
+    tractor?.chug()
+    hud.showBanner('Row assist on \u{1F69C}', 'tractor will harvest and replant each row')
+    return true
+  }
+  const parkTractor = (): void => {
+    if (!tractorDriving) return
+    tractorDriving = false
+    tractorTouchedAt.clear()
+    clearTractorRows()
+    player.setMounted(false)
+    cam.rideLift = 0
+    if (tractor) {
+      tractor.park()
+      relayout('tractor', tractor.position.x, tractor.position.z)
+    }
+    if (tractorSavedDist !== null) cam.dist = tractorSavedDist
+    tractorSavedDist = null
+    cam.clearWhiskers()
+    saveAfterTractorWork()
+  }
+  const startHorseTrail = (): boolean => {
+    if (!riding) mountHazel()
+    if (!riding) return false
+    clearTractorRows()
+    horseTrailRoute = [
+      PADDOCK_CENTER.clone().setY(0),
+      ...deliveryRoute(state).map(([x, z]) => new Vector3(x, 0, z)),
+      PADDOCK_CENTER.clone().setY(0),
+    ]
+    horseTrailIndex = 0
+    horseTrailStartedAt = engine.uTime.value
+    player.autoWalkTo(horseTrailRoute[0])
+    sfx.hooves()
+    hud.showBanner('Trail ride \u{1F434}', 'Hazel follows the farm road — steer to cancel')
+    return true
   }
   const penRect0 = penRect(state)
   const GOAT_RECT = { x0: penRect0.x0 + 0.7, z0: penRect0.z0 + 0.7, x1: penRect0.x1 - 0.7, z1: penRect0.z1 - 0.7 }
@@ -1876,7 +2273,7 @@ async function boot(): Promise<void> {
         hud.showBanner(
           `${def.name}!`,
           tractorArrived
-            ? 'The old tractor rumbles in \u{1F69C} — it sows the whole field in one pass'
+            ? 'The old tractor rumbles in \u{1F69C} — Auto rows can harvest and replant the field'
             : def.flavor,
         )
         music.duck()
@@ -1988,7 +2385,7 @@ async function boot(): Promise<void> {
   })
   /** fixed-tick: a held press matures into a lift if it's over a movable */
   const checkLongPress = (): void => {
-    if (riding || placingDecor) return // not while mounted or arranging decor
+    if (riding || tractorDriving || placingDecor) return // not while mounted or arranging decor
     if (!press || engine.uTime.value - press.at < 0.55) return
     const ndc = {
       x: (press.x / innerWidth) * 2 - 1,
@@ -2046,6 +2443,8 @@ async function boot(): Promise<void> {
     upgrade: null as UpgradeId | null,
     /** by Hazel's paddock with the tack room owned — can mount up */
     ride: false,
+    /** by Hazel, but still missing the Tack Room riding upgrade */
+    rideLocked: false,
     /** at the Farm Shop with the catalog open to browse decor + fence skins */
     catalog: false,
     /** standing on a placed decoration — can pick it up to re-arrange / free a slot */
@@ -2295,7 +2694,7 @@ async function boot(): Promise<void> {
 
   /** may the player pick this up right now? (one scene at a time) */
   const canLift = (id: PlaceId): boolean => {
-    if (carry.carrying || carry.settling || fenceEditor.active) return false
+    if (carry.carrying || carry.settling || fenceEditor.active || tractorDriving) return false
     if (sleepActive || construction.active || fetchCine || roomBusy || room !== null || hud.modalOpen) return false
     // fields stay where they're laid out — carrying them dropped the player into
     // "something little lives there" dead-ends near the home-yard landmarks, with
@@ -2407,6 +2806,7 @@ async function boot(): Promise<void> {
       if (enter) def.onEnter?.()
       const to = enter ? def.interior.spawnPos : def.door.exitSpot
       player.pos.copy(to)
+      player.resetInterp()
       prevPos.x = to.x
       prevPos.z = to.z
       lastCamPos.copy(to)
@@ -2442,7 +2842,8 @@ async function boot(): Promise<void> {
     // belt-and-braces: a stale button can never start a second scene
     // (roomBusy: nor act through the door-transition's dip to black)
     if (sleepActive || construction.active || roomBusy || fetchCine) return
-    if (id === 'setdown') setDown()
+    if (id === 'parktractor') parkTractor()
+    else if (id === 'setdown') setDown()
     else if (id === 'carryback') cancelCarry()
     else if (id === 'enterroom' && near.roomDoor !== null) throughDoor(near.roomDoor, true)
     else if (id === 'exitroom' && room !== null && near.roomExit) throughDoor(room, false)
@@ -2455,6 +2856,10 @@ async function boot(): Promise<void> {
     else if (id === 'orders' && near.orders) openOrderPanel()
     else if (id === 'ride' && near.ride) mountHazel()
     else if (id === 'hopoff' && riding) dismountHazel()
+    else if (id === 'trailride' && riding) startHorseTrail()
+    else if (id === 'tractor-drive' && near.tractor) mountTractor()
+    else if (id === 'tractor-auto' && (near.tractor || tractorDriving)) startTractorRows()
+    else if (id === 'harvestall' && near.tractor) tractorHarvestAll()
     else if (id === 'catalog' && near.catalog) openCatalog()
     else if (id === 'decorpick' && near.decor) {
       // remove the nearest placed decoration so the player can re-arrange or
@@ -2734,6 +3139,91 @@ async function boot(): Promise<void> {
       }
     }
   }
+  let lastActionDefs: ActionDef[] = []
+  const editableTarget = (target: EventTarget | null): boolean => {
+    const el = target as HTMLElement | null
+    if (!el) return false
+    return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable
+  }
+  const triggerAction = (action: ActionDef | undefined): void => {
+    if (!action || action.locked || hud.modalOpen) return
+    onAction(action.id)
+  }
+  const nearestKeyboardPlot = (): number => {
+    if (hud.modalOpen || sleepActive || construction.active || fetchCine || roomBusy || carry.carrying) return -1
+    let best = -1
+    let bestD = PLOT_R
+    for (let i = 0; i < plots.length; i++) {
+      if (game.isGreenhouse(i)) continue
+      const d = player.pos.distanceTo(plots[i].center)
+      if (d <= bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    return best
+  }
+  const triggerPrimaryKeyboardAction = (): void => {
+    const primary = lastActionDefs.find((a) => !a.locked && a.id !== 'fence-edit')
+    if (primary) {
+      triggerAction(primary)
+      return
+    }
+    const plot = nearestKeyboardPlot()
+    if (plot >= 0) {
+      const crop = game.plotAt(plot)?.crop
+      if (!crop) plantAt(plot, 'wheat')
+      else if (crop.remaining <= 0) doHarvest(plot)
+      return
+    }
+  }
+  addEventListener('keydown', (e) => {
+    if (!desktopControls || editableTarget(e.target)) return
+    if (e.code === 'Escape') {
+      if (fenceEditor.active) {
+        e.preventDefault()
+        fenceEditor.close()
+      } else if (placingDecor) {
+        e.preventDefault()
+        cancelDecorPlace()
+      } else if (carry.carrying) {
+        e.preventDefault()
+        cancelCarry()
+      }
+      return
+    }
+    if (fenceEditor.active) {
+      joy.releaseKeyboard()
+      if (e.code === 'KeyD' || e.code === 'Digit1') {
+        e.preventDefault()
+        fenceEditor.selectTool('draw')
+      } else if (e.code === 'KeyG' || e.code === 'Digit2') {
+        e.preventDefault()
+        fenceEditor.selectTool('gate')
+      } else if (e.code === 'KeyR' || e.code === 'Digit3' || e.code === 'Backspace') {
+        e.preventDefault()
+        fenceEditor.selectTool('remove')
+      } else if (e.code === 'Enter') {
+        e.preventDefault()
+        fenceEditor.close()
+      }
+      return
+    }
+    if (e.repeat) return
+    if (e.code === 'Space' || e.code === 'KeyE') {
+      e.preventDefault()
+      triggerPrimaryKeyboardAction()
+    } else if (e.code === 'KeyF') {
+      const fenceAction = lastActionDefs.find((a) => a.id === 'fence-edit' && !a.locked)
+      if (fenceAction) {
+        e.preventDefault()
+        triggerAction(fenceAction)
+      }
+    } else if (/^Digit[1-9]$/.test(e.code)) {
+      e.preventDefault()
+      triggerAction(lastActionDefs[Number(e.code.slice(5)) - 1])
+    }
+  })
 
   // picket fence is solid except at its gates (walls/gates follow the tier)
   const prevPos = { x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z }
@@ -2741,18 +3231,21 @@ async function boot(): Promise<void> {
    * cancels the step that crosses it. In fence mode the player is the
    * builder: steps are never blocked, and every grid line they cross gets a
    * fence BEHIND them (you can never wall yourself in mid-stride). */
-  const fenceBlock = (): void => {
+  const fenceBlock = (): boolean => {
     const p = player.pos
-    blockByEdges(prevPos, p, fences)
+    let blocked = blockByEdges(prevPos, p, fences)
+    const buildingSkip = tractorDriving ? 'tractor' : carry.carrying
     // buildings are SOLID now (the camera was living inside coop roofs):
     // a step INTO a footprint cancels; stepping OUT is always allowed, and
     // cutscene escorts (the sleep walk enters the homestead) pass freely
-    if (!player.autoWalking && pointInBuilding(state, p.x, p.z, carry.carrying) && !pointInBuilding(state, prevPos.x, prevPos.z, carry.carrying)) {
+    if (!player.autoWalking && pointInBuilding(state, p.x, p.z, buildingSkip) && !pointInBuilding(state, prevPos.x, prevPos.z, buildingSkip)) {
       p.x = prevPos.x
       p.z = prevPos.z
+      blocked = true
     }
     prevPos.x = p.x
     prevPos.z = p.z
+    return blocked
   }
 
   // ---- fixed-step systems ------------------------------------------------------
@@ -2761,17 +3254,97 @@ async function boot(): Promise<void> {
   let standT = 0
   let movedEver = false
   const stoppedInput = { x: 0, y: 0 }
+  const perfRunInput = { x: 0, y: 0 }
+  const liveInput = { x: 0, y: 0 }
+  let perfScenarioStarted = false
   /** the current action-button ids (dev driver / E2E introspection) */
   let lastActions: string[] = []
   /** engine time when dusk parked (-1 while the sun is up) — chip cadence */
   let duskAt = -1
   engine.onUpdate((dt) => {
+    // snapshot the logical position at the start of every fixed step so the
+    // render frame can interpolate prev->current (smooth on 120Hz). Must run
+    // before ANY player.pos mutation this step (movement, canter, teleport).
+    player.snapshotPrev()
+    if ((perfRun || qaScenario) && !perfScenarioStarted) {
+      perfScenarioStarted = true
+      const scenario = perfRun ? perfScenario : qaScenario
+      const target =
+        scenario === 'horse'
+          ? PADDOCK_CENTER
+          : scenario === 'tractor' && tractor
+            ? tractor.position
+            : null
+      if (target) {
+        player.pos.set(target.x, 0, target.z)
+        player.resetInterp()
+        prevPos.x = target.x
+        prevPos.z = target.z
+        lastCamPos.copy(player.pos)
+        camVelSmooth.set(0, 0, 0)
+        cam.snapTo(player.pos)
+      }
+      if (scenario === 'horse') mountHazel()
+      else if (scenario === 'tractor') {
+        if (perfRun) startTractorRows()
+        else mountTractor()
+      }
+    }
     game.update(dt)
     customers.active = state.harvests >= 1 && (game.hasProject('stand') || game.hasProject('shop'))
     customers.update(dt, game.stock())
     cam.inputLocked = hud.modalOpen
-    player.update(dt, hud.modalOpen ? stoppedInput : joy.value, cam.yaw)
-    fenceBlock()
+    const input = hud.modalOpen ? stoppedInput : perfRun ? perfRunInput : joy.value
+    liveInput.x = input.x
+    liveInput.y = input.y
+    if (tractorDriving) {
+      const tractorInput = hud.modalOpen ? stoppedInput : tractorRowRoute.length ? tractorInputToTarget(tractorRowRoute[tractorRowIndex]) : liveInput
+      player.updateTractor(dt, tractorInput)
+      liveInput.x = tractorInput.x
+      liveInput.y = tractorInput.y
+    } else {
+      player.update(dt, liveInput, cam.yaw)
+    }
+    if (tractorRowRoute.length) {
+      const manualOverride = !perfRun && joy.magnitude > 0.22 && engine.uTime.value - tractorRowStartedAt > 0.65
+      if (!tractorDriving || manualOverride) {
+        clearTractorRows()
+        if (manualOverride) hud.showBanner('Row assist off', 'manual steering resumed')
+      } else {
+        const target = tractorRowRoute[tractorRowIndex]
+        if (!target || player.pos.distanceTo(target) < 0.42) {
+          tractorRowIndex += 1
+          const next = tractorRowRoute[tractorRowIndex]
+          if (next) player.autoWalkTo(null)
+          else {
+            clearTractorRows()
+            tractor?.chug()
+            const s = cam.screenPos(player.pos.clone().setY(1.8))
+            if (!s.behind) hud.floatText(s, 'Rows done \u{2705}')
+          }
+        }
+      }
+    }
+    if (horseTrailRoute.length) {
+      const manualOverride = !perfRun && joy.magnitude > 0.22 && engine.uTime.value - horseTrailStartedAt > 0.65
+      if (!riding || manualOverride) {
+        clearHorseTrail()
+        if (manualOverride) hud.showBanner('Trail ride off', 'manual riding resumed')
+      } else {
+        const target = horseTrailRoute[horseTrailIndex]
+        if (!target || player.pos.distanceTo(target) < 0.45) {
+          horseTrailIndex += 1
+          const next = horseTrailRoute[horseTrailIndex]
+          if (next) player.autoWalkTo(next)
+          else {
+            clearHorseTrail()
+            sfx.hooves()
+            hud.showBanner('Trail complete \u{1F434}', 'Hazel brought you back home')
+          }
+        }
+      }
+    }
+    if (fenceBlock() && tractorDriving) player.bumpTractor()
     // ---- carry & place: long-press lifts; the ghost glides ahead ----
     checkLongPress()
     if (carry.carrying) {
@@ -2864,9 +3437,9 @@ async function boot(): Promise<void> {
     sowCooldown = Math.max(0, sowCooldown - dt)
     fetchCool = Math.max(0, fetchCool - dt)
     feedCool = Math.max(0, feedCool - dt)
-    if (joy.active) {
+    if (joy.active || perfRun) {
       touch()
-      if (joy.active) {
+      if (joy.active || perfRun) {
         if (!movedEver) telemetry.milestone('first_move')
         movedEver = true
       }
@@ -2895,7 +3468,7 @@ async function boot(): Promise<void> {
     near.growingPlot = -1
     const p = player.pos
     // the goodnight walk passes the fields — no auto-harvests mid-cinematic
-    if (!hud.modalOpen && !sleepActive) {
+    if (!hud.modalOpen && !sleepActive && !riding && !tractorDriving) {
       for (let i = 0; i < plots.length; i++) {
         if (!plots[i].group.visible) continue // riding overhead right now
         if (p.distanceTo(plots[i].center) > PLOT_R) continue
@@ -2962,6 +3535,12 @@ async function boot(): Promise<void> {
       near.coop = game.hasProject('coop') && p.distanceTo(COOP_AT) < 3.6
       near.ride =
         !riding && canRideHazel(state) && state.produce.deliveryT <= 0 && p.distanceTo(PADDOCK_CENTER) < 3.6
+      near.rideLocked =
+        !riding &&
+        game.hasProject('horse') &&
+        !canRideHazel(state) &&
+        state.produce.deliveryT <= 0 &&
+        p.distanceTo(PADDOCK_CENTER) < 3.6
       near.catalog =
         !placingDecor && !riding && game.hasProject('shop') && MARKET.atShop && p.distanceTo(MARKET.pos) < 3.4
       near.decor =
@@ -3085,12 +3664,49 @@ async function boot(): Promise<void> {
         standT = 0
       }
     }
+    if (tractorDriving && tractor && !hud.modalOpen && !sleepActive) {
+      let planted = 0
+      let harvested = 0
+      const nowT = engine.uTime.value
+      for (let i = 0; i < state.plots.length; i++) {
+        if (player.pos.distanceTo(plots[i].center) > PLOT_R + 0.35) continue
+        if (nowT - (tractorTouchedAt.get(i) ?? -99) < 0.55) continue
+        const crop = game.plotAt(i)?.crop
+        if (crop && crop.remaining <= 0) {
+          tractorTouchedAt.set(i, nowT)
+          doHarvest(i, false, true)
+          plantAt(i, 'wheat', false, true)
+          harvested += 1
+        } else if (!crop) {
+          tractorTouchedAt.set(i, nowT)
+          plantAt(i, 'wheat', false, true)
+          planted += 1
+        }
+      }
+      if (planted || harvested) {
+        tractor.chug()
+        const s = cam.screenPos(tractor.position.clone().setY(1.8))
+        if (!s.behind) {
+          const bits = [harvested ? `${harvested} harvested + replanted` : '', planted ? `${planted} planted` : ''].filter(Boolean)
+          hud.floatText(s, bits.join(' · '))
+        }
+        saveAfterTractorWork()
+      }
+    }
 
     // ---- context action buttons (big, above the right thumb) ----
     // one scene at a time: no buttons exist while ANY cinematic is rolling
     const actions: ActionDef[] = []
-    if (riding) {
+    if (tractorDriving) {
+      if (!tractorRowRoute.length) {
+        actions.push({ id: 'tractor-auto', emoji: '\u{1F33E}', label: 'Auto rows', sub: 'harvest + replant field' })
+      }
+      actions.push({ id: 'parktractor', emoji: '\u{1F69C}', label: 'Park tractor', sub: 'hop down' })
+    } else if (riding) {
       // up on Hazel: the only verb is to get back down (riding owns the rest)
+      if (!horseTrailRoute.length) {
+        actions.push({ id: 'trailride', emoji: '\u{1F434}', label: 'Trail ride', sub: 'follow the farm road' })
+      }
       actions.push({ id: 'hopoff', emoji: '\u{1F434}', label: 'Hop down', sub: 'back on your own feet' })
     } else if (placingDecor && !hud.modalOpen) {
       // arranging a decoration — set it down where the pad is green, or bail
@@ -3314,8 +3930,33 @@ async function boot(): Promise<void> {
       }
       if (near.tractor) {
         let empties = 0
+        let readyCount = 0
         // the tractor sows FIELDS — glasshouse beds are hand-planted
-        for (let i = 0; i < game.plotTotal; i++) if (!game.plotAt(i)?.crop && !game.isGreenhouse(i)) empties++
+        for (let i = 0; i < state.plots.length; i++) {
+          const crop = game.plotAt(i)?.crop
+          if (!crop) empties++
+          else if (crop.remaining <= 0) readyCount++
+        }
+        actions.push({
+          id: 'tractor-auto',
+          emoji: '\u{1F33E}',
+          label: 'Work all rows',
+          sub: 'one pass: harvest + plant',
+        })
+        actions.push({
+          id: 'tractor-drive',
+          emoji: '\u{1F69C}',
+          label: 'Drive tractor',
+          sub: 'ride rows · harvest + replant',
+        })
+        if (readyCount > 0) {
+          actions.push({
+            id: 'harvestall',
+            emoji: '\u{1F33E}',
+            label: 'Harvest ready plots',
+            sub: `${readyCount} ready · tractor pass`,
+          })
+        }
         const ready = sowCooldown <= 0 && empties > 0
         actions.push({
           id: 'sow',
@@ -3395,6 +4036,8 @@ async function boot(): Promise<void> {
       }
       if (near.ride) {
         actions.push({ id: 'ride', emoji: '\u{1F434}', label: 'Ride Hazel', sub: 'saddle up and roam the farm' })
+      } else if (near.rideLocked) {
+        actions.push({ id: 'ride-locked', emoji: '\u{1F434}', label: 'Ride Hazel', sub: "needs Hazel's Tack Room", locked: true })
       }
       if (near.catalog) {
         actions.push({ id: 'catalog', emoji: '\u{1F380}', label: 'The Catalog', sub: 'decorations & fence skins' })
@@ -3420,8 +4063,13 @@ async function boot(): Promise<void> {
         actions.push({ id: 'fence-edit', emoji: '\u{1F6E0}', label: 'Edit fences', sub: 'draw, gate, remove' })
       }
     }
-    lastActions = actions.map((a) => a.id)
-    hud.setActions(actions, onAction)
+    const primaryKeyIndex = actions.findIndex((a) => !a.locked && a.id !== 'fence-edit')
+    const keyedActions = desktopControls
+      ? actions.map((a, i) => ({ ...a, key: a.id === 'fence-edit' ? 'F' : i === primaryKeyIndex ? 'Space' : `${i + 1}` }))
+      : actions
+    lastActions = keyedActions.map((a) => a.id)
+    lastActionDefs = keyedActions
+    hud.setActions(keyedActions, onAction)
 
     // ---- contextual top chip: top suggestion whose chip hasn't been retired ----
     const sug = game.suggestion()
@@ -3438,8 +4086,23 @@ async function boot(): Promise<void> {
     const duskFor = duskAt >= 0 ? engine.uTime.value - duskAt : -1
     let chipText: string | null = null
     if (!hud.modalOpen && !construction.active && !sleepActive && !fenceEditor.active) {
-      if (!movedEver && !state.chipsDone.plant) {
-        chipText = 'Drag the joystick toward the field \u{1F33E}'
+      const inFirstFieldLane =
+        player.pos.x >= FIELD_X0 - 0.9 && player.pos.z >= FIELD_Z0 - 1 && player.pos.z <= FIELD_Z1 + 1
+      if (!state.chipsDone.plant) {
+        chipText =
+          near.emptyPlot >= 0
+            ? desktopControls
+              ? 'Press Space to plant Wheat \u{1F33E}'
+              : 'Tap Plant Wheat to sow this plot \u{1F33E}'
+            : inFirstFieldLane
+              ? desktopControls
+                ? 'Step onto a dirt plot, then press Space \u{1F33E}'
+                : 'Step onto a dirt plot, then tap Plant Wheat \u{1F33E}'
+              : desktopControls
+                ? 'Use WASD — follow the east gate path to the dirt field \u{1F33E}'
+                : 'Drag the joystick through the east gate path to the dirt field \u{1F33E}'
+      } else if (riding) {
+        chipText = desktopControls ? 'Press Space for a trail ride, or hop down \u{1F434}' : 'Tap Trail ride to follow the farm road \u{1F434}'
       } else if (dayCycle.atDusk && duskFor < 20) {
         chipText = state.plots.some((p) => !p.crop)
           ? '\u{1F319} Plant before bed — crops grow overnight'
@@ -3477,15 +4140,17 @@ async function boot(): Promise<void> {
         state.plots.some((p) => p.crop && p.crop.remaining > 0)
       ) {
         // the waiting window IS the rearranging window (until their first move)
-        chipText = 'While the crops grow — press and hold a building to pick it up \u{1F4E6}'
+        chipText = desktopControls
+          ? 'While crops grow — use F for fences, or click-hold a building to move it \u{1F4E6}'
+          : 'While the crops grow — press and hold a building to pick it up \u{1F4E6}'
       } else if (sug) {
         const name = state.chicken.name ?? 'her'
         const texts: Record<Suggestion['kind'], string> = {
-          plant: 'Walk to a field plot to plant \u{1F33E}',
-          harvest: 'Your crop is ready — walk over and gather it!',
-          feed: `Bring ${name} a wheat — walk up and feed her`,
-          collect: `${name} laid an egg — go pick it up!`,
-          pet: `Visit ${name} for her daily pets ♥`,
+          plant: desktopControls ? 'Walk to a field plot, then press Space to plant \u{1F33E}' : 'Walk to a field plot to plant \u{1F33E}',
+          harvest: desktopControls ? 'Your crop is ready — stand by it and press Space!' : 'Your crop is ready — walk over and gather it!',
+          feed: desktopControls ? `Bring ${name} wheat, then press Space to feed her` : `Bring ${name} a wheat — walk up and feed her`,
+          collect: desktopControls ? `${name} laid an egg — press Space beside it` : `${name} laid an egg — go pick it up!`,
+          pet: desktopControls ? `Visit ${name} and press Space for daily pets ♥` : `Visit ${name} for her daily pets ♥`,
         }
         const chipFor: Record<Suggestion['kind'], keyof GameState['chipsDone']> = {
           plant: 'plant',
@@ -3515,7 +4180,10 @@ async function boot(): Promise<void> {
     const idleFor = engine.uTime.value - lastInteract
     if (idleFor > 5 && !hud.modalOpen && !chicken.ceremonyActive) {
       const buildSignAt = buildable ? (projectSigns.get(buildable.def.id)?.at ?? null) : null
-      const pos = dayCycle.atDusk && !sleepActive
+      const firstFieldTarget = !state.chipsDone.plant ? plots.find((plot) => plot.center.x >= FIELD_X0 - 0.1)?.center ?? null : null
+      const pos = firstFieldTarget
+        ? firstFieldTarget
+        : dayCycle.atDusk && !sleepActive
         ? homestead.doorPos
         : chicken.cratePending
         ? chicken.crateWorldPos
@@ -3556,15 +4224,36 @@ async function boot(): Promise<void> {
     state.timers.fetch = fetchCool
     state.timers.herd = Number.isFinite(herdTimer) ? herdTimer : 240
     saveAccum += dt
-    if (saveAccum >= 3) {
+    const saveEvery = mobilePerf ? 8 : 3
+    if (saveAccum >= saveEvery) {
       saveAccum = 0
-      saveNow()
+      if (mobilePerf) saveSoon()
+      else saveNow()
     }
   })
 
   // ---- per-frame presentation ---------------------------------------------------
   engine.onFrame((dt) => {
     const t = engine.uTime.value
+    // commit the interpolated render transform BEFORE the camera + sibling
+    // vehicles read it, so the farmer mesh glides between the 60Hz steps
+    player.renderInterpolated(engine.alpha)
+    if (perfRun) {
+      const leg = Math.floor(t / 4) % 4
+      if (leg === 0) {
+        perfRunInput.x = 0
+        perfRunInput.y = 1
+      } else if (leg === 1) {
+        perfRunInput.x = 1
+        perfRunInput.y = 0
+      } else if (leg === 2) {
+        perfRunInput.x = 0
+        perfRunInput.y = -1
+      } else {
+        perfRunInput.x = -1
+        perfRunInput.y = 0
+      }
+    }
     cam.setRunning(player.running)
     if (cam.moved) touch()
     // the camera's look-ahead reads DISPLACEMENT, not intent: a player
@@ -3577,13 +4266,17 @@ async function boot(): Promise<void> {
     // averages out the 0/1x/2x per-frame jitter, still tracks real speed changes).
     // a touch faster (~50ms) while riding so the look-ahead keeps up on a hard
     // canter turn without the rider sliding off-centre
-    const kVel = 1 - Math.exp(-(riding ? 20 : 12) * camDt)
+    const kVel = 1 - Math.exp(-(riding || tractorDriving ? 20 : 12) * camDt)
     camVelSmooth.set(
       camVelSmooth.x + (camDispVel.x - camVelSmooth.x) * kVel,
       0,
       camVelSmooth.z + (camDispVel.z - camVelSmooth.z) * kVel,
     )
-    cam.follow(player.pos, camVelSmooth, dt)
+    cam.driveFollow = tractorDriving
+    // follow the INTERPOLATED render position so the camera stays locked to the
+    // smoothed mesh; the look-ahead velocity baseline below stays on the LOGICAL
+    // position (its 85ms low-pass is tuned for the fixed-step quantized delta).
+    cam.follow(player.renderPos, camVelSmooth, dt)
     lastCamPos.copy(player.pos)
     // pressed flat against a wall the farmer's own body fills the lens —
     // fade him out (first-person collapse, with hysteresis so the doorway
@@ -3599,14 +4292,45 @@ async function boot(): Promise<void> {
     }
     music.tick()
     player.frame(dt, t)
-    if (riding) rideRig.update(dt, player.pos, player.facing, player.speed)
+    if (riding) {
+      rideRig.update(dt, player.renderPos, player.facing, player.speed)
+      if (player.speed > 0.35 && t >= rideSoundAt) {
+        rideSoundAt = t + 0.85
+        sfx.hooves()
+      }
+    }
+    if (tractorDriving && tractor) {
+      tractor.drive(dt, player.renderPos, player.facing, player.tractorSignedSpeed, player.tractorSteer)
+      if (player.speed > 0.2 && t >= tractorSoundAt) {
+        tractorSoundAt = t + 1.25
+        sfx.tractor()
+      }
+    }
+    if (tractorDebugEl) {
+      const td = player.tractorDebug()
+      const tv = tractor?.debug ?? null
+      const target = tractorRowRoute[tractorRowIndex]
+      tractorDebugEl.textContent =
+        `tractor ${tractorDriving ? 'DRIVE' : 'parked'} · spd ${td.speed} · steer ${td.steer} · fps ${Math.round(engine.fps)}\n` +
+        `yaw ${td.yaw}/${tv ? tv.visualYaw : '—'} · front ${tv ? tv.frontSteer : '—'} · row ${
+          tractorRowRoute.length ? `${tractorRowIndex + 1}/${tractorRowRoute.length}` : 'manual'
+        }${target ? ` → ${target.x.toFixed(1)},${target.z.toFixed(1)}` : ''}`
+    }
     chicken.frame(dt, t)
     dog.frame(dt)
     flock.frame(dt, player.pos)
     grazers.frame(dt, player.pos)
     coopHens?.frame(dt, t)
     construction.frame(dt)
-    dayCycle.update(dt)
+    if (mobilePerf) {
+      dayCycleAccum += dt
+      if (dayCycleAccum >= 1 / 12) {
+        dayCycle.update(dayCycleAccum)
+        dayCycleAccum = 0
+      }
+    } else {
+      dayCycle.update(dt)
+    }
     // fetch cinema camera: stick flight first, then smooth-pursuit on Rex
     // (reused temp — a per-frame clone() was feeding the GC during cines)
     if (fetchCine) {
@@ -3704,7 +4428,75 @@ async function boot(): Promise<void> {
   let driftTick = 0
   let uiTick = 0
   let shadowTick = 0
+  let dayCycleAccum = 0
   let recessWas = false
+  let veilRemoved = false
+  let bootRevealArmed = false
+  let bootFadeStarted = false
+  let bootRevealAt = 0
+  let bootStableFrames = 0
+  let bootWorstFrameMs = 0
+  let bootLongFrames = 0
+  let bootVeryLongFrames = 0
+  const revealBootVeil = (forced = false): void => {
+    if (veilRemoved || bootFadeStarted) return
+    bootFadeStarted = true
+    ldp.textContent = forced ? 'starting farm…' : 'ready'
+    const hiddenMs = Math.round(performance.now() - bootStarted)
+    const warmupMs = bootRevealAt > 0 ? Math.round(performance.now() - bootRevealAt) : 0
+    window.__sunriseBoot = {
+      ready: true,
+      hiddenMs,
+      warmupMs,
+      worstFrameMs: +bootWorstFrameMs.toFixed(2),
+      longFrames: bootLongFrames,
+      veryLongFrames: bootVeryLongFrames,
+      forced,
+    }
+    telemetry.track('ready', {
+      loadMs: hiddenMs,
+      hiddenWarmupMs: warmupMs,
+      bootWorstFrameMs: +bootWorstFrameMs.toFixed(2),
+      bootLongFrames,
+      bootVeryLongFrames,
+      forced,
+      snapshot: snapshot() as unknown as Record<string, unknown>,
+    })
+    gsap.to(veil, {
+      opacity: 0,
+      duration: 0.45,
+      onComplete: () => {
+        veilRemoved = true
+        veil.remove()
+      },
+    })
+  }
+  const armBootReveal = (): void => {
+    if (bootRevealArmed) return
+    bootRevealArmed = true
+    bootRevealAt = performance.now()
+    bootStableFrames = 0
+    ldp.textContent = mobilePerf ? 'warming up phone frame…' : 'warming up first frame…'
+  }
+  const perfPanel = perfRun ? document.createElement('pre') : null
+  let perfSamples = 0
+  let perfTotalMs = 0
+  let perfMaxMs = 0
+  let perfLongFrames = 0
+  let perfVeryLongFrames = 0
+  let perfWindowMaxMs = 0
+  let perfWindowLongFrames = 0
+  let perfWindowVeryLongFrames = 0
+  let perfReportAt = performance.now() + 1000
+  if (perfPanel) {
+    perfPanel.style.cssText =
+      'position:fixed;right:8px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:80;' +
+      'max-width:190px;margin:0;padding:7px 8px;border-radius:10px;background:rgba(30,24,12,.74);' +
+      'color:#fff7cf;font:700 10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;' +
+      'pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.55)'
+    perfPanel.textContent = 'perfRun starting…'
+    document.body.appendChild(perfPanel)
+  }
   /** stressed: pinned at the DPR floor AND still missing budget — shed the
    * invisible extras (shadow cadence, whisker ray) before anything the eye
    * would catch. Releases with hysteresis so it never flickers. */
@@ -3741,12 +4533,69 @@ async function boot(): Promise<void> {
     const dtMs = now - last
     const dt = Math.min(dtMs / 1000, 0.1)
     last = now
+    if (!veilRemoved && dtMs > 0 && dtMs < 1000) {
+      bootWorstFrameMs = Math.max(bootWorstFrameMs, dtMs)
+      if (dtMs > 33.4) bootLongFrames += 1
+      if (dtMs > 50) bootVeryLongFrames += 1
+    }
+    if (perfRun && dtMs > 0 && dtMs < 250) {
+      perfSamples += 1
+      perfTotalMs += dtMs
+      perfMaxMs = Math.max(perfMaxMs, dtMs)
+      perfWindowMaxMs = Math.max(perfWindowMaxMs, dtMs)
+      if (dtMs > 33.4) {
+        perfLongFrames += 1
+        perfWindowLongFrames += 1
+      }
+      if (dtMs > 50) {
+        perfVeryLongFrames += 1
+        perfWindowVeryLongFrames += 1
+      }
+      if (now >= perfReportAt) {
+        window.__sunrisePerf = {
+          seconds: +((now - bootStarted) / 1000).toFixed(1),
+          samples: perfSamples,
+          avgFrameMs: +(perfTotalMs / Math.max(1, perfSamples)).toFixed(2),
+          maxFrameMs: +perfMaxMs.toFixed(2),
+          longFrames: perfLongFrames,
+          veryLongFrames: perfVeryLongFrames,
+          windowMaxFrameMs: +perfWindowMaxMs.toFixed(2),
+          windowLongFrames: perfWindowLongFrames,
+          windowVeryLongFrames: perfWindowVeryLongFrames,
+          fps: Math.round(engine.fps),
+          dpr: +dpr.toFixed(2),
+          calls: renderer.info.render.calls,
+          tris: renderer.info.render.triangles,
+          pos: [+player.pos.x.toFixed(1), +player.pos.z.toFixed(1)],
+          saves: saveCount,
+          saveMs: +lastSaveMs.toFixed(2),
+          maxSaveMs: +maxSaveMs.toFixed(2),
+          pendingSave: savePending,
+        }
+        perfPanel!.textContent =
+          `perfRun ${window.__sunrisePerf.seconds}s\n` +
+          `avg ${window.__sunrisePerf.avgFrameMs}ms max ${window.__sunrisePerf.maxFrameMs}ms\n` +
+          `2s ${window.__sunrisePerf.windowMaxFrameMs}ms ${window.__sunrisePerf.windowLongFrames}/${window.__sunrisePerf.windowVeryLongFrames} hitch\n` +
+          `long ${perfLongFrames} >33ms / ${perfVeryLongFrames} >50ms\n` +
+          `save ${window.__sunrisePerf.saves} ${window.__sunrisePerf.saveMs}ms max ${window.__sunrisePerf.maxSaveMs} ${window.__sunrisePerf.pendingSave ? 'pending' : 'idle'}\n` +
+          `fps ${window.__sunrisePerf.fps} dpr ${window.__sunrisePerf.dpr}\n` +
+          `draw ${window.__sunrisePerf.calls} tri ${window.__sunrisePerf.tris}\n` +
+          `pos ${window.__sunrisePerf.pos[0]}, ${window.__sunrisePerf.pos[1]}`
+        console.info('[sunrise-perf]', JSON.stringify(window.__sunrisePerf))
+        perfWindowMaxMs = 0
+        perfWindowLongFrames = 0
+        perfWindowVeryLongFrames = 0
+        perfReportAt = now + 2000
+      }
+    }
     // shadows redraw on a slow cadence (the sun crawls; nobody can tell a
     // 50ms-stale shadow) — and the every-OTHER-frame sawtooth this used to
     // be read as judder on phones. Dusk park crawls even slower.
-    shadowTick++
-    const shadowEvery = stressed || dayCycle.atDusk ? 6 : isCoarse ? 3 : 2
-    if (shadowTick % shadowEvery === 0) renderer.shadowMap.needsUpdate = true
+    if (renderer.shadowMap.enabled) {
+      shadowTick++
+      const shadowEvery = stressed || dayCycle.atDusk ? 6 : isCoarse ? 3 : 2
+      if (shadowTick % shadowEvery === 0) renderer.shadowMap.needsUpdate = true
+    }
     // adaptive resolution: miss budget -> step softer; comfortably under
     // budget for a while -> step sharper. Cooldowns stop buffer thrash.
     if (dtMs < 250) frameAvg += (dtMs - frameAvg) * 0.04
@@ -3768,7 +4617,7 @@ async function boot(): Promise<void> {
       stressMs += dtMs
       if (stressMs > 5000) {
         stressed = false
-        cam.lowSpec = false
+        cam.lowSpec = mobilePerf
         stressMs = 0
       }
     } else {
@@ -3791,6 +4640,21 @@ async function boot(): Promise<void> {
       }
     }
     engine.advance(dt * (now < slowUntilReal ? 0.2 : 1))
+    // draw stats are valid here — the engine's render ran inside advance()
+    perfHud.sample(now, dtMs, {
+      fps: engine.fps,
+      avgMs: frameAvg,
+      dpr,
+      calls: renderer.info.render.calls,
+      tris: renderer.info.render.triangles,
+    })
+    if (bootRevealArmed && !bootFadeStarted && !veilRemoved) {
+      const settled = viewW() === sizedW && viewH() === sizedH
+      const stableFrame = dtMs > 0 && dtMs < (mobilePerf ? 22 : 28) && settled
+      if (stableFrame) bootStableFrames += 1
+      else if (dtMs < 250) bootStableFrames = 0
+      if (bootStableFrames >= (mobilePerf ? 8 : 5) || now - bootRevealAt > 3200) revealBootVeil(false)
+    }
   }
   requestAnimationFrame(loop)
 
@@ -4070,8 +4934,10 @@ async function boot(): Promise<void> {
       fps: Math.round(engine.fps),
     }),
     telemetry: snapshot,
+    boot: () => window.__sunriseBoot,
     warp: (x: number, z: number) => {
       player.pos.set(x, 0, z)
+      player.resetInterp()
       prevPos.x = x
       prevPos.z = z
       // a warp is a teleport: cut the camera cleanly (no glide / look-ahead fling)
@@ -4113,6 +4979,31 @@ async function boot(): Promise<void> {
       return true
     },
     fences: () => fences.edges.size + fences.gates.size,
+    tractor: () => ({
+      owned: tractor !== null,
+      driving: tractorDriving,
+      pos: tractor ? ([+tractor.position.x.toFixed(2), +tractor.position.z.toFixed(2)] as [number, number]) : null,
+      handling: player.tractorDebug(),
+      visual: tractor?.debug ?? null,
+      rowAssist: tractorRowRoute.length > 0,
+    }),
+    tractorDebug: () => ({
+      ...player.tractorDebug(),
+      driving: tractorDriving,
+      input: [Number(liveInput.x.toFixed(2)), Number(liveInput.y.toFixed(2))],
+      rowAssist: tractorRowRoute.length > 0,
+      rowIndex: tractorRowIndex,
+      rowCount: tractorRowRoute.length,
+      rowTarget: tractorRowRoute[tractorRowIndex]
+        ? [Number(tractorRowRoute[tractorRowIndex].x.toFixed(2)), Number(tractorRowRoute[tractorRowIndex].z.toFixed(2))]
+        : null,
+      visual: tractor?.debug ?? null,
+      camera: cam.probe(),
+    }),
+    driveTractor: () => mountTractor(),
+    parkTractor: () => parkTractor(),
+    workTractorRows: () => startTractorRows(),
+    rideHazelTrail: () => startHorseTrail(),
     editor: {
       open: () => fenceEditor.open(),
       close: () => fenceEditor.close(),
@@ -4158,15 +5049,43 @@ async function boot(): Promise<void> {
   }
   window.__step = window.__farm.step
 
-  let veilRemoved = false
-  const removeVeil = (): void => {
-    if (veilRemoved) return
-    veilRemoved = true
-    telemetry.track('ready', { loadMs: Math.round(performance.now() - bootStarted), snapshot: snapshot() as unknown as Record<string, unknown> })
-    veil.remove()
+  // pre-warm the GPU before the curtain lifts: compile every material's shader
+  // and upload geometry/textures for the whole world NOW, on the loading
+  // screen, instead of paying it as a stall the first time the field, crops,
+  // tractor and east scenery scroll into view (the "lag when you run at the
+  // field" the owner reported). It all hides behind the opaque veil.
+  const warmGpu = async (): Promise<void> => {
+    ldp.textContent = mobilePerf ? 'warming up phone…' : 'warming up…'
+    try {
+      // shader programs + textures for EVERY material in the scene, not just
+      // what the spawn frame happens to see — shader compile is the big stall
+      await renderer.compileAsync(scene, cam.camera)
+    } catch {
+      /* compile is best-effort; a driver quirk must never wedge the boot */
+    }
+    try {
+      // a render only uploads GPU buffers for what it draws, and the boot view
+      // only sees spawn — so sweep the whole farm once from a high oblique
+      // camera (invisible behind the veil) to land every mesh's geometry now
+      const eastX = worldMaxX(state.fieldParcels)
+      const cx = (WORLD_BOUNDS.minX + eastX) / 2
+      const cz = (WORLD_BOUNDS.minZ + WORLD_BOUNDS.maxZ) / 2
+      const warmCam = new PerspectiveCamera(82, cam.camera.aspect || 16 / 9, 1, 480)
+      const focus = new Vector3(cx, 0, cz)
+      for (const ang of [0, Math.PI]) {
+        warmCam.position.set(cx + Math.sin(ang) * 78, 96, cz + Math.cos(ang) * 78)
+        warmCam.lookAt(focus)
+        warmCam.updateMatrixWorld(true)
+        renderer.render(scene, warmCam)
+      }
+      renderer.info.reset() // leave the counter clean for the first real frame
+    } catch {
+      /* the upload sweep is best-effort too */
+    }
   }
-  gsap.to(veil, { opacity: 0, duration: 0.5, onComplete: removeVeil })
-  window.setTimeout(removeVeil, 1600)
+  await warmGpu()
+  armBootReveal()
+  window.setTimeout(() => revealBootVeil(true), 5600)
 }
 
 void boot()

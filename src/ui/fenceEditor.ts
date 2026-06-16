@@ -62,6 +62,16 @@ const PANEL_CSS = `
 .spick.active{background:#7ec850;color:#fff;box-shadow:0 3px 10px rgba(40,80,10,.4)}
 @media (max-width:760px){.etool{padding:7px 10px 7px 8px;font-size:12px}.etool .em{font-size:16px}
   .spick{padding:6px 9px 6px 7px;font-size:12px}.spick .em{font-size:15px}}
+@media (max-width:560px){
+  #editor-panel{top:calc(118px + env(safe-area-inset-top));left:8px;right:calc(58px + env(safe-area-inset-right));
+    transform:none;max-width:none;gap:6px;flex-wrap:wrap;overflow:visible;padding-right:4px}
+  #editor-panel .etool{flex:1 1 calc(50% - 6px);justify-content:center;min-width:0}
+  #editor-panel .etool.done{flex:0 0 108px;margin-left:auto}
+  #editor-status{top:calc(232px + env(safe-area-inset-top));left:12px;right:12px;transform:none;
+    max-width:none;border-radius:14px;text-align:center;white-space:normal}
+  #style-picker{top:calc(232px + env(safe-area-inset-top));left:8px;right:calc(58px + env(safe-area-inset-right));
+    transform:none;max-width:none}
+}
 `
 
 export interface EditorToolDef {
@@ -179,9 +189,7 @@ export class FenceEditor {
           this.handleStylePick()
           return
         }
-        this.stylePicker.style.display = 'none'
-        this.tool = id as typeof this.tool
-        this.panel.setActive(id)
+        this.selectTool(id as typeof this.tool)
       },
       () => this.close(),
     )
@@ -236,7 +244,7 @@ export class FenceEditor {
     this.panel.setActive(this.tool)
     this.panel.show()
     this.grid.visible = true
-    this.say('drag along a line to fence it')
+    this.say(matchMedia('(hover:hover) and (pointer:fine)').matches ? 'D draw · G gate · R remove · Esc done' : 'drag along a line to fence it')
     this.opts.onOpen?.()
     return true
   }
@@ -269,6 +277,14 @@ export class FenceEditor {
       this.statusHideAt = 0
       this.status.style.opacity = '0'
     }
+  }
+
+  selectTool(id: 'draw' | 'gate' | 'remove'): void {
+    if (!this.active) return
+    this.stylePicker.style.display = 'none'
+    this.tool = id
+    this.panel.setActive(id)
+    this.say(id === 'draw' ? 'drag to draw fence posts' : id === 'gate' ? 'click a fence to toggle a gateway' : 'click or drag over fences to remove')
   }
 
   /** the fence-skin chips, by id (matches FenceStyle in scenery.ts) */

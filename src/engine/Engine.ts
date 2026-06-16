@@ -10,6 +10,10 @@ export class Engine {
   /** shared shader/game clock, seconds */
   readonly uTime = { value: 0 }
   fps = 60
+  /** render-interpolation factor 0..1 = leftover accumulator / fixedStep after
+   * the fixed-step loop. onFrame code blends prev->current sim state by this so
+   * motion is smooth on 120Hz / variable-refresh displays. */
+  alpha = 0
 
   private updates: TickFn[] = []
   private frames: TickFn[] = []
@@ -57,6 +61,8 @@ export class Engine {
       this.accumulator -= this.fixedStep
       for (const fn of this.updates) fn(this.fixedStep)
     }
+    // leftover sub-step fraction, for render interpolation (see Engine.alpha)
+    this.alpha = this.accumulator / this.fixedStep
     for (const fn of this.frames) fn(dt)
     this.render(dt)
   }

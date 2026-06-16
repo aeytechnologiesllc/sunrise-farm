@@ -1,7 +1,8 @@
 /** World dressing — the "make screenshots sell it" pass.
  * Canvas-painted macro ground (roads, worn paths, tonal blotches) topped by
- * REAL instanced grass blades (grass.ts), procedurally TEXTURED trees
- * (trees.ts) and furrowed soil fields (field.ts). Gradient sky dome, warm sun
+ * a smooth low-frequency lawn wash (grass.ts is intentionally no-op for mobile
+ * performance), procedurally TEXTURED trees (trees.ts) and furrowed soil fields
+ * (field.ts). Gradient sky dome, warm sun
  * + soft shadows, tier-aware white picket fence, a little red barn, a wooden
  * sheep pen, drifting clouds. HARD RULE: no flat-color blob assets. */
 import {
@@ -48,7 +49,7 @@ import { DEFAULT_PLACES, fieldTierOf, footprintOf, PLACE_IDS, type LayoutView, t
 import type { Assets, ModelKey } from './assets'
 import { buildForest } from './trees'
 import { buildGrass, type GrassField } from './grass'
-import { groundDetailCanvas, makeCanvas, toTexture, woodCanvas } from './textures'
+import { makeCanvas, toTexture, woodCanvas } from './textures'
 
 export const STAND_POS = new Vector3(DEFAULT_PLACES.stand.x, 0, DEFAULT_PLACES.stand.z)
 export const NEST_POS = new Vector3(NEST_AT[0], 0, NEST_AT[1])
@@ -243,13 +244,13 @@ export interface LightHandles {
   ambient: AmbientLight
 }
 
-export function buildLights(scene: Scene): LightHandles {
+export function buildLights(scene: Scene, options: { mobilePerf?: boolean } = {}): LightHandles {
   scene.fog = new Fog('#dfe8c2', 46, 120)
   scene.background = new Color('#9fd0ee')
   // sun sits on the camera's side of the sky so faces the player sees are lit
   const sun = new DirectionalLight('#ffe9bd', 2.6)
   sun.position.set(12, 22, -9)
-  sun.castShadow = true
+  sun.castShadow = !options.mobilePerf
   // phones render the shadow map every frame too — half-res there ("heavy"
   // report); PCF + normalBias keep edges acceptable at 1024
   const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
@@ -490,18 +491,19 @@ function paintGround(rng: Rng, into?: HTMLCanvasElement): HTMLCanvasElement {
   g.fill()
   g.globalAlpha = 1
 
-  // grass blade ticks — thousands of tiny strokes give it tooth up close
-  for (let i = 0; i < 9000; i++) {
+  // smooth lawn washes — no tiny blade ticks. The old thousands of strokes
+  // looked like visual static on phones and inflated texture upload cost.
+  const lawnWash = ['#78a955', '#72a24f', '#82b75d']
+  for (let i = 0; i < 90; i++) {
     const x = rng.next() * c.width
     const y = rng.next() * c.height
     if (Math.abs(y - ry) < roadHalf) continue
-    g.strokeStyle = rng.next() > 0.5 ? '#86b75e' : '#5d8a3e'
-    g.globalAlpha = 0.2 + rng.next() * 0.3
-    g.lineWidth = 1.4
+    const r = p.s(2.5 + rng.next() * 6.5)
+    g.fillStyle = lawnWash[Math.floor(rng.next() * lawnWash.length)]
+    g.globalAlpha = 0.045 + rng.next() * 0.045
     g.beginPath()
-    g.moveTo(x, y)
-    g.lineTo(x + (rng.next() - 0.5) * 4, y - 3 - rng.next() * 4)
-    g.stroke()
+    g.ellipse(x, y, r, r * (0.6 + rng.next() * 0.45), rng.next() * Math.PI, 0, Math.PI * 2)
+    g.fill()
   }
   g.globalAlpha = 1
   return c
@@ -535,20 +537,7 @@ export function buildGround(scene: Scene): void {
   groundTex = tex
   tex.colorSpace = SRGBColorSpace
   tex.anisotropy = 8
-  // crisp tiling grain layered over the painted macro: the lawn stays
-  // detailed at boot-heel distance (phone landscape brought this to light)
-  const detail = toTexture(groundDetailCanvas(mulberry32(606)), true)
   const mat = new MeshStandardMaterial({ map: tex, roughness: 1 })
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uDetail = { value: detail }
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;')
-      .replace(
-        '#include <map_fragment>',
-        `#include <map_fragment>
-        diffuseColor.rgb *= 0.72 + 0.56 * texture2D(uDetail, vMapUv * 42.0).rgb;`,
-      )
-  }
   const ground = new Mesh(new PlaneGeometry(GROUND_SIZE, GROUND_SIZE), mat)
   ground.rotation.x = -Math.PI / 2
   ground.receiveShadow = true
@@ -613,9 +602,13 @@ function nonIndexed(geo: BufferGeometry): BufferGeometry {
 
 // ---- meadow dressing --------------------------------------------------------------
 
-export function buildMeadow(scene: Scene, assets: Assets): { grass: GrassField; forest: Group } {
+export function buildMeadow(
+  scene: Scene,
+  assets: Assets,
+  options: { mobilePerf?: boolean } = {},
+): { grass: GrassField; forest: Group } {
   const forest = buildForest(scene, forestClear)
-  const grass = buildGrass(scene, groundClear)
+  const grass = buildGrass(scene, groundClear, { mobilePerf: options.mobilePerf })
 
   const rng = mulberry32(1234)
   const batch = new Batcher()

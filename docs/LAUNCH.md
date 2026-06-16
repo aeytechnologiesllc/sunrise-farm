@@ -9,6 +9,42 @@
 
 The zip contains the built `dist/` contents at the root, which is what itch expects for an HTML game.
 
+## Current Itch draft fields
+
+- **Title:** Sunrise Farm
+- **Short description:** A cozy 3D browser farm: plant crops, care for animals, ride Hazel, drive the tractor, and grow Millbrook.
+- **Classification:** Games
+- **Kind of project:** HTML
+- **Release status:** Prototype or in development
+- **Pricing:** No payments / free for soft launch
+- **Genre:** Simulation
+- **Tags:** `3d`, `farming`, `cozy`, `simulation`, `browser`, `mobile`, `pwa`, `low-poly`, `casual`, `singleplayer`
+- **Embed:** 640 × 360, fullscreen button enabled, scrollbars disabled if offered
+- **Mobile:** enable mobile-friendly/browser play
+- **Upload:** `sunrise-farm-itch.zip`, mark as playable in browser
+
+## Current Itch media
+
+- **Cover image:** `media/itch/cover-630x500.png`
+- **Embed BG / Run Game poster:** `media/itch/embed-clean-keyart-640x360.png`
+- **Desktop screenshot:** `media/itch/screenshot-desktop-farm.png`
+- **Mobile first-session screenshot:** `media/itch/screenshot-mobile-fresh.png`
+- **Tractor screenshot:** `media/itch/screenshot-tractor.png`
+- **Horse screenshot:** `media/itch/screenshot-horse.png`
+
+## Draft page copy
+
+Free browser play — plant crops, ride Hazel, drive the tractor.
+
+Start with a small homestead, grow wheat, help customers at the roadside stand, unlock animals, and expand into a bigger working farm.
+
+### Controls
+
+- **Mobile:** drag the joystick, tap action buttons.
+- **Desktop:** WASD / arrow keys to move, Space to activate, F for fences.
+
+Early soft-launch build — feedback on mobile controls, performance, and pacing is welcome.
+
 ## Crash and analytics tracking
 
 The game now sends launch/FTUE/progression/crash events through a tiny vendor-neutral bridge:

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/build.mjs",
     "package:itch": "npm run build && rm -f sunrise-farm-itch.zip && cd dist && zip -qr ../sunrise-farm-itch.zip .",
     "preview": "vite preview",
     "test": "vitest run",
