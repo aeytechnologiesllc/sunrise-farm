@@ -38,6 +38,16 @@ export class Sfx {
     void this.session // held alive for the page's lifetime
   }
 
+  /** background/minimize: halt the audio graph so nothing keeps making sound
+   * behind a hidden PWA (and it stops burning battery). resume() on return. */
+  suspend(): void {
+    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend()
+  }
+
+  resume(): void {
+    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume()
+  }
+
   private tone(
     freq: number,
     opts: {

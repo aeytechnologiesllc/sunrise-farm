@@ -4715,7 +4715,24 @@ async function boot(): Promise<void> {
     requestAnimationFrame(resize)
   })
   resize()
-  addEventListener('pagehide', saveNow)
+  // backgrounding/minimizing must go SILENT: audio runs off its own thread, so
+  // the frozen rAF loop never stops it (iOS even keeps HTMLAudio alive in the
+  // 'playback' session). Pause it here; the sim still catches up on return so
+  // crops keep growing. visibilitychange is the primary signal; pagehide covers
+  // an iOS freeze/unload that can skip it, pageshow covers a bfcache restore.
+  const silenceAudio = (): void => {
+    music.suspend()
+    sfx.suspend()
+  }
+  const resumeAudio = (): void => {
+    music.resume()
+    sfx.resume()
+  }
+  addEventListener('pagehide', () => {
+    saveNow()
+    silenceAudio()
+  })
+  addEventListener('pageshow', resumeAudio)
   // crops keep growing while the tab/app is in the background: the engine's
   // rAF freezes when hidden, so on return we fast-forward the SAVE timers by
   // the wall-clock gap and refresh every plot's look. Works for minimized
@@ -4724,8 +4741,10 @@ async function boot(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       hiddenAt = Date.now()
+      silenceAudio()
       saveNow()
     } else if (hiddenAt) {
+      resumeAudio()
       const away = (Date.now() - hiddenAt) / 1000
       hiddenAt = 0
       // a resumed tab lands one long frame (dt clamped to 0.1s) with the sim

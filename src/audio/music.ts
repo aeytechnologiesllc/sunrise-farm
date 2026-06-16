@@ -37,6 +37,9 @@ export class Music {
   private lastTick = 0
   private duckK = 1
   private duckRecoverAt = 0
+  /** true while the page is backgrounded — keeps tick() from restarting the
+   * elements that suspend() just paused, so a minimized PWA stays silent */
+  private suspended = false
 
   constructor() {
     this.muted = safeStorage.getItem(MUTE_KEY) === '1'
@@ -93,7 +96,7 @@ export class Music {
 
   /** per-frame: drive crossfades + the playlist hand-off on wall time */
   tick(): void {
-    if (!this.primed || this.current < 0) return
+    if (!this.primed || this.current < 0 || this.suspended) return
     const now = performance.now() / 1000
     const dt = this.lastTick === 0 ? 0.016 : Math.min(0.1, now - this.lastTick)
     this.lastTick = now
@@ -158,6 +161,24 @@ export class Music {
     this.muted = muted
     safeStorage.setItem(MUTE_KEY, muted ? '1' : '0')
     for (const a of this.els) a.muted = muted
+  }
+
+  /** background/minimize: HTMLAudio keeps playing behind a hidden PWA (iOS
+   * routes it through the 'playback' session on purpose), so pause every
+   * element. The sim still catches up on return, so crops keep growing. */
+  suspend(): void {
+    this.suspended = true
+    for (const a of this.els) {
+      if (!a.paused) a.pause()
+    }
+  }
+
+  /** foreground: resume the current track where it paused (mute state intact) */
+  resume(): void {
+    this.suspended = false
+    if (this.primed && this.current >= 0) {
+      void this.els[this.current].play().catch(() => {})
+    }
   }
 
   /** dev/diagnostic peek (also handy in remote debugging) */
